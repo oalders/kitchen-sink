@@ -1,0 +1,15 @@
+{
+  "name": "kitchen-sink",
+  "version": "1.0.0",
+  "description": "A collection of useful Claude Code skills and commands for software development workflows",
+  "author": {
+    "name": "Olaf Alders",
+    "url": "https://github.com/oalders"
+  },
+  "homepage": "https://github.com/oalders/kitchen-sink",
+  "repository": "https://github.com/oalders/kitchen-sink",
+  "license": "MIT",
+  "keywords": ["development", "workflow", "testing", "git", "github", "tdd", "linting", "playwright"],
+  "skills": "./skills/",
+  "commands": "./commands/"
+}

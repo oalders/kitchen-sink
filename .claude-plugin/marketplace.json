@@ -1,0 +1,26 @@
+{
+  "name": "kitchen-sink",
+  "owner": {
+    "name": "Olaf Alders",
+    "email": "olaf@wundersolutions.com"
+  },
+  "metadata": {
+    "description": "A collection of useful Claude Code skills and commands for software development workflows",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "kitchen-sink",
+      "source": "./",
+      "description": "Development workflow skills and commands",
+      "version": "1.0.0",
+      "author": {
+        "name": "Olaf Alders"
+      },
+      "repository": "https://github.com/oalders/kitchen-sink",
+      "license": "MIT",
+      "skills": "./skills/",
+      "commands": "./commands/"
+    }
+  ]
+}
