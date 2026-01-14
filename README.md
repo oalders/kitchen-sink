@@ -1,5 +1,7 @@
 # kitchen-sink
 
+![Mog & the kitchen sink adventure](kitchen-sink.jpg)
+
 A collection of useful Claude Code skills and commands for software development workflows.
 
 ## Installation
@@ -57,3 +59,7 @@ Batch approach to linter cleanup:
 ## License
 
 MIT
+
+## Image Credit
+
+"[Mog & the kitchen sink adventure #01](https://www.flickr.com/photos/87285907@N00/3009300486)" by [ju5ti](https://www.flickr.com/photos/87285907@N00) is licensed under [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/?ref=openverse).
