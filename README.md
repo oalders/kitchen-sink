@@ -16,7 +16,9 @@ claude plugin marketplace add oalders/kitchen-sink
 
 ## Requirements
 
-Most skills and commands in this plugin rely on [obra/superpowers](https://github.com/obra/superpowers) for workflows like brainstorming, verification, and subagent-driven development. Install it first:
+**GitHub CLI:** Several skills and commands use [`gh`](https://cli.github.com/) to interact with GitHub issues and pull requests. Install it and authenticate with `gh auth login`.
+
+**Superpowers plugin:** Most skills and commands rely on [obra/superpowers](https://github.com/obra/superpowers) for workflows like brainstorming, verification, and subagent-driven development. Install it first:
 
 ```bash
 claude plugin marketplace add obra/superpowers
