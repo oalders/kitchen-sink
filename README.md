@@ -4,10 +4,10 @@ A collection of useful Claude Code skills and commands for software development 
 
 ## Installation
 
-Add to your Claude Code plugins:
+Add from the Claude Code plugin marketplace:
 
 ```bash
-claude plugins add oalders/kitchen-sink
+claude plugin marketplace add oalders/kitchen-sink
 ```
 
 ## Contents
