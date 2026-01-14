@@ -6,15 +6,6 @@
 
 A grab bag of skills to automate the boring parts out of your hair and into your robot.
 
-## Installation
-
-Add from the Claude Code plugin marketplace:
-
-```bash
-claude plugin marketplace add oalders/kitchen-sink &&
-  claude plugin install kitchen-sink
-```
-
 ## Requirements
 
 **GitHub CLI:** Several skills and commands use [`gh`](https://cli.github.com/) to interact with GitHub issues and pull requests. Install it and authenticate with `gh auth login`.
@@ -23,6 +14,15 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 ```bash
 claude plugin marketplace add obra/superpowers
+```
+
+## Installation
+
+Add from the Claude Code plugin marketplace:
+
+```bash
+claude plugin marketplace add oalders/kitchen-sink &&
+  claude plugin install kitchen-sink
 ```
 
 ## Contents
