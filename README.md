@@ -11,7 +11,8 @@ A grab bag of skills to automate the boring parts out of your hair and into your
 Add from the Claude Code plugin marketplace:
 
 ```bash
-claude plugin marketplace add oalders/kitchen-sink
+claude plugin marketplace add oalders/kitchen-sink &&
+  claude plugin install kitchen-sink
 ```
 
 ## Requirements
