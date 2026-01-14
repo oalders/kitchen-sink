@@ -12,6 +12,14 @@ Add from the Claude Code plugin marketplace:
 claude plugin marketplace add oalders/kitchen-sink
 ```
 
+## Requirements
+
+Most skills and commands in this plugin rely on [obra/superpowers](https://github.com/obra/superpowers) for workflows like brainstorming, verification, and subagent-driven development. Install it first:
+
+```bash
+claude plugin marketplace add obra/superpowers
+```
+
 ## Contents
 
 ### Skills
