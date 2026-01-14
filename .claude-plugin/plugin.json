@@ -9,7 +9,5 @@
   "homepage": "https://github.com/oalders/kitchen-sink",
   "repository": "https://github.com/oalders/kitchen-sink",
   "license": "MIT",
-  "keywords": ["development", "workflow", "testing", "git", "github", "tdd", "linting", "playwright"],
-  "skills": "./skills/",
-  "commands": "./commands/"
+  "keywords": ["development", "workflow", "testing", "git", "github", "tdd", "linting", "playwright"]
 }

@@ -18,9 +18,7 @@
         "name": "Olaf Alders"
       },
       "repository": "https://github.com/oalders/kitchen-sink",
-      "license": "MIT",
-      "skills": "./skills/",
-      "commands": "./commands/"
+      "license": "MIT"
     }
   ]
 }
