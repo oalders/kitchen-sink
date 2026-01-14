@@ -1,5 +1,5 @@
 ---
-description: Check last code review and address feedback
+description: A robot that does the urgent repairs now and books appointments for the rest—reads PR comments, fixes immediate issues, creates issues for deferred items
 ---
 
 Check the last code review on the current branch and address all the feedback.

@@ -1,5 +1,5 @@
 ---
-description: Break down a feature into small GitHub issues with a tracking issue
+description: Maybe split big issues into smaller ones—so you get a code review and not an intervention. Creates tracking issue with sub-issues.
 ---
 
 Break down the current feature or work into small, manageable GitHub issues.

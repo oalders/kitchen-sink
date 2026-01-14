@@ -1,8 +1,10 @@
 # kitchen-sink
 
+*Everything but the kitchen sink*
+
 ![Mog & the kitchen sink adventure](kitchen-sink.jpg)
 
-A collection of useful Claude Code skills and commands for software development workflows.
+A grab bag of skills to automate the boring parts out of your hair and into your robot.
 
 ## Installation
 
@@ -26,17 +28,17 @@ claude plugin marketplace add obra/superpowers
 
 | Skill | Description |
 |-------|-------------|
-| **fix-gh-issue** | Workflow for fixing GitHub issues - extracts issue number, assesses complexity, guides through resolution |
-| **execution-complexity-triage** | Evaluate implementation complexity after planning to avoid over-engineering trivial changes |
-| **fix-linter-warnings** | Systematic batch approach to fixing linter warnings (25 per iteration) while maintaining code quality |
+| **fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
+| **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
+| **fix-linter-warnings** | Linter busywork in bite-sized chunks—your robot's idea of a good time, not yours |
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| **/git-rebase** | Rebase current branch onto origin/main |
-| **/break-into-gh-issues** | Break down features into small GitHub issues with tracking |
-| **/address-gh-review** | Check last GitHub PR review and address feedback systematically |
+| **/git-rebase** | Rebase without the cruel and unusual punishment of solving your own merge conflicts |
+| **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
+| **/address-gh-review** | A robot that does the urgent repairs now and books appointments for the rest |
 
 ## Skills Overview
 
@@ -49,7 +51,7 @@ Automates the workflow for fixing GitHub issues:
 4. Suggests brainstorming for complex issues
 5. Guides through verification and PR creation
 
-### execution-complexity-triage
+### over-engineer-no-more
 
 Prevents over-engineering by evaluating whether a task needs heavyweight processes:
 - Checks indicators: adding constants? < 100 lines? < 3 files?

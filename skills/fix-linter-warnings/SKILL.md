@@ -1,6 +1,6 @@
 ---
 name: fix-linter-warnings
-description: Systematic approach to fixing linter warnings in batches of 25, avoiding code degradation by using suppression directives when fixes would make code worse, with verification at each step.
+description: Linter busywork in bite-sized chunks—your robot's idea of a good time, not yours. Fixes 25 at a time, uses suppression when fixes would degrade code.
 version: 1.0.0
 ---
 

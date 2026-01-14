@@ -1,5 +1,5 @@
 ---
-description: Rebase current branch onto origin/main
+description: Rebase without the cruel and unusual punishment of solving your own merge conflicts—rebases onto origin/main and handles conflicts
 ---
 
 Rebase the current branch onto origin/main, resolving any conflicts that arise.

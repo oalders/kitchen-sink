@@ -1,10 +1,10 @@
 ---
-name: execution-complexity-triage
-description: Evaluate implementation complexity after planning to avoid over-engineering trivial changes with heavyweight processes like subagent-driven development
+name: over-engineer-no-more
+description: Prevents your robot from building a spaceship when you asked for a bicycle
 version: 1.0.0
 ---
 
-# Execution Complexity Triage
+# Over-Engineer No More
 
 ## Overview
 
@@ -219,14 +219,14 @@ You're using this skill correctly when:
 ## Integration with superpowers plugin
 
 **After `superpowers:writing-plans`:**
--> Run execution-complexity-triage
+-> Run over-engineer-no-more
 -> Then either direct implementation OR `superpowers:subagent-driven-development`
 
 **After `superpowers:brainstorming`:**
--> If implementation is clear, run execution-complexity-triage
+-> If implementation is clear, run over-engineer-no-more
 -> Then either direct implementation OR `superpowers:writing-plans` -> triage -> execution
 
 **User says "fix #123":**
 -> Read issue, understand scope
--> Run execution-complexity-triage
+-> Run over-engineer-no-more
 -> Execute accordingly

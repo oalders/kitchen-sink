@@ -1,6 +1,6 @@
 ---
 name: fix-gh-issue
-description: Use when ready to address a GitHub issue - extracts issue number from branch or argument, assesses complexity, suggests brainstorming for non-trivial issues, and creates closing PR
+description: Point your robot at a GitHub issue and let it start beeping and booping—fetches details, assesses complexity, guides to PR
 ---
 
 # Fix GitHub Issue
