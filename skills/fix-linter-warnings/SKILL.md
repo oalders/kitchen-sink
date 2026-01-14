@@ -1,10 +1,10 @@
 ---
-name: fixing-linter-issues
-description: Systematic approach to fixing linter issues in batches of 25, avoiding code degradation by using suppression directives when fixes would make code worse, with verification at each step.
+name: fix-linter-warnings
+description: Systematic approach to fixing linter warnings in batches of 25, avoiding code degradation by using suppression directives when fixes would make code worse, with verification at each step.
 version: 1.0.0
 ---
 
-# Fixing Linter Issues Systematically
+# Fix Linter Warnings
 
 ## Overview
 

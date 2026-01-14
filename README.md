@@ -18,24 +18,24 @@ claude plugin marketplace add oalders/kitchen-sink
 
 | Skill | Description |
 |-------|-------------|
-| **fix-issue** | Workflow for fixing GitHub issues on `fix-NNN` branches - extracts issue number, assesses complexity, guides through resolution |
+| **fix-gh-issue** | Workflow for fixing GitHub issues - extracts issue number, assesses complexity, guides through resolution |
 | **execution-complexity-triage** | Evaluate implementation complexity after planning to avoid over-engineering trivial changes |
-| **fixing-linter-issues** | Systematic batch approach to fixing linter issues (25 per iteration) while maintaining code quality |
+| **fix-linter-warnings** | Systematic batch approach to fixing linter warnings (25 per iteration) while maintaining code quality |
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
 | **/git-rebase** | Rebase current branch onto origin/main |
-| **/break-into-issues** | Break down features into small GitHub issues with tracking |
-| **/address-review** | Check last code review and address feedback systematically |
+| **/break-into-gh-issues** | Break down features into small GitHub issues with tracking |
+| **/address-gh-review** | Check last GitHub PR review and address feedback systematically |
 
 ## Skills Overview
 
-### fix-issue
+### fix-gh-issue
 
 Automates the workflow for fixing GitHub issues:
-1. Extracts issue number from branch name (`fix-978` -> `978`)
+1. Gets issue number from argument or branch name (`fix-978` -> `978`)
 2. Fetches issue details with `gh`
 3. Assesses complexity (trivial vs non-trivial)
 4. Suggests brainstorming for complex issues
@@ -48,7 +48,7 @@ Prevents over-engineering by evaluating whether a task needs heavyweight process
 - Announces decision with reasoning
 - Routes to direct implementation or subagent workflow
 
-### fixing-linter-issues
+### fix-linter-warnings
 
 Batch approach to linter cleanup:
 - Fix 25 issues per iteration

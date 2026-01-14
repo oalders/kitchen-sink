@@ -1,9 +1,9 @@
 ---
-name: fix-issue
-description: Use when on a fix-NNN branch and ready to address the corresponding GitHub issue - extracts issue number, assesses complexity, suggests brainstorming for non-trivial issues, and creates closing PR
+name: fix-gh-issue
+description: Use when ready to address a GitHub issue - extracts issue number from branch or argument, assesses complexity, suggests brainstorming for non-trivial issues, and creates closing PR
 ---
 
-# Fix Issue
+# Fix GitHub Issue
 
 ## Overview
 
