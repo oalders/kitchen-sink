@@ -28,6 +28,7 @@ Don't use when:
 digraph fix_issue {
     "Extract issue # from branch" [shape=box];
     "Fetch issue with gh" [shape=box];
+    "Apply 'in progress' label" [shape=box];
     "Assess complexity" [shape=box];
     "Non-trivial?" [shape=diamond];
     "Suggest brainstorming" [shape=box];
@@ -38,7 +39,8 @@ digraph fix_issue {
     "Create PR closing issue" [shape=box];
 
     "Extract issue # from branch" -> "Fetch issue with gh";
-    "Fetch issue with gh" -> "Assess complexity";
+    "Fetch issue with gh" -> "Apply 'in progress' label";
+    "Apply 'in progress' label" -> "Assess complexity";
     "Assess complexity" -> "Non-trivial?";
     "Non-trivial?" -> "Suggest brainstorming" [label="yes"];
     "Non-trivial?" -> "Multi-step with independent tasks?" [label="no"];
@@ -60,7 +62,21 @@ digraph fix_issue {
    gh issue view 978
    ```
 
-3. **Assess complexity**:
+3. **Apply "in progress" label**:
+   - Check if "in progress" label exists:
+     ```bash
+     gh label list | grep "in progress"
+     ```
+   - If label doesn't exist, create it with color #009933:
+     ```bash
+     gh label create "in progress" --color "009933" --description "Work in progress on this issue"
+     ```
+   - Apply the label to the issue:
+     ```bash
+     gh issue edit 978 --add-label "in progress"
+     ```
+
+4. **Assess complexity**:
 
    | Trivial | Non-trivial |
    |---------|-------------|
@@ -71,21 +87,21 @@ digraph fix_issue {
 
    **When in doubt, treat as non-trivial**
 
-4. **For non-trivial issues**:
+5. **For non-trivial issues**:
    - Present summary to user
    - Say: "This issue involves [complexity]. Should we brainstorm approaches first?"
    - Use `superpowers:brainstorming` if user agrees
 
-5. **Choose implementation approach**:
+6. **Choose implementation approach**:
    - **Multiple independent tasks**: Use `superpowers:subagent-driven-development`
    - **Needs design/planning**: Use `superpowers:writing-plans` first
    - **Single cohesive task**: Implement directly
 
-6. **Verify fix**:
+7. **Verify fix**:
    - **REQUIRED**: Use `superpowers:verification-before-completion`
    - Never skip verification
 
-7. **Create PR**:
+8. **Create PR**:
    ```bash
    gh pr create --title "Fix: [issue title]" \
                 --body "Closes #978
@@ -102,6 +118,8 @@ digraph fix_issue {
 | Mistake | Fix |
 |---------|-----|
 | Skip fetching issue | Always fetch - may have updates |
+| Skip applying "in progress" label | Always apply label before starting work |
+| Don't check if label exists | Query first, create if needed |
 | Jump into complex fix | Suggest brainstorming for non-trivial |
 | Skip verification | Always verify before PR |
 | Wrong issue # in PR | Double-check branch name parsing |
@@ -109,6 +127,8 @@ digraph fix_issue {
 
 ## Red Flags
 
+- "I'll add the label later" -> Apply before starting work, not after
+- Skipping label step to "save time" -> Label is quick, communicates status
 - "Don't need brainstorming" for >10 line change -> Probably not trivial
 - Creating PR before verification -> Verify first, always
 - Skipping issue fetch "to save time" -> Always get latest context
