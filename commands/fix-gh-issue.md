@@ -1,5 +1,4 @@
 ---
-name: fix-gh-issue
 description: Point your robot at a GitHub issue and let it start beeping and booping—fetches details, assesses complexity, guides to PR
 ---
 

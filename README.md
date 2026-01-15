@@ -27,25 +27,25 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 ## Contents
 
-### Skills
-
-| Skill | Description |
-|-------|-------------|
-| **fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
-| **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
-| **fix-linter-warnings** | Linter busywork in bite-sized chunks—your robot's idea of a good time, not yours |
-
 ### Commands
 
 | Command | Description |
 |---------|-------------|
+| **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
+| **/fix-linter-warnings** | Linter busywork in bite-sized chunks—your robot's idea of a good time, not yours |
 | **/git-rebase** | Rebase without the cruel and unusual punishment of solving your own merge conflicts |
 | **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
 | **/address-gh-review** | A robot that does the urgent repairs now and books appointments for the rest |
 
-## Skills Overview
+### Skills
 
-### fix-gh-issue
+| Skill | Description |
+|-------|-------------|
+| **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
+
+## Commands Overview
+
+### /fix-gh-issue
 
 Automates the workflow for fixing GitHub issues:
 1. Gets issue number from argument or branch name (`fix-978` -> `978`)
@@ -54,20 +54,46 @@ Automates the workflow for fixing GitHub issues:
 4. Suggests brainstorming for complex issues
 5. Guides through verification and PR creation
 
-### over-engineer-no-more
-
-Prevents over-engineering by evaluating whether a task needs heavyweight processes:
-- Checks indicators: adding constants? < 100 lines? < 3 files?
-- Announces decision with reasoning
-- Routes to direct implementation or subagent workflow
-
-### fix-linter-warnings
+### /fix-linter-warnings
 
 Batch approach to linter cleanup:
 - Fix 25 issues per iteration
 - Prioritize quick wins (formatting, constants)
 - Use suppression directives when fixes would degrade code
 - Always include justification comments
+
+### /git-rebase
+
+Rebases the current branch onto origin/main:
+- Fetches latest changes and pulls with `--rebase`
+- Reads and resolves merge conflicts
+- Uses `--force-with-lease` for safe pushing (never `--force`)
+
+### /break-into-gh-issues
+
+Breaks down work into manageable GitHub issues:
+- Single issue for <= 400 lines of changes
+- Multi-issue with umbrella tracking for larger work
+- Creates labels if they don't exist
+- Links sub-issues back to umbrella with progress checklist
+
+### /address-gh-review
+
+Addresses PR code review feedback:
+- Fetches comments from the current branch's PR
+- Evaluates each suggestion critically (doesn't blindly implement)
+- Fixes immediate issues with atomic commits
+- Creates GitHub issues for deferred items
+- Runs tests and pushes when done
+
+## Skills Overview
+
+### over-engineer-no-more
+
+Prevents over-engineering by evaluating whether a task needs heavyweight processes:
+- Checks indicators: adding constants? < 100 lines? < 3 files?
+- Announces decision with reasoning
+- Routes to direct implementation or subagent workflow
 
 ## License
 

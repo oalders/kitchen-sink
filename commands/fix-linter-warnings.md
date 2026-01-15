@@ -1,7 +1,5 @@
 ---
-name: fix-linter-warnings
 description: Linter busywork in bite-sized chunks—your robot's idea of a good time, not yours. Fixes 25 at a time, uses suppression when fixes would degrade code.
-version: 1.0.0
 ---
 
 # Fix Linter Warnings
