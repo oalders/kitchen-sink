@@ -1,5 +1,5 @@
 ---
-description: A robot that does the urgent repairs now and books appointments for the rest—reads PR comments, fixes immediate issues, creates issues for deferred items
+description: Fixes immediate PR feedback, defers remaining items as issues
 ---
 
 Check the last code review on the current branch and address all the feedback.

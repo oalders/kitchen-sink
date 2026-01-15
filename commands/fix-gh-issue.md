@@ -1,5 +1,5 @@
 ---
-description: Point your robot at a GitHub issue and let it start beeping and booping—fetches details, assesses complexity, guides to PR
+description: Fetches GitHub issue, implements fix, creates PR
 ---
 
 # Fix GitHub Issue

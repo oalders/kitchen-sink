@@ -1,5 +1,5 @@
 ---
-description: Linter busywork in bite-sized chunks—your robot's idea of a good time, not yours. Fixes 25 at a time, uses suppression when fixes would degrade code.
+description: Fixes 25 lint issues per batch, uses suppression when needed
 ---
 
 # Fix Linter Warnings

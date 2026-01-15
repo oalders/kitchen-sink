@@ -1,6 +1,6 @@
 ---
 name: over-engineer-no-more
-description: Prevents your robot from building a spaceship when you asked for a bicycle
+description: Triages plan complexity to avoid heavyweight execution for trivial changes
 version: 1.0.0
 ---
 
