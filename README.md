@@ -36,6 +36,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/git-rebase** | Rebase without the cruel and unusual punishment of solving your own merge conflicts |
 | **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
 | **/address-gh-review** | A robot that does the urgent repairs now and books appointments for the rest |
+| **/request-review** | Get code review feedback without permission prompts stalling the workflow |
 
 ### Skills
 
@@ -86,6 +87,15 @@ Addresses PR code review feedback:
 - Fixes immediate issues with atomic commits
 - Creates GitHub issues for deferred items
 - Runs tests and pushes when done
+
+### /request-review
+
+Request code review during development (before creating PR):
+- Gets git SHAs from conversation context (no permission prompts)
+- Fetches issue details for fix-* branches
+- Invokes `superpowers:code-reviewer` with structured template
+- Returns categorized feedback (Critical/Important/Minor)
+- Allows unattended execution - can leave window while review runs
 
 ## Skills Overview
 
