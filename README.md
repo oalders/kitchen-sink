@@ -41,6 +41,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 | Skill | Description |
 |-------|-------------|
+| **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
 
 ## Commands Overview
@@ -87,6 +88,18 @@ Addresses PR code review feedback:
 - Runs tests and pushes when done
 
 ## Skills Overview
+
+### code-review-flow
+
+Wrapper around `superpowers:requesting-code-review` that eliminates permission prompts during code reviews:
+- Gets git SHAs from conversation context or separate git commands (not compound commands)
+- Invokes `superpowers:code-reviewer` subagent with proper template
+- Allows code reviews to run unattended without blocking on permission prompts
+
+**Benefits:**
+- No interruptions during code review workflow
+- Can leave the window while review runs
+- Uses information already in context when available
 
 ### over-engineer-no-more
 
