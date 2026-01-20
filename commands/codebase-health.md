@@ -57,9 +57,13 @@ Task(general-purpose):
     ### 1. Dead Code Analysis (Token Waste)
 
     **Unused Imports:**
-    - Grep for import statements, cross-reference with actual usage
-    - Example tools: `goimports -l`, `eslint --rule 'no-unused-vars'`
-    - Check every file type: Go, JavaScript, Python, etc.
+    - Import statements that are never used in code
+    - **Go**: Skip entirely (goimports handles this better)
+    - **JavaScript**: Check if ESLint configured, otherwise search for unused imports
+    - **Python**: Check for unused import statements
+    - **TypeScript**: Check if project has linter configured
+    - Focus on languages without automated import management
+    - Report: file:line with import statement, or "skipped (project uses goimports/ESLint)"
 
     **Unused Functions:**
     - Find unexported/private functions with no callers
@@ -84,7 +88,7 @@ Task(general-purpose):
     **Metrics to Report:**
     ```
     Dead Code Summary:
-    - Unused imports: X files, Y import statements
+    - Unused imports: X files, Y import statements (or "skipped - Go project with goimports")
     - Unused functions: X functions, ~Y total lines
     - Orphaned files: X files
     - Commented code blocks: X blocks, ~Y lines
