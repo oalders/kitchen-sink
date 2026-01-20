@@ -41,6 +41,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/playwright-review** | Playwright test review enforcing ARIA labels, detecting UI layout issues, and optimizing performance |
 | **/security-review** | OWASP-based security review catching session fixation, PII logging, and timing attacks |
 | **/codebase-health** | Systematic health check optimizing codebase for AI consumption—dead code, token waste, and discoverability |
+| **/audit-claude-md** | Audit CLAUDE.md files for token efficiency, clarity, and accuracy against actual codebase |
 
 ### Skills
 
@@ -148,6 +149,22 @@ Systematic health check optimizing codebase for AI consumption:
 - Estimates token savings potential (e.g., 148K tokens from vendor removal)
 - Prioritized recommendations (Critical/Important/Minor with time estimates)
 - Spawns `general-purpose` subagent with comprehensive 7-category checklist
+
+### /audit-claude-md
+
+Comprehensive CLAUDE.md audit for quality and accuracy:
+- Token efficiency (duplication between files, verbose sections, defensive explanations)
+- Clarity issues (contradictory instructions, vague guidance, ambiguous commands)
+- Organization problems (multiple file chaos, hard to scan, scattered information)
+- Accuracy against codebase (outdated commands, dead links, wrong env vars, broken examples)
+- AI-specific anti-patterns (nested conditionals, ambiguous pronouns, negative-only instructions)
+- Workflow verification (compare docs against CI/scripts/Makefiles)
+- Systematic verification (REQUIRED checks for command paths, file references, tool availability)
+- Version-specific instruction checking (detect obsolete version references)
+- Generates quality score (0-100) with category breakdown
+- Estimates token savings (e.g., 17% reduction from deduplication)
+- Prioritized recommendations with before/after examples
+- Spawns `general-purpose` subagent with comprehensive 6-category checklist
 
 ## Skills Overview
 
