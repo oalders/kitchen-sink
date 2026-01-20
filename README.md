@@ -37,6 +37,9 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
 | **/address-gh-review** | A robot that does the urgent repairs now and books appointments for the rest |
 | **/request-review** | Get code review feedback without permission prompts stalling the workflow |
+| **/frontend-review** | Frontend expert review catching accessibility gaps, responsive design issues, and CSS anti-patterns |
+| **/playwright-review** | Playwright test review enforcing ARIA labels, detecting UI layout issues, and optimizing performance |
+| **/security-review** | OWASP-based security review catching session fixation, PII logging, and timing attacks |
 
 ### Skills
 
@@ -96,6 +99,40 @@ Request code review during development (before creating PR):
 - Invokes `superpowers:code-reviewer` with structured template
 - Returns categorized feedback (Critical/Important/Minor)
 - Allows unattended execution - can leave window while review runs
+
+### /frontend-review
+
+Frontend-focused code review for HTML/CSS/image changes:
+- Systematic image optimization and accessibility checks
+- ARIA strategy analysis (decorative vs informative)
+- Responsive design verification across viewports (320px, 768px, 1920px)
+- CSS best practices (custom properties, relative units, performance)
+- Visual regression checklist for manual testing
+- SVG optimization and preload hints
+- Spawns `superpowers:code-reviewer` with frontend-specific checklist
+
+### /playwright-review
+
+Specialized review for Playwright E2E tests:
+- Enforces ARIA label verification in tests (aria-invalid, aria-describedby, aria-live)
+- Identifies UI/layout issues (buttons bumping footer, viewport overflow)
+- Detects 7 performance anti-patterns (waitForFunction, sequential fills, networkidle waits)
+- Suggests specific optimizations with estimated time savings
+- Checks accessibility test coverage (keyboard navigation, focus management)
+- Provides performance improvement summary table
+- Spawns `superpowers:code-reviewer` with Playwright-specific checklist
+
+### /security-review
+
+OWASP-based systematic security review:
+- Authentication & session management (session fixation, regeneration)
+- Authorization & access control (vertical/horizontal privilege escalation)
+- Input validation & injection (SQL, XSS, command injection)
+- Sensitive data exposure (PII logging, cleartext transmission)
+- Security misconfiguration (CSRF, CORS, security headers)
+- Business logic flaws (race conditions, timing attacks)
+- Uses Opus model for comprehensive security analysis
+- Spawns `superpowers:code-reviewer` with OWASP Top 10 checklist
 
 ## Skills Overview
 
