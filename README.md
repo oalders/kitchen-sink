@@ -40,6 +40,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/frontend-review** | Frontend expert review catching accessibility gaps, responsive design issues, and CSS anti-patterns |
 | **/playwright-review** | Playwright test review enforcing ARIA labels, detecting UI layout issues, and optimizing performance |
 | **/security-review** | OWASP-based security review catching session fixation, PII logging, and timing attacks |
+| **/codebase-health** | Systematic health check optimizing codebase for AI consumption—dead code, token waste, and discoverability |
 
 ### Skills
 
@@ -133,6 +134,20 @@ OWASP-based systematic security review:
 - Business logic flaws (race conditions, timing attacks)
 - Uses Opus model for comprehensive security analysis
 - Spawns `superpowers:code-reviewer` with OWASP Top 10 checklist
+
+### /codebase-health
+
+Systematic health check optimizing codebase for AI consumption:
+- Dead code analysis (unused imports, orphaned files, commented blocks)
+- File organization (>1000 line files, deep nesting, vendor directory tracking)
+- Discoverability issues (generic naming, missing READMEs, hidden functionality)
+- Code duplication detection (template/function similarity, pattern inconsistency)
+- Dependency health (circular dependencies, unused exports, orphaned modules)
+- Naming convention consistency (mixed case detection across languages)
+- Generates health score (0-100) with category breakdown
+- Estimates token savings potential (e.g., 148K tokens from vendor removal)
+- Prioritized recommendations (Critical/Important/Minor with time estimates)
+- Spawns `general-purpose` subagent with comprehensive 7-category checklist
 
 ## Skills Overview
 
