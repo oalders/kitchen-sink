@@ -1,12 +1,12 @@
 ---
-description: Fetches GitHub issue, implements fix, creates draft PR
+description: Fetches GitHub issue, implements fix with review, creates draft PR
 ---
 
 # Fix GitHub Issue
 
 ## Overview
 
-Automates the workflow for fixing GitHub issues on branches named `fix-NNN`. Extracts issue number, fetches details with `gh`, assesses complexity, guides through resolution with appropriate skills, and creates draft PR that closes the issue.
+Automates the workflow for fixing GitHub issues on branches named `fix-NNN`. Extracts issue number, fetches details with `gh`, assesses complexity, guides through resolution with appropriate skills, runs specialized code review (if not using subagent-driven-development), and creates draft PR that closes the issue.
 
 ## When to Use
 
@@ -35,6 +35,8 @@ digraph fix_issue {
     "Multi-step with independent tasks?" [shape=diamond];
     "Use subagent-driven-development" [shape=box];
     "Implement fix" [shape=box];
+    "Used subagent-driven-development?" [shape=diamond];
+    "Run specialized review" [shape=box];
     "Verify with verification-before-completion" [shape=box];
     "Create draft PR closing issue" [shape=box];
 
@@ -47,8 +49,11 @@ digraph fix_issue {
     "Suggest brainstorming" -> "Multi-step with independent tasks?";
     "Multi-step with independent tasks?" -> "Use subagent-driven-development" [label="yes"];
     "Multi-step with independent tasks?" -> "Implement fix" [label="no"];
-    "Use subagent-driven-development" -> "Verify with verification-before-completion";
-    "Implement fix" -> "Verify with verification-before-completion";
+    "Use subagent-driven-development" -> "Used subagent-driven-development?";
+    "Implement fix" -> "Used subagent-driven-development?";
+    "Used subagent-driven-development?" -> "Verify with verification-before-completion" [label="yes (skip review)"];
+    "Used subagent-driven-development?" -> "Run specialized review" [label="no"];
+    "Run specialized review" -> "Verify with verification-before-completion";
     "Verify with verification-before-completion" -> "Create draft PR closing issue";
 }
 ```
@@ -97,11 +102,25 @@ digraph fix_issue {
    - **Needs design/planning**: Use `superpowers:writing-plans` first
    - **Single cohesive task**: Implement directly
 
-7. **Verify fix**:
+7. **Code Review (conditional)**:
+   - **If you used `subagent-driven-development`**: Skip review (already reviewed between tasks)
+   - **If direct implementation**: Run specialized review based on changes:
+
+     | Change Type | Review Command | Use When |
+     |-------------|----------------|----------|
+     | Frontend (HTML/CSS/templates/JS) | `/frontend-review` | UI changes, accessibility, responsive design |
+     | Security (auth/sessions/data) | `/security-review` | Authentication, authorization, data handling |
+     | Playwright tests | `/playwright-review` | E2E test changes, test performance |
+     | Other/general changes | `/request-review` | General code review |
+
+   - **REQUIRED**: Fix all Important issues before proceeding
+   - Minor issues can be noted for later
+
+8. **Verify fix**:
    - **REQUIRED**: Use `superpowers:verification-before-completion`
    - Never skip verification
 
-8. **Create Draft PR**:
+9. **Create Draft PR**:
    ```bash
    gh pr create --draft \
                 --title "Fix: [issue title]" \
@@ -124,6 +143,8 @@ digraph fix_issue {
 | Skip applying "in progress" label | Always apply label before starting work |
 | Don't check if label exists | Query first, create if needed |
 | Jump into complex fix | Suggest brainstorming for non-trivial |
+| Skip review for direct implementation | If no subagent-driven-development, run specialized review |
+| Wrong reviewer for changes | Frontend changes need frontend-review, security needs security-review |
 | Skip verification | Always verify before PR |
 | Wrong issue # in PR | Double-check branch name parsing |
 | "I'll just fix it quickly" for big changes | Use proper workflow |
@@ -133,14 +154,24 @@ digraph fix_issue {
 - "I'll add the label later" -> Apply before starting work, not after
 - Skipping label step to "save time" -> Label is quick, communicates status
 - "Don't need brainstorming" for >10 line change -> Probably not trivial
+- "Don't need review" for direct implementation -> If no subagent-driven-development, review is required
+- Skipping review because "it's simple" -> Simple frontend changes can have accessibility issues
+- Using wrong reviewer -> Match reviewer to change type (frontend/security/playwright/general)
 - Creating PR before verification -> Verify first, always
 - Skipping issue fetch "to save time" -> Always get latest context
 - "It's obvious" for multi-file changes -> Use brainstorming
 - Creating ready-for-review PR -> Use draft PR, mark ready after review
 
-## Related Skills (superpowers plugin)
+## Related Skills & Commands
 
+**Superpowers plugin:**
 - **REQUIRED**: `superpowers:verification-before-completion` before PR
 - **Recommended for non-trivial**: `superpowers:brainstorming`
-- **Recommended for multi-task**: `superpowers:subagent-driven-development`
+- **Recommended for multi-task**: `superpowers:subagent-driven-development` (includes built-in review)
 - **Recommended for complex**: `superpowers:writing-plans`
+
+**Kitchen-sink specialized reviews (for direct implementations):**
+- `/frontend-review` - HTML/CSS/templates/accessibility/responsive design
+- `/security-review` - Authentication/authorization/PII/OWASP Top 10
+- `/playwright-review` - E2E tests/ARIA verification/performance optimization
+- `/request-review` - General code review for other changes
