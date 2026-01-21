@@ -1,12 +1,12 @@
 ---
-description: Fetches GitHub issue, implements fix, creates PR
+description: Fetches GitHub issue, implements fix, creates draft PR
 ---
 
 # Fix GitHub Issue
 
 ## Overview
 
-Automates the workflow for fixing GitHub issues on branches named `fix-NNN`. Extracts issue number, fetches details with `gh`, assesses complexity, guides through resolution with appropriate skills, and creates PR that closes the issue.
+Automates the workflow for fixing GitHub issues on branches named `fix-NNN`. Extracts issue number, fetches details with `gh`, assesses complexity, guides through resolution with appropriate skills, and creates draft PR that closes the issue.
 
 ## When to Use
 
@@ -36,7 +36,7 @@ digraph fix_issue {
     "Use subagent-driven-development" [shape=box];
     "Implement fix" [shape=box];
     "Verify with verification-before-completion" [shape=box];
-    "Create PR closing issue" [shape=box];
+    "Create draft PR closing issue" [shape=box];
 
     "Extract issue # from branch" -> "Fetch issue with gh";
     "Fetch issue with gh" -> "Apply 'in progress' label";
@@ -49,7 +49,7 @@ digraph fix_issue {
     "Multi-step with independent tasks?" -> "Implement fix" [label="no"];
     "Use subagent-driven-development" -> "Verify with verification-before-completion";
     "Implement fix" -> "Verify with verification-before-completion";
-    "Verify with verification-before-completion" -> "Create PR closing issue";
+    "Verify with verification-before-completion" -> "Create draft PR closing issue";
 }
 ```
 
@@ -101,9 +101,10 @@ digraph fix_issue {
    - **REQUIRED**: Use `superpowers:verification-before-completion`
    - Never skip verification
 
-8. **Create PR**:
+8. **Create Draft PR**:
    ```bash
-   gh pr create --title "Fix: [issue title]" \
+   gh pr create --draft \
+                --title "Fix: [issue title]" \
                 --body "Closes #978
 
    ## Changes
@@ -112,6 +113,8 @@ digraph fix_issue {
    ## Testing
    - [How verified]"
    ```
+
+   **Note**: Creates a draft PR so you can review before marking ready.
 
 ## Common Mistakes
 
@@ -133,6 +136,7 @@ digraph fix_issue {
 - Creating PR before verification -> Verify first, always
 - Skipping issue fetch "to save time" -> Always get latest context
 - "It's obvious" for multi-file changes -> Use brainstorming
+- Creating ready-for-review PR -> Use draft PR, mark ready after review
 
 ## Related Skills (superpowers plugin)
 
