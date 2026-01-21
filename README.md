@@ -56,10 +56,17 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 Automates the workflow for fixing GitHub issues:
 1. Gets issue number from argument or branch name (`fix-978` -> `978`)
-2. Fetches issue details with `gh`
+2. Fetches issue details with `gh` and applies "in progress" label
 3. Assesses complexity (trivial vs non-trivial)
 4. Suggests brainstorming for complex issues
-5. Guides through verification and PR creation
+5. Implements fix (direct or via subagent-driven-development)
+6. Runs specialized code review (conditional: skips if subagent-driven-development used)
+   - Frontend changes → `/frontend-review`
+   - Security changes → `/security-review`
+   - Playwright tests → `/playwright-review`
+   - Other changes → `/request-review`
+7. Verifies with `verification-before-completion`
+8. Creates draft PR that closes the issue
 
 ### /fix-linter-warnings
 
