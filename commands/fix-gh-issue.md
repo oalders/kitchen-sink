@@ -27,8 +27,8 @@ Don't use when:
 ```dot
 digraph fix_issue {
     "Extract issue # from branch" [shape=box];
+    "git fetch origin" [shape=box];
     "Fetch issue with gh" [shape=box];
-    "Apply 'in progress' label" [shape=box];
     "Assess complexity" [shape=box];
     "Non-trivial?" [shape=diamond];
     "Suggest brainstorming" [shape=box];
@@ -40,9 +40,9 @@ digraph fix_issue {
     "Verify with verification-before-completion" [shape=box];
     "Create draft PR closing issue" [shape=box];
 
-    "Extract issue # from branch" -> "Fetch issue with gh";
-    "Fetch issue with gh" -> "Apply 'in progress' label";
-    "Apply 'in progress' label" -> "Assess complexity";
+    "Extract issue # from branch" -> "git fetch origin";
+    "git fetch origin" -> "Fetch issue with gh";
+    "Fetch issue with gh" -> "Assess complexity";
     "Assess complexity" -> "Non-trivial?";
     "Non-trivial?" -> "Suggest brainstorming" [label="yes"];
     "Non-trivial?" -> "Multi-step with independent tasks?" [label="no"];
@@ -62,24 +62,16 @@ digraph fix_issue {
 
 1. **Get issue number**: Use provided number, or parse from branch name (`fix-978` -> `978`)
 
-2. **Fetch issue**:
+2. **Update remote state**:
+   ```bash
+   git fetch origin
+   ```
+   This ensures we have the latest main branch for accurate diff comparisons.
+
+3. **Fetch issue**:
    ```bash
    gh issue view 978
    ```
-
-3. **Apply "in progress" label**:
-   - Check if "in progress" label exists:
-     ```bash
-     gh label list | grep "in progress"
-     ```
-   - If label doesn't exist, create it with color #009933:
-     ```bash
-     gh label create "in progress" --color "009933" --description "Work in progress on this issue"
-     ```
-   - Apply the label to the issue:
-     ```bash
-     gh issue edit 978 --add-label "in progress"
-     ```
 
 4. **Assess complexity**:
 
@@ -139,9 +131,8 @@ digraph fix_issue {
 
 | Mistake | Fix |
 |---------|-----|
+| Skip git fetch | Always fetch origin - branch may be behind |
 | Skip fetching issue | Always fetch - may have updates |
-| Skip applying "in progress" label | Always apply label before starting work |
-| Don't check if label exists | Query first, create if needed |
 | Jump into complex fix | Suggest brainstorming for non-trivial |
 | Skip review for direct implementation | If no subagent-driven-development, run specialized review |
 | Wrong reviewer for changes | Frontend changes need frontend-review, security needs security-review |
@@ -151,8 +142,7 @@ digraph fix_issue {
 
 ## Red Flags
 
-- "I'll add the label later" -> Apply before starting work, not after
-- Skipping label step to "save time" -> Label is quick, communicates status
+- Skipping git fetch -> Branch may be stale, diffs will be confusing
 - "Don't need brainstorming" for >10 line change -> Probably not trivial
 - "Don't need review" for direct implementation -> If no subagent-driven-development, review is required
 - Skipping review because "it's simple" -> Simple frontend changes can have accessibility issues
