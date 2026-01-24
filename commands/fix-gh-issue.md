@@ -70,7 +70,7 @@ digraph fix_issue {
 
 3. **Fetch issue**:
    ```bash
-   gh issue view 978
+   gh issue view 978 --json body,title
    ```
 
 4. **Assess complexity**:
