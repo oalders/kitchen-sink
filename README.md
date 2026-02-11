@@ -50,6 +50,12 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
 
+### Hooks
+
+| Hook | Description |
+|------|-------------|
+| **suggest-review-after-commit** | Smart PostToolUse hook that analyzes committed files and suggests relevant review commands (`/frontend-review`, `/playwright-review`, `/security-review`, or `/request-review`) based on file types and patterns |
+
 ## Commands Overview
 
 ### /fix-gh-issue
@@ -193,6 +199,45 @@ Prevents over-engineering by evaluating whether a task needs heavyweight process
 - Checks indicators: adding constants? < 100 lines? < 3 files?
 - Announces decision with reasoning
 - Routes to direct implementation or subagent workflow
+
+## Hooks Overview
+
+### suggest-review-after-commit
+
+Automatically suggests the most relevant review command(s) after you commit changes, with **interactive multi-select** to choose one or more reviews to run immediately:
+
+**Frontend Review (`/frontend-review`)**
+- Triggered by: `.tsx`, `.jsx`, `.vue`, `.css`, `.scss`, `.html`
+- Directories: `components/`, `pages/`, `styles/`
+- Files: `tailwind.config.*`, `globals.css`
+
+**Playwright Review (`/playwright-review`)**
+- Triggered by: `.spec.ts`, `.spec.js`, `.test.ts`
+- Directories: `e2e/`, `tests/`, `playwright/`
+- Files: `playwright.config.*`, `*.e2e.*`
+
+**Security Review (`/security-review`)**
+- Triggered by: Files with `auth`, `login`, `password`, `token`, `session`, `api/` in path
+- Files: `.env.example`, authentication modules, API endpoints
+
+**Generic Review (`/request-review`)**
+- Always offered as a fallback option
+- Recommended for general-purpose code changes
+
+**Example:**
+```
+I notice you just committed 3 file(s):
+
+🎨 Frontend: Header.tsx, globals.css
+🎭 Playwright: header.spec.ts
+
+Which review(s) would you like to run?
+□ Frontend Review - Images, accessibility, responsive design, CSS patterns
+□ Playwright Review - Accessibility, UI issues, performance optimization
+□ Generic Review - Comprehensive code review of all changes
+```
+
+Select multiple reviews with checkboxes, and they'll run sequentially with a combined summary at the end.
 
 ## License
 
