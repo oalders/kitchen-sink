@@ -74,6 +74,23 @@ git diff [BASE_SHA]..[HEAD_SHA]
 [... rest of code-reviewer template from superpowers:requesting-code-review/code-reviewer.md]
 ```
 
+## Posting Review Results
+
+**After review completes, check if PR exists:**
+
+```bash
+gh pr list --head $(git branch --show-current) --json number,url
+```
+
+**If PR exists:**
+- Post the complete review as a PR comment using `gh pr comment`
+- Inform user that review was posted to the PR
+- This keeps all code review discussion in one place
+
+**If no PR exists:**
+- Display review results to user in conversation
+- User can create PR later or continue with local fixes
+
 ## Example
 
 ```
@@ -90,6 +107,16 @@ Task(superpowers:code-reviewer):
   BASE_SHA: 4f940124
   HEAD_SHA: d0e856b8
   DESCRIPTION: Added parseDistanceTag() and case-insensitive regex
+
+Step 3: Check for PR
+$ gh pr list --head fix-1065 --json number
+[{"number": 123}]
+
+Step 4: Post review to PR
+$ gh pr comment 123 --body "[Complete review in markdown]"
+✓ Review posted to PR #123
+
+User can now address feedback and continue the discussion on GitHub.
 ```
 
 ## Integration with Permissions
@@ -105,6 +132,7 @@ This skill works because:
 ✅ User can leave window while review runs
 ✅ Faster workflow - no blocking on permissions
 ✅ Uses information already in context when available
+✅ Posts review to PR when one exists - keeps discussion centralized
 
 ## When to Use
 

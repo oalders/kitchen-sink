@@ -28,12 +28,19 @@ digraph code_review {
     "Get issue details if fix-* branch" [shape=box];
     "Invoke code-reviewer subagent" [shape=box];
     "Review completes" [shape=box];
+    "Check if PR exists" [shape=diamond];
+    "Post review as PR comment" [shape=box];
+    "Display review to user" [shape=box];
     "Address feedback" [shape=box];
 
     "Get git SHAs from context" -> "Get issue details if fix-* branch";
     "Get issue details if fix-* branch" -> "Invoke code-reviewer subagent";
     "Invoke code-reviewer subagent" -> "Review completes";
-    "Review completes" -> "Address feedback";
+    "Review completes" -> "Check if PR exists";
+    "Check if PR exists" -> "Post review as PR comment" [label="Yes"];
+    "Check if PR exists" -> "Display review to user" [label="No"];
+    "Post review as PR comment" -> "Address feedback";
+    "Display review to user" -> "Address feedback";
 }
 ```
 
@@ -195,10 +202,48 @@ Task(superpowers:code-reviewer):
 
 The subagent will return a detailed review report. Then:
 
-1. **Use `superpowers:receiving-code-review`** to handle feedback properly
-2. **Address Critical issues** immediately
-3. **Address Important issues** before merging
-4. **Note Minor issues** for later or create follow-up issues
+**Check if PR exists for this branch:**
+```bash
+gh pr list --head $(git branch --show-current) --json number,url
+```
+
+**If PR exists:**
+1. **Post review as PR comment:**
+   ```bash
+   gh pr comment <pr-number> --body "$(cat <<'EOF'
+   ## Code Review
+
+   [Paste the complete review output here, formatted in markdown]
+
+   ### Strengths
+   [Review strengths...]
+
+   ### Issues
+   #### Critical (Must Fix)
+   [Critical issues...]
+
+   #### Important (Should Fix)
+   [Important issues...]
+
+   #### Minor (Nice to Have)
+   [Minor issues...]
+
+   ### Assessment
+   **Ready to merge?** [Yes/No/With fixes]
+   [Reasoning...]
+   EOF
+   )"
+   ```
+2. **Inform user** that review was posted to PR
+
+**If no PR exists:**
+1. **Display review** to user in conversation
+2. **Use `superpowers:receiving-code-review`** to handle feedback properly
+
+**Then:**
+1. **Address Critical issues** immediately
+2. **Address Important issues** before merging
+3. **Note Minor issues** for later or create follow-up issues
 
 ## Common Mistakes
 
@@ -216,6 +261,7 @@ The subagent will return a detailed review report. Then:
 ✅ **Unattended execution** - Can leave window while review runs
 ✅ **Structured feedback** - Consistent categorization (Critical/Important/Minor)
 ✅ **Faster workflow** - No blocking on permissions
+✅ **GitHub integration** - Posts review to PR when one exists, keeping discussion centralized
 
 ## Example
 
@@ -244,7 +290,15 @@ Step 4: Review returns
 - Important: Case-insensitive regex missing
 - Assessment: Ready with fixes
 
-Step 5: Address feedback
+Step 5: Check for PR
+$ gh pr list --head fix-1065 --json number
+[{"number": 123}]
+
+Step 6: Post review to PR
+$ gh pr comment 123 --body "[Review content]"
+✓ Comment posted to PR #123
+
+Step 7: Address feedback
 [Use receiving-code-review skill to evaluate and implement]
 ```
 

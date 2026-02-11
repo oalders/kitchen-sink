@@ -90,3 +90,48 @@ Please verify:
 2. Edge case handling (case, units, invalid values)
 3. Test coverage for acceptance criteria
 4. No regression risks for existing tag sorting
+
+---
+
+## After Review Completes
+
+**Check if PR exists:**
+```bash
+gh pr list --head fix-1234 --json number,url
+```
+
+**Result:**
+```json
+[{"number": 456, "url": "https://github.com/user/repo/pull/456"}]
+```
+
+**Post review to PR:**
+```bash
+gh pr comment 456 --body "$(cat <<'EOF'
+## Code Review
+
+### Strengths
+- Clean parseDistanceTag() implementation
+- Good test coverage for edge cases
+- Handles case-insensitive matching well
+
+### Issues
+
+#### Important (Should Fix)
+- **File: src/utils/tags.ts:23** - No handling for invalid distance formats
+  - **Why:** Tags like "distance:invalid" will cause parsing errors
+  - **Fix:** Add validation and return null for invalid formats
+
+#### Minor (Nice to Have)
+- **File: src/utils/tags.test.ts:45** - Missing test for mixed unit types
+  - **Suggestion:** Add test for "10m, 1km, 50m" to verify unit conversion
+
+### Assessment
+**Ready to merge?** With fixes
+
+**Reasoning:** Implementation is solid but needs validation for invalid input. Add the validation fix and this is good to merge.
+EOF
+)"
+```
+
+✓ Review posted to [PR #456](https://github.com/user/repo/pull/456)

@@ -101,6 +101,7 @@ Every review should include:
 - [ ] **Base SHA** - Starting point
 - [ ] **Head SHA** - Ending point
 - [ ] **Review Focus** (optional) - Specific concerns
+- [ ] **After review** - Check for PR and post as comment if exists
 
 ### Common Patterns
 
@@ -136,6 +137,37 @@ This skill integrates well with:
 - **`superpowers:requesting-code-review`** - The underlying skill
 - **`superpowers:receiving-code-review`** - Handling review feedback
 
+## Posting Review to PR
+
+**After review completes, check if PR exists:**
+
+```bash
+# Check for PR on current branch
+gh pr list --head $(git branch --show-current) --json number,url
+```
+
+**If PR exists:**
+```bash
+# Post the complete review as a comment
+gh pr comment <pr-number> --body "$(cat <<'EOF'
+## Code Review
+
+[Complete review content in markdown]
+EOF
+)"
+```
+
+**Benefits:**
+- ✅ Keeps all review discussion in one place (GitHub)
+- ✅ Other reviewers can see the AI review
+- ✅ Review is preserved with the PR history
+- ✅ User can respond to specific points on GitHub
+
+**If no PR exists:**
+- Display review in conversation
+- User can create PR later
+- Review is still available in chat history
+
 ## Tips
 
 1. **Always provide context** - Even if minimal, explain what was built
@@ -143,3 +175,4 @@ This skill integrates well with:
 3. **Use symbolic refs** - Avoid unnecessary SHA resolution
 4. **Check gitStatus first** - Information is already there
 5. **Document requirements** - Link to issues, plans, or describe inline
+6. **Post to PR if exists** - Keeps review discussion centralized
