@@ -135,3 +135,20 @@ EOF
 ```
 
 ✓ Review posted to [PR #456](https://github.com/user/repo/pull/456)
+
+**Review requires fixes - don't approve yet.**
+
+User should address the important issue, then request another review or merge after fixing.
+
+---
+
+## Alternative: If Review Passes
+
+If the assessment was "Ready to merge? Yes":
+
+```bash
+# Approve the PR
+gh pr review 456 --approve --body "Code review passed. All checks look good."
+```
+
+✓ PR #456 approved and ready to merge

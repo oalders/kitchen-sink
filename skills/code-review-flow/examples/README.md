@@ -155,13 +155,22 @@ gh pr comment <pr-number> --body "$(cat <<'EOF'
 [Complete review content in markdown]
 EOF
 )"
+
+# If review passed (Ready to merge? Yes), approve the PR
+gh pr review <pr-number> --approve --body "Code review passed. All checks look good."
 ```
+
+**Approval Logic:**
+- **"Ready to merge? Yes"** → Approve the PR automatically
+- **"Ready to merge? With fixes"** → Don't approve, wait for fixes
+- **"Ready to merge? No"** → Don't approve, needs significant changes
 
 **Benefits:**
 - ✅ Keeps all review discussion in one place (GitHub)
 - ✅ Other reviewers can see the AI review
 - ✅ Review is preserved with the PR history
 - ✅ User can respond to specific points on GitHub
+- ✅ Automatic approval when review passes
 
 **If no PR exists:**
 - Display review in conversation

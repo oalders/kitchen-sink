@@ -83,9 +83,13 @@ gh pr list --head $(git branch --show-current) --json number,url
 ```
 
 **If PR exists:**
-- Post the complete review as a PR comment using `gh pr comment`
-- Inform user that review was posted to the PR
-- This keeps all code review discussion in one place
+1. Post the complete review as a PR comment using `gh pr comment`
+2. **If review passes (Ready to merge? Yes):**
+   - Approve the PR: `gh pr review <pr-number> --approve --body "Code review passed. All checks look good."`
+3. **If review requires fixes (Ready to merge? With fixes/No):**
+   - Don't approve yet - wait for fixes
+4. Inform user that review was posted (and approved if applicable)
+5. This keeps all code review discussion in one place
 
 **If no PR exists:**
 - Display review results to user in conversation
@@ -116,7 +120,11 @@ Step 4: Post review to PR
 $ gh pr comment 123 --body "[Complete review in markdown]"
 ✓ Review posted to PR #123
 
-User can now address feedback and continue the discussion on GitHub.
+Step 5: Review passed - approve PR
+$ gh pr review 123 --approve --body "Code review passed. All checks look good."
+✓ PR #123 approved
+
+User can now merge or address any minor feedback on GitHub.
 ```
 
 ## Integration with Permissions

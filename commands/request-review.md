@@ -30,6 +30,8 @@ digraph code_review {
     "Review completes" [shape=box];
     "Check if PR exists" [shape=diamond];
     "Post review as PR comment" [shape=box];
+    "Ready to merge?" [shape=diamond];
+    "Approve PR" [shape=box];
     "Display review to user" [shape=box];
     "Address feedback" [shape=box];
 
@@ -39,7 +41,10 @@ digraph code_review {
     "Review completes" -> "Check if PR exists";
     "Check if PR exists" -> "Post review as PR comment" [label="Yes"];
     "Check if PR exists" -> "Display review to user" [label="No"];
-    "Post review as PR comment" -> "Address feedback";
+    "Post review as PR comment" -> "Ready to merge?";
+    "Ready to merge?" -> "Approve PR" [label="Yes"];
+    "Ready to merge?" -> "Address feedback" [label="No/With fixes"];
+    "Approve PR" -> "Address feedback";
     "Display review to user" -> "Address feedback";
 }
 ```
@@ -234,7 +239,17 @@ gh pr list --head $(git branch --show-current) --json number,url
    EOF
    )"
    ```
-2. **Inform user** that review was posted to PR
+
+2. **If review passes (Ready to merge? Yes):**
+   ```bash
+   gh pr review <pr-number> --approve --body "Code review passed. All checks look good."
+   ```
+
+3. **If review requires fixes (Ready to merge? With fixes/No):**
+   - Don't approve yet
+   - User should address feedback first
+
+4. **Inform user** that review was posted to PR (and approved if applicable)
 
 **If no PR exists:**
 1. **Display review** to user in conversation
@@ -287,8 +302,7 @@ Task(superpowers:code-reviewer):
 
 Step 4: Review returns
 - Strengths: Good test coverage, clean architecture
-- Important: Case-insensitive regex missing
-- Assessment: Ready with fixes
+- Assessment: Ready to merge? Yes
 
 Step 5: Check for PR
 $ gh pr list --head fix-1065 --json number
@@ -298,8 +312,12 @@ Step 6: Post review to PR
 $ gh pr comment 123 --body "[Review content]"
 ✓ Comment posted to PR #123
 
-Step 7: Address feedback
-[Use receiving-code-review skill to evaluate and implement]
+Step 7: Approve PR (review passed)
+$ gh pr review 123 --approve --body "Code review passed. All checks look good."
+✓ PR #123 approved
+
+Step 8: Address any minor feedback (if applicable)
+[Minor items can be addressed in follow-up if needed]
 ```
 
 ## Related Skills
