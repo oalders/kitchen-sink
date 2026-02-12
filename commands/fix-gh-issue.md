@@ -111,6 +111,7 @@ digraph fix_issue {
      | Frontend (HTML/CSS/templates/JS) | `/frontend-review` | UI changes, accessibility, responsive design |
      | Security (auth/sessions/data) | `/security-review` | Authentication, authorization, data handling |
      | Playwright tests | `/playwright-review` | E2E test changes, test performance |
+     | SEO (meta tags/headings/URLs/structured data) | `/seo-review` | Pages, routes, Open Graph, schema markup |
      | Other/general changes | `/request-review` | General code review |
 
    - **REQUIRED**: Fix all Important issues before proceeding
