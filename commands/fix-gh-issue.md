@@ -35,6 +35,7 @@ digraph fix_issue {
     "Multi-step with independent tasks?" [shape=diamond];
     "Use subagent-driven-development" [shape=box];
     "Implement fix" [shape=box];
+    "Write tests" [shape=box];
     "Used subagent-driven-development?" [shape=diamond];
     "Run specialized review" [shape=box];
     "Verify with verification-before-completion" [shape=box];
@@ -49,8 +50,9 @@ digraph fix_issue {
     "Suggest brainstorming" -> "Multi-step with independent tasks?";
     "Multi-step with independent tasks?" -> "Use subagent-driven-development" [label="yes"];
     "Multi-step with independent tasks?" -> "Implement fix" [label="no"];
-    "Use subagent-driven-development" -> "Used subagent-driven-development?";
-    "Implement fix" -> "Used subagent-driven-development?";
+    "Use subagent-driven-development" -> "Write tests";
+    "Implement fix" -> "Write tests";
+    "Write tests" -> "Used subagent-driven-development?";
     "Used subagent-driven-development?" -> "Verify with verification-before-completion" [label="yes (skip review)"];
     "Used subagent-driven-development?" -> "Run specialized review" [label="no"];
     "Run specialized review" -> "Verify with verification-before-completion";
@@ -94,7 +96,13 @@ digraph fix_issue {
    - **Needs design/planning**: Use `superpowers:writing-plans` first
    - **Single cohesive task**: Implement directly
 
-7. **Code Review (conditional)**:
+7. **Write tests**:
+   - **REQUIRED**: Every fix must include tests unless the change is purely cosmetic (typo, whitespace, comment-only)
+   - Write tests that fail without the fix and pass with it
+   - If the project has an existing test suite, follow its patterns and conventions
+   - Run the test suite to confirm all tests pass (both new and existing)
+
+8. **Code Review (conditional)**:
    - **If you used `subagent-driven-development`**: Skip review (already reviewed between tasks)
    - **If direct implementation**: Run specialized review based on changes:
 
@@ -108,11 +116,11 @@ digraph fix_issue {
    - **REQUIRED**: Fix all Important issues before proceeding
    - Minor issues can be noted for later
 
-8. **Verify fix**:
+9. **Verify fix**:
    - **REQUIRED**: Use `superpowers:verification-before-completion`
    - Never skip verification
 
-9. **Create Draft PR**:
+10. **Create Draft PR**:
    ```bash
    gh pr create --draft \
                 --title "Fix: [issue title]" \
@@ -139,6 +147,8 @@ digraph fix_issue {
 | Skip verification | Always verify before PR |
 | Wrong issue # in PR | Double-check branch name parsing |
 | "I'll just fix it quickly" for big changes | Use proper workflow |
+| Skipping tests | Every non-cosmetic fix needs tests that fail without it |
+| Writing tests after review flags it | Write tests as part of implementation, not as review remediation |
 
 ## Red Flags
 
@@ -151,6 +161,7 @@ digraph fix_issue {
 - Skipping issue fetch "to save time" -> Always get latest context
 - "It's obvious" for multi-file changes -> Use brainstorming
 - Creating ready-for-review PR -> Use draft PR, mark ready after review
+- "No tests needed" for a code change -> If it changes behavior, it needs tests
 
 ## Related Skills & Commands
 
