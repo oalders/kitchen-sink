@@ -84,16 +84,32 @@ gh pr list --head $(git branch --show-current) --json number,url
 
 **If PR exists:**
 1. Post the complete review as a PR comment using `gh pr comment`
-2. **If review passes (Ready to merge? Yes):**
-   - Approve the PR: `gh pr review <pr-number> --approve --body "Code review passed. All checks look good."`
-3. **If review requires fixes (Ready to merge? With fixes/No):**
-   - Don't approve yet - wait for fixes
-4. Inform user that review was posted (and approved if applicable)
-5. This keeps all code review discussion in one place
+2. **Never approve the PR** - solo developer workflows don't allow self-approval
+3. This keeps all code review discussion in one place
 
 **If no PR exists:**
 - Display review results to user in conversation
 - User can create PR later or continue with local fixes
+
+## Fixing Review Issues
+
+When the review finds issues, fix them automatically rather than just reporting:
+
+1. **Check diff size:** `git diff --stat BASE_SHA..HEAD_SHA` — count total lines changed
+2. **If diff is under 400 lines:** fix both critical/major AND minor issues (style, naming, small refactors)
+3. **If diff is 400+ lines:** fix only critical and major issues, note minor issues in the PR comment
+4. Commit fixes with a clear message referencing the review
+5. **Re-run the review cycle** on the new commits (update HEAD_SHA and review again)
+6. Repeat until the review passes clean
+
+## After Review Passes
+
+Once the review finds no remaining issues:
+
+1. Post the final clean review to the PR (if one exists)
+2. **Check if `/monitor-ci` slash command exists** in the current project's available skills
+3. If `/monitor-ci` exists, invoke it to monitor CI status
+4. If `/monitor-ci` does not exist, inform the user the review is complete
 
 ## Example
 
@@ -112,19 +128,29 @@ Task(superpowers:code-reviewer):
   HEAD_SHA: d0e856b8
   DESCRIPTION: Added parseDistanceTag() and case-insensitive regex
 
-Step 3: Check for PR
+Step 3: Review found 1 major issue (missing nil check) and 2 minor issues
+- Diff is 180 lines (under 400) → fix all issues
+- Commit fixes: [fix-1065 a1b2c3d4]
+
+Step 4: Re-run review with updated HEAD
+Task(superpowers:code-reviewer):
+  BASE_SHA: 4f940124
+  HEAD_SHA: a1b2c3d4
+  ... (same params, new HEAD)
+
+Step 5: Review passes clean
+
+Step 6: Check for PR
 $ gh pr list --head fix-1065 --json number
 [{"number": 123}]
 
-Step 4: Post review to PR
+Step 7: Post clean review to PR
 $ gh pr comment 123 --body "[Complete review in markdown]"
 ✓ Review posted to PR #123
 
-Step 5: Review passed - approve PR
-$ gh pr review 123 --approve --body "Code review passed. All checks look good."
-✓ PR #123 approved
-
-User can now merge or address any minor feedback on GitHub.
+Step 8: Check for /monitor-ci
+- /monitor-ci exists → invoke it
+- (or: /monitor-ci not found → inform user review is complete)
 ```
 
 ## Integration with Permissions
