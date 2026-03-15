@@ -38,6 +38,8 @@ digraph fix_issue {
     "Write tests" [shape=box];
     "Used subagent-driven-development?" [shape=diamond];
     "Run specialized review" [shape=box];
+    "Issues found?" [shape=diamond];
+    "Fix issues and commit" [shape=box];
     "Verify with verification-before-completion" [shape=box];
     "Create draft PR closing issue" [shape=box];
 
@@ -55,7 +57,10 @@ digraph fix_issue {
     "Write tests" -> "Used subagent-driven-development?";
     "Used subagent-driven-development?" -> "Verify with verification-before-completion" [label="yes (skip review)"];
     "Used subagent-driven-development?" -> "Run specialized review" [label="no"];
-    "Run specialized review" -> "Verify with verification-before-completion";
+    "Run specialized review" -> "Issues found?" [shape=diamond];
+    "Issues found?" -> "Fix issues and commit" [label="yes"];
+    "Fix issues and commit" -> "Run specialized review" [label="re-review"];
+    "Issues found?" -> "Verify with verification-before-completion" [label="no (clean)"];
     "Verify with verification-before-completion" -> "Create draft PR closing issue";
 }
 ```
@@ -114,8 +119,17 @@ digraph fix_issue {
      | SEO (meta tags/headings/URLs/structured data) | `/seo-review` | Pages, routes, Open Graph, schema markup |
      | Other/general changes | `/request-review` | General code review |
 
-   - **REQUIRED**: Fix all Important issues before proceeding
-   - Minor issues can be noted for later
+   - **Multiple reviewers**: If changes span categories (e.g., frontend + SEO), run each applicable reviewer
+   - **REQUIRED: Fix-and-re-review loop**:
+     1. Run the applicable specialized reviewer(s)
+     2. Fix all Critical, Important, AND Minor issues found
+     3. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost
+     4. If a Minor issue seems wrong or counterproductive, push back on it rather than blindly implementing — but default to fixing it since it's usually less overhead than creating a follow-up issue
+     5. Commit fixes with a clear message referencing the review
+     6. Re-run the **same specialized reviewer(s)** with updated HEAD SHA
+     7. Repeat until the review passes clean
+   - Do NOT skip re-review — the specialized checklists (accessibility, OWASP, SEO) catch things the generic reviewer misses
+   - Do NOT substitute `/request-review` for a specialized reviewer when a specialized one applies
 
 9. **Verify fix**:
    - **REQUIRED**: Use `superpowers:verification-before-completion`
@@ -145,6 +159,8 @@ digraph fix_issue {
 | Jump into complex fix | Suggest brainstorming for non-trivial |
 | Skip review for direct implementation | If no subagent-driven-development, run specialized review |
 | Wrong reviewer for changes | Frontend changes need frontend-review, security needs security-review |
+| Fix issues but skip re-review | Always re-run the same specialized reviewer(s) after fixes |
+| Use /request-review when specialized applies | Specialized reviewers have domain checklists the generic one lacks |
 | Skip verification | Always verify before PR |
 | Wrong issue # in PR | Double-check branch name parsing |
 | "I'll just fix it quickly" for big changes | Use proper workflow |
@@ -158,6 +174,8 @@ digraph fix_issue {
 - "Don't need review" for direct implementation -> If no subagent-driven-development, review is required
 - Skipping review because "it's simple" -> Simple frontend changes can have accessibility issues
 - Using wrong reviewer -> Match reviewer to change type (frontend/security/playwright/general)
+- Skipping re-review after fixes -> Fixes can introduce new issues; always re-review with the same specialized reviewer
+- Using generic /request-review for frontend/SEO/security -> Specialized checklists catch domain-specific issues
 - Creating PR before verification -> Verify first, always
 - Skipping issue fetch "to save time" -> Always get latest context
 - "It's obvious" for multi-file changes -> Use brainstorming

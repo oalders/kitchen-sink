@@ -95,9 +95,9 @@ gh pr list --head $(git branch --show-current) --json number,url
 
 When the review finds issues, fix them automatically rather than just reporting:
 
-1. **Check diff size:** `git diff --stat BASE_SHA..HEAD_SHA` — count total lines changed
-2. **If diff is under 400 lines:** fix both critical/major AND minor issues (style, naming, small refactors)
-3. **If diff is 400+ lines:** fix only critical and major issues, note minor issues in the PR comment
+1. Fix all Critical, Important, AND Minor issues found
+2. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost
+3. If a Minor issue seems wrong or counterproductive, push back rather than blindly implementing — but default to fixing since it's less overhead than a follow-up issue
 4. Commit fixes with a clear message referencing the review
 5. **Re-run the review cycle** on the new commits (update HEAD_SHA and review again)
 6. Repeat until the review passes clean
