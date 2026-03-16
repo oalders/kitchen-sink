@@ -24,14 +24,14 @@ When user requests code review:
 **Option 2: Run git commands separately (already allowed in most projects)**
 ```bash
 # Run these as SEPARATE Bash calls, not chained with &&
-git rev-parse origin/main  # or HEAD~1, or specific commit
+git merge-base origin/main HEAD  # actual branch point, immune to main advancing
 git rev-parse HEAD
 ```
 
 **DON'T do this** (triggers permission prompts):
 ```bash
 # ❌ Compound command with variable assignment
-BASE_SHA=$(git rev-parse origin/main) && HEAD_SHA=$(git rev-parse HEAD) && echo "BASE=$BASE_SHA HEAD=$HEAD_SHA"
+BASE_SHA=$(git merge-base origin/main HEAD) && HEAD_SHA=$(git rev-parse HEAD) && echo "BASE=$BASE_SHA HEAD=$HEAD_SHA"
 ```
 
 ## Invoking Code Reviewer
