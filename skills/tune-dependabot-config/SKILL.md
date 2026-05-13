@@ -1,7 +1,7 @@
 ---
 name: tune-dependabot-config
 description: Use when adding, auditing, or editing .github/dependabot.yml — groups minor and patch updates per ecosystem (majors stay individual), and adds a 7-day cooldown so churning releases settle before a PR opens.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Tune Dependabot Config
@@ -14,6 +14,22 @@ version: 1.0.0
 2. **Add a 7-day cooldown.** Wait 7 days after a release before opening a PR so broken releases get yanked or patched first.
 
 **Core principle:** Reduce dependabot PR noise on safe updates while preserving one-PR-per-package signal on breaking changes. Majors get individual PRs because each one is a breaking change that needs to be evaluated on its own — batching them hides which package failed CI.
+
+## Dispatch this skill to a subagent
+
+When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the transforms inline in the caller's context.**
+
+Why:
+- The skill reads `.github/dependabot.yml`, walks every `updates:` entry, computes minimal edits per entry, writes the file, and runs a YAML parser sanity check. With several ecosystems in play, that is a meaningful amount of `Read`/`Edit`/`Bash` tool traffic the caller doesn't need to see.
+- The caller only needs the final summary line (groups added, cooldown added, existing groups preserved). Everything else is intermediate state.
+
+How to dispatch:
+- Brief the subagent with this SKILL.md as its working spec — pass the path or invoke the skill from inside the subagent.
+- Tell the subagent the working directory.
+- Require the subagent to report back, in under 200 words: the summary line and any entries skipped (paused, security-only, user-tuned cooldown) with reason.
+- If the YAML sanity check fails after editing, the subagent must stop and surface the failure rather than continuing or auto-reverting.
+
+If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
 
 ## When to Use
 

@@ -1,14 +1,14 @@
 ---
 name: tune-perl-ci
-description: Use when modernizing a Perl project's GitHub Actions CI — applies six idempotent transforms (fail-fast flag, Perl 5.42 matrix, perl-tester image bump, default-branch push, concurrency cancel, App::cpm pin) to Dist::Zilla-style workflows.
-version: 1.0.0
+description: Use when modernizing a Perl project's GitHub Actions CI — applies seven idempotent transforms (fail-fast flag, Perl 5.42 matrix, perl-tester image bump, default-branch push, concurrency cancel, App::cpm pin, drop pre-5.24 macOS/Windows cells) to Dist::Zilla-style workflows.
+version: 1.1.0
 ---
 
 # Tune Perl CI
 
 ## Overview
 
-**Six transforms applied to Perl CI workflows under `.github/workflows/`:**
+**Seven transforms applied to Perl CI workflows under `.github/workflows/`:**
 
 1. `fail-fast: false` on every matrix job
 2. Extend Linux + macOS matrices through Perl 5.42
@@ -16,13 +16,30 @@ version: 1.0.0
 4. Restrict the `push:` trigger to the default branch
 5. Add a workflow-level `concurrency:` cancel-in-progress block
 6. Pin App::cpm for Perls ≤ 5.22
+7. Drop macOS + Windows tests for Perls < 5.24
 
 **Core principle:** modernize the workflow without changing intent. Each transform lands as its own commit so any single change is revertable. Re-running the skill on an already-tuned workflow is a no-op.
+
+## Dispatch this skill to a subagent
+
+When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the seven transforms inline in the caller's context.**
+
+Why:
+- Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across seven transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`) and the list of commit SHAs. Everything else is intermediate state.
+
+How to dispatch:
+- Brief the subagent with this SKILL.md as its working spec — pass the path to the file or invoke the skill from inside the subagent.
+- Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
+- Require the subagent to report back, in under 200 words: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
+- If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
+
+If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
 
 ## When to Use
 
 - User asks to tune / modernize / harden CI on a Perl repo
-- Workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`
+- Workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, `perl-actions/install-with-cpm`, or `perl-actions/install-with-cpanm`
 - A Dist::Zilla starter template has produced a CI workflow that is a few years stale
 
 **Skip when:**
@@ -36,6 +53,7 @@ For each `.github/workflows/*.yml`, the file is **in scope** if it mentions any 
 - `perldocker/perl-tester`
 - `shogo82148/actions-setup-perl`
 - `perl-actions/install-with-cpm`
+- `perl-actions/install-with-cpanm`
 
 Other workflows are skipped silently. If no workflow file matches across the repo, report "no Perl workflows found" and exit cleanly.
 
@@ -171,11 +189,11 @@ concurrency:
 
 **Why:** new pushes to the same ref cancel the still-running job from the previous push.
 
-### 6. Pin App::cpm for Perls ≤ 5.22
+### 6. Standardize on `install-with-cpm@v2` and pin App::cpm for Perls ≤ 5.22
 
-**What:** for every step using `perl-actions/install-with-cpm@<any-ref>`:
+**What:** for every step using either `perl-actions/install-with-cpm@<any-ref>` or `perl-actions/install-with-cpanm@<any-ref>`:
 
-1. Bump the action ref to `@v2` (which exposes the `version:` input).
+1. Rewrite the action ref to `perl-actions/install-with-cpm@v2`. This both migrates from the legacy `install-with-cpanm` action (cpanm-based, slower, no parallelism) and exposes the `version:` input introduced in cpm v2.
 2. Under `with:`, add (if missing):
 
    ```yaml
@@ -183,17 +201,26 @@ concurrency:
    version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
    ```
 
-3. Preserve existing `sudo:`, `args:`, `cpanfile:`, etc.
+3. Preserve existing `sudo:`, `args:`, `cpanfile:`, etc. — the `with:` interface is compatible between the two actions for these keys.
 
-**Skip** if `version:` is already present under `with:` (user has pinned deliberately).
+**Skip** if `version:` is already present under `with:` (user has pinned deliberately) — but still rewrite a `install-with-cpanm` ref to `install-with-cpm@v2`.
 
-**Why:** `App::cpm` v0.999.0+ requires Perl 5.24+. Older matrix cells fail to install dependencies with the current cpm release. The expression relies on lexicographic comparison of two-digit-minor strings (`5.10`, `5.12`, …, `5.22`, `5.24`, …), which works for all Perls likely to appear in a matrix.
+**Why:**
+- `install-with-cpm` is the maintained, parallel installer; `install-with-cpanm` is the older serial one. Standardizing on cpm gives faster CI and a single supported action.
+- `App::cpm` v0.999.0+ requires Perl 5.24+. Older matrix cells fail to install dependencies with the current cpm release. The expression relies on lexicographic comparison of two-digit-minor strings (`5.10`, `5.12`, …, `5.22`, `5.24`, …), which works for all Perls likely to appear in a matrix.
 
 **Before:**
 
 ```yaml
 - name: install deps using cpm
   uses: perl-actions/install-with-cpm@v1.9
+  with:
+    cpanfile: "cpanfile"
+    args: "--with-suggests --with-recommends --with-test"
+    sudo: false
+
+- name: install deps using cpanm
+  uses: perl-actions/install-with-cpanm@v1
   with:
     cpanfile: "cpanfile"
     args: "--with-suggests --with-recommends --with-test"
@@ -211,6 +238,57 @@ concurrency:
     sudo: false
     # pin older Perls to the last cpm release compatible with them; newer Perls track the cpm release channel.
     version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+
+- name: install deps using cpm
+  uses: perl-actions/install-with-cpm@v2
+  with:
+    cpanfile: "cpanfile"
+    args: "--with-suggests --with-recommends --with-test"
+    sudo: false
+    # pin older Perls to the last cpm release compatible with them; newer Perls track the cpm release channel.
+    version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+```
+
+### 7. Drop macOS + Windows tests for Perls < 5.24
+
+**What:** in jobs whose `matrix.perl-version` axis exists **and** the job targets macOS or Windows exclusively, remove every `perl-version` entry strictly less than `5.24` (i.e. `5.10`, `5.12`, `5.14`, `5.16`, `5.18`, `5.20`, `5.22`).
+
+A job targets macOS exclusively when **either**:
+- `runs-on:` is a literal `macos-*` string, or
+- `runs-on: ${{ matrix.os }}` and `matrix.os` contains only `macos-*` entries.
+
+Same rule for Windows with `windows-*`.
+
+**Skip when:**
+- The job is Linux (`perldocker/perl-tester` containers handle older Perls cleanly — the App::cpm pin from transform 6 covers them).
+- The job has a mixed `matrix.os` (e.g. `[ubuntu-latest, macos-latest]`). Trimming a single `perl-version` entry drops the cell from every OS in the matrix; the right tool there is an explicit `matrix.exclude:` block, which is too situational to auto-generate. Surface a one-line warning naming the job and move on.
+- The job's `perl-version` list has no entries < `5.24` (idempotent no-op).
+
+**Why:** older Perls on macOS and Windows runners are flaky or unbuildable. `shogo82148/actions-setup-perl` and the Strawberry distribution focus support on 5.24+; pre-5.24 cells frequently fail to install or run on those hosted runners, masking real failures in the rest of the matrix. Linux is unaffected because the `perldocker/perl-tester` images carry working older Perls.
+
+**Before:**
+
+```yaml
+test_macos:
+  runs-on: macos-latest
+  strategy:
+    matrix:
+      perl-version:
+        - "5.20"
+        - "5.30"
+        - "5.34"
+```
+
+**After:**
+
+```yaml
+test_macos:
+  runs-on: macos-latest
+  strategy:
+    matrix:
+      perl-version:
+        - "5.30"
+        - "5.34"
 ```
 
 ## Algorithm
@@ -218,7 +296,7 @@ concurrency:
 ```
 1. Scan .github/workflows/*.yml. Keep files matching the detection rule.
    Exit early with "no Perl workflows found" if the set is empty.
-2. For each transform in order [1..6]:
+2. For each transform in order [1..7]:
      a. For each in-scope file, compute the diff this transform would produce.
      b. Skip any file that is already conformant for this transform (idempotent no-op for that file).
      c. Write the remaining changed files.
@@ -240,7 +318,8 @@ Suggested commit subjects:
 | 3 | `workflow: bump build/coverage to perldocker/perl-tester:5.42` |
 | 4 | `workflow: restrict push trigger to default branch` |
 | 5 | `workflow: add concurrency block to cancel superseded runs` |
-| 6 | `workflow: pin App::cpm for Perls ≤ 5.22` |
+| 6 | `workflow: standardize on install-with-cpm@v2 and pin App::cpm for Perls ≤ 5.22` |
+| 7 | `workflow: drop macOS/Windows tests for Perls < 5.24` |
 
 ## Default branch resolution
 
@@ -318,6 +397,7 @@ jobs:
       matrix:
         os: ["macos-latest"]
         perl-version:
+          - "5.20"
           - "5.30"
           - "5.34"
     needs: build
@@ -334,7 +414,7 @@ jobs:
           sudo: false
 ```
 
-### After (six transforms applied, default branch is `main`)
+### After (seven transforms applied, default branch is `main`)
 
 ```yaml
 name: dzil build and test
@@ -434,6 +514,7 @@ Things to notice in the after-state:
 - Quotes are preserved on existing list entries; new entries match (here, double quotes).
 - `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
 - Both `install-with-cpm` steps got the conditional `version:` line and the `@v2` bump.
+- `test_macos.matrix.perl-version` lost `"5.20"` (transform 7) but `test_linux.matrix.perl-version` keeps `"5.10"` — transform 7 leaves Linux container jobs alone.
 
 ## Verification
 
@@ -449,7 +530,8 @@ After **each** transform's edit, before committing:
 | 3 | every `container.image` whose tag contains no `${{` ends in `:5.42` |
 | 4 | `on.push.branches` is a single-item list with the resolved default branch |
 | 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
-| 6 | every `install-with-cpm` step uses `@v2` and has a `with.version` key |
+| 6 | no `install-with-cpanm` steps remain; every `install-with-cpm` step uses `@v2` and has a `with.version` key |
+| 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
 
@@ -465,6 +547,9 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 | Batching all 6 transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Auto-reverting on verification failure | Hides bugs in the skill | Stop, surface the failure, leave files uncommitted |
 | Bumping `install-with-cpm@v1.9` to `@v2` without adding the conditional `version:` | v2's default `version: main` is App::cpm v0.999+, which breaks Perls ≤ 5.22 | Always bundle the `version:` line with the `@v2` bump |
+| Leaving `perl-actions/install-with-cpanm` in place | The cpanm action is the legacy serial installer; cpm is parallel and the supported path | Rewrite any `install-with-cpanm@*` ref to `install-with-cpm@v2` in the same transform |
+| Trimming pre-5.24 Perls from Linux container jobs | `perldocker/perl-tester` images carry working older Perls; transform 6 already covers the App::cpm install path | Transform 7 only touches macOS-only and Windows-only jobs |
+| Trimming pre-5.24 entries from a mixed-OS matrix (`os: [ubuntu, macos]`) | `perl-version` is a single axis — dropping one entry kills the cell on every OS, including Linux | Skip mixed matrices in transform 7; use `matrix.exclude:` manually if you really want per-OS trimming |
 
 ## Related
 
