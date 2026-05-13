@@ -434,3 +434,41 @@ Things to notice in the after-state:
 - Quotes are preserved on existing list entries; new entries match (here, double quotes).
 - `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
 - Both `install-with-cpm` steps got the conditional `version:` line and the `@v2` bump.
+
+## Verification
+
+After **each** transform's edit, before committing:
+
+1. **YAML parse:** `python3 -c 'import yaml; yaml.safe_load(open(path))'`. Failure → stop, leave file unstaged, surface the error.
+2. **Per-transform structural assertion:**
+
+| # | Assertion |
+|---|---|
+| 1 | every job whose `strategy:` contains a `matrix:` has `fail-fast: false` set |
+| 2 | each targeted job's `perl-version` list includes `5.36`, `5.38`, `5.40`, `5.42` |
+| 3 | every `container.image` whose tag contains no `${{` ends in `:5.42` |
+| 4 | `on.push.branches` is a single-item list with the resolved default branch |
+| 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
+| 6 | every `install-with-cpm` step uses `@v2` and has a `with.version` key |
+
+Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
+
+## Common Mistakes
+
+| Mistake | Why it's wrong | Fix |
+|---|---|---|
+| Extending Windows matrix to 5.42 | Scope is Linux + macOS; Windows often has dep/toolchain quirks worth a deliberate decision | Skip Windows in transform 2 |
+| Bumping every `perldocker/perl-tester:<X>` to `:5.42` | Test-matrix jobs use the matrix variable on purpose; only build/coverage are fixed | Only bump literal-tag images; never touch a tag containing `${{` |
+| Adding `concurrency:` when the user already has one | Overwrites their grouping/cancellation choice | Skip transform 5 if any `concurrency:` exists at workflow level |
+| Stripping `pull_request.branches` | Spec says leave `pull_request:` alone | Only touch `on.push.branches`, never `pull_request` |
+| Pinning App::cpm with a hardcoded `version:` (no conditional) | Forces the old release on modern Perls, slowing them down | Always use the matrix-conditional expression |
+| Batching all 6 transforms into one commit | Can't revert one transform without the others | One commit per transform |
+| Auto-reverting on verification failure | Hides bugs in the skill | Stop, surface the failure, leave files uncommitted |
+| Bumping `install-with-cpm@v1.9` to `@v2` without adding the conditional `version:` | v2's default `version: main` is App::cpm v0.999+, which breaks Perls ≤ 5.22 | Always bundle the `version:` line with the `@v2` bump |
+
+## Related
+
+- `kitchen-sink:tune-dependabot-config` — the sister skill (Dependabot config harden).
+- Reference PR: [libwww-perl/HTTP-Daemon#80](https://github.com/libwww-perl/HTTP-Daemon/pull/80) — exact transforms applied to a real Dist::Zilla project.
+- GitHub docs: [`workflow.concurrency`](https://docs.github.com/en/actions/using-jobs/using-concurrency).
+- GitHub docs: [`matrix.fail-fast`](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs#handling-failures).
