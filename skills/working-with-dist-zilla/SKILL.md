@@ -1,6 +1,6 @@
 ---
 name: working-with-dist-zilla
-description: Use when working in a Perl repo containing a dist.ini file, or when the user mentions dzil, Dist::Zilla, or @Author::* PluginBundles. Covers the non-obvious patterns for editing prereqs, deciding which build artifacts to commit, fixing common dzil warnings, and verifying changes with author/release tests.
+description: Use when working in a Perl repo containing a dist.ini file, or when the user mentions dzil, Dist::Zilla, or @Author::* PluginBundles.
 version: 1.0.0
 ---
 
@@ -65,13 +65,13 @@ Read the `configure` / `bundle_config` sub. The strings you can `-remove` agains
 
 ## 2. Editing prereqs: PluginRemover vs RemovePrereqs
 
-`Dist::Zilla::Role::PluginBundle::PluginRemover` matches `-remove` values against the plugin **instance name** or the **expanded class**. This works fine for class-style plugins but is **brittle for named Prereqs blocks** like:
+`Dist::Zilla::Role::PluginBundle::PluginRemover` matches `-remove` values against the plugin **instance name** or the **expanded class**. Class-name removes (`-remove = Test::TidyAll`) work reliably because they match `Dist::Zilla::Plugin::Test::TidyAll` — that string is stable. Instance-name removes against a **named Prereqs block** like:
 
 ```perl
 [ 'Prereqs' => 'Modules for use with tidyall' => { ... } ]
 ```
 
-Neither `-remove = Modules for use with tidyall` nor `-remove = @Author::OALDERS/Modules for use with tidyall` removes that block reliably across bundles. Class-name removes (`-remove = Test::TidyAll`) **do** work because they match `Dist::Zilla::Plugin::Test::TidyAll`.
+…require you to know the exact moniker the bundle assigned. Bundle authors pick these names ad-hoc, so the same conceptual block is called `'Modules for use with tidyall'` in `@Author::OALDERS` but might be `'TidyAll prereqs'` in another bundle. The moniker may also include spaces, slashes, or the `@Bundle/` prefix, none of which is documented anywhere except the bundle source. **Prefer module-level removal via `[RemovePrereqs]` (next section) — it sidesteps the moniker-guessing problem entirely.**
 
 **Decision tree:**
 
@@ -124,7 +124,7 @@ The next release commit regenerates them cleanly.
 
 ## 6. `cpanfile` sync is automatic
 
-Most modern bundles include `[CopyFilesFromBuild]` which auto-copies `cpanfile` from the build dir back to the repo root after `dzil build`. You usually don't need to `cp` manually. Verify with:
+`[CopyFilesFromBuild]` copies whatever filenames the bundle explicitly lists — it doesn't intrinsically know about `cpanfile`. But most modern bundles configure `[CopyFilesFromBuild] copy = cpanfile` (often alongside `META.json`, `Makefile.PL`, etc.), so the `cpanfile` at the repo root is regenerated automatically after `dzil build`. You usually don't need to `cp` manually. Verify with:
 
 ```bash
 diff -u cpanfile <Dist>-*/cpanfile
@@ -168,13 +168,13 @@ Two `dzil` quirks bite inside restricted execution sandboxes:
 
 **`dzil test --release --author` needs network sockets and home-dir writes.** It uses `Net::EmptyPort` and writes to paths like `~/.dataprinter`. Sandboxes often block both. If the tests can't run inside the sandbox, run them outside and report results back.
 
-**`dzil` reads `~/.dzil` (often a symlink into dotfiles).** Granting read access to the symlink alone is not enough — the sandbox needs to follow the link to its target. For nono-style sandboxes:
+**`dzil` reads `~/.dzil` (often a symlink into dotfiles).** Granting read access to the symlink alone is not enough — the sandbox needs to follow the link to its target. For `nono` sandboxes specifically, that means adding a read grant for the resolved path:
 
 ```
 --read /home/<user>/dot-files/dzil
 ```
 
-(Adjust the path to wherever `readlink ~/.dzil` actually points.)
+(Adjust the path to wherever `readlink ~/.dzil` actually points.) Other sandboxes need the equivalent: Bubblewrap wants `--ro-bind <target> <target>`, Firejail wants `--read-only=<target>`, Docker needs the target mounted, etc. The principle is the same — grant access to the symlink TARGET, not just the link.
 
 ## Common Mistakes
 
@@ -200,7 +200,6 @@ Two `dzil` quirks bite inside restricted execution sandboxes:
 
 ## Related
 
-- Worked example: [oalders/lwp-consolelogger#56](https://github.com/oalders/lwp-consolelogger/pull/56) — Code::TidyAll → precious migration that surfaced patterns 1-9 in sequence
 - [Dist::Zilla on metacpan](https://metacpan.org/pod/Dist::Zilla)
 - [Dist::Zilla::Plugin::RemovePrereqs](https://metacpan.org/pod/Dist::Zilla::Plugin::RemovePrereqs)
 - [Dist::Zilla::Role::PluginBundle::PluginRemover](https://metacpan.org/pod/Dist::Zilla::Role::PluginBundle::PluginRemover)

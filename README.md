@@ -49,7 +49,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 |-------|-------------|
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
-| **working-with-dist-zilla** | Non-obvious patterns for editing `dist.ini`, taming `dzil build` diff noise, and verifying releases |
+| **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
 
 ### Hooks
 
