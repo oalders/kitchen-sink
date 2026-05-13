@@ -212,3 +212,44 @@ concurrency:
     # pin older Perls to the last cpm release compatible with them; newer Perls track the cpm release channel.
     version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
 ```
+
+## Algorithm
+
+```
+1. Scan .github/workflows/*.yml. Keep files matching the detection rule.
+   Exit early with "no Perl workflows found" if the set is empty.
+2. For each transform in order [1..6]:
+     a. For each in-scope file, compute the diff this transform would produce.
+     b. Skip any file that is already conformant for this transform (idempotent no-op for that file).
+     c. Write the remaining changed files.
+     d. Verify each changed file: yaml.safe_load + the structural assertion
+        for transform t (see Verification). On failure, stop with a clear
+        message; leave files unstaged for inspection.
+     e. Stage the changed files and commit with `workflow: <transform description>`.
+3. Report summary: "Applied N transforms across M files in K commits".
+```
+
+Each transform produces at most one commit (across all in-scope files). Transforms that produce no diff for any file produce no commit.
+
+Suggested commit subjects:
+
+| # | Commit subject |
+|---|---|
+| 1 | `workflow: disable fail-fast on matrix jobs` |
+| 2 | `workflow: extend Linux+macOS matrices through Perl 5.42` |
+| 3 | `workflow: bump build/coverage to perldocker/perl-tester:5.42` |
+| 4 | `workflow: restrict push trigger to default branch` |
+| 5 | `workflow: add concurrency block to cancel superseded runs` |
+| 6 | `workflow: pin App::cpm for Perls ≤ 5.22` |
+
+## Default branch resolution
+
+Used by transform 4.
+
+```bash
+git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@'
+```
+
+- If that prints a branch name, use it.
+- Otherwise check `git show-ref --verify --quiet refs/remotes/origin/master` first, then `refs/heads/master`; if either succeeds, fall back to `master`.
+- Otherwise, bail out of transform 4 with a clear message — do not block transforms 1–3, 5, 6.
