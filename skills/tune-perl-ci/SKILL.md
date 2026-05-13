@@ -1,0 +1,474 @@
+---
+name: tune-perl-ci
+description: Use when modernizing a Perl project's GitHub Actions CI — applies six idempotent transforms (fail-fast flag, Perl 5.42 matrix, perl-tester image bump, default-branch push, concurrency cancel, App::cpm pin) to Dist::Zilla-style workflows.
+version: 1.0.0
+---
+
+# Tune Perl CI
+
+## Overview
+
+**Six transforms applied to Perl CI workflows under `.github/workflows/`:**
+
+1. `fail-fast: false` on every matrix job
+2. Extend Linux + macOS matrices through Perl 5.42
+3. Bump build + coverage jobs to `perldocker/perl-tester:5.42`
+4. Restrict the `push:` trigger to the default branch
+5. Add a workflow-level `concurrency:` cancel-in-progress block
+6. Pin App::cpm for Perls ≤ 5.22
+
+**Core principle:** modernize the workflow without changing intent. Each transform lands as its own commit so any single change is revertable. Re-running the skill on an already-tuned workflow is a no-op.
+
+## When to Use
+
+- User asks to tune / modernize / harden CI on a Perl repo
+- Workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`
+- A Dist::Zilla starter template has produced a CI workflow that is a few years stale
+
+**Skip when:**
+- No `.github/workflows/*.yml` matches the action-signature detection rule below — there's nothing to tune
+- The user has deliberately customised concurrency or branch filters — idempotency preserves their choices
+
+## Scope Detection
+
+For each `.github/workflows/*.yml`, the file is **in scope** if it mentions any of:
+
+- `perldocker/perl-tester`
+- `shogo82148/actions-setup-perl`
+- `perl-actions/install-with-cpm`
+
+Other workflows are skipped silently. If no workflow file matches across the repo, report "no Perl workflows found" and exit cleanly.
+
+If the caller passes a single workflow path as an argument, operate only on that file (still apply the detection rule for safety; bail out with a clear message if it isn't Perl-shaped).
+
+## The Six Transforms
+
+### 1. `fail-fast: false` on every matrix job
+
+**What:** insert `fail-fast: false` under every `strategy:` block whose nested `matrix:` exists. Flip `fail-fast: true` to `false` if already present. No-op if `false` already.
+
+**Why:** when `fail-fast:` is missing it defaults to `true`. One failing Perl/OS cell shouldn't mask the rest of the matrix.
+
+**Before:**
+
+```yaml
+test_linux:
+  strategy:
+    matrix:
+      perl-version: ["5.34"]
+```
+
+**After:**
+
+```yaml
+test_linux:
+  strategy:
+    fail-fast: false
+    matrix:
+      perl-version: ["5.34"]
+```
+
+### 2. Extend Linux + macOS matrices through Perl 5.42
+
+**What:** in jobs whose `matrix.perl-version` axis exists **and** the job is either
+
+- a Linux container (`container.image` starts with `perldocker/perl-tester`), or
+- macOS (`runs-on: macos-*` or matrix `os:` includes a `macos-*` entry),
+
+append any of `"5.36"`, `"5.38"`, `"5.40"`, `"5.42"` not already in the list. Preserve older entries. Match the file's quote style.
+
+**Skip Windows.** Disabling or extending Windows is situational, not a general best practice.
+
+**Hard-coded target:** `5.42`. A future revision can teach the skill to discover the latest stable.
+
+**Before:**
+
+```yaml
+perl-version:
+  - "5.10"
+  - "5.30"
+  - "5.34"
+```
+
+**After:**
+
+```yaml
+perl-version:
+  - "5.10"
+  - "5.30"
+  - "5.34"
+  - "5.36"
+  - "5.38"
+  - "5.40"
+  - "5.42"
+```
+
+### 3. Bump build + coverage jobs to `perldocker/perl-tester:5.42`
+
+**What:** replace `container.image:` values matching `perldocker/perl-tester:<X.YY>` with `perldocker/perl-tester:5.42`, but **only when the tag is a literal version** — never touch an image whose tag contains `${{` (those use the matrix variable on purpose).
+
+**Why:** the build job produces the release artifact and the coverage job produces the coverage report. Both should run on the latest stable image, not a stale pin.
+
+**Before:**
+
+```yaml
+build:
+  container:
+    image: perldocker/perl-tester:5.34
+```
+
+**After:**
+
+```yaml
+build:
+  container:
+    image: perldocker/perl-tester:5.42
+```
+
+### 4. Restrict `push:` to the default branch
+
+**What:** in top-level `on.push.branches:`, replace the list with a single-entry list naming the default branch. Leave `pull_request:` and `workflow_dispatch:` alone (even if they have their own `branches:` filter).
+
+**Skip** transform 4 if `on.push:` itself is absent — nothing to restrict. If the key is present but `branches:` is missing, add `branches:` with the resolved default branch.
+
+**Default branch resolution:** Resolve the default branch with `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` (fall back to `main`, then `master`).
+
+**Why:** avoid double CI runs when a push is also part of a PR. Each pushed commit triggers both a push run and a PR run, doubling queue time and burning Actions minutes.
+
+**Before:**
+
+```yaml
+on:
+  push:
+    branches:
+      - "*"
+  pull_request:
+  workflow_dispatch:
+```
+
+**After (default branch is `main`):**
+
+```yaml
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+```
+
+### 5. Add a workflow-level `concurrency:` block
+
+**What:** insert this block at workflow level, directly after the `on:` block:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+**Skip** if any `concurrency:` already exists at workflow level — the user has deliberately customised the concurrency block.
+
+**Why:** new pushes to the same ref cancel the still-running job from the previous push.
+
+### 6. Pin App::cpm for Perls ≤ 5.22
+
+**What:** for every step using `perl-actions/install-with-cpm@<any-ref>`:
+
+1. Bump the action ref to `@v2` (which exposes the `version:` input).
+2. Under `with:`, add (if missing):
+
+   ```yaml
+   # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
+   version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+   ```
+
+3. Preserve existing `sudo:`, `args:`, `cpanfile:`, etc.
+
+**Skip** if `version:` is already present under `with:` (user has pinned deliberately).
+
+**Why:** `App::cpm` v0.999.0+ requires Perl 5.24+. Older matrix cells fail to install dependencies with the current cpm release. The expression relies on lexicographic comparison of two-digit-minor strings (`5.10`, `5.12`, …, `5.22`, `5.24`, …), which works for all Perls likely to appear in a matrix.
+
+**Before:**
+
+```yaml
+- name: install deps using cpm
+  uses: perl-actions/install-with-cpm@v1.9
+  with:
+    cpanfile: "cpanfile"
+    args: "--with-suggests --with-recommends --with-test"
+    sudo: false
+```
+
+**After:**
+
+```yaml
+- name: install deps using cpm
+  uses: perl-actions/install-with-cpm@v2
+  with:
+    cpanfile: "cpanfile"
+    args: "--with-suggests --with-recommends --with-test"
+    sudo: false
+    # pin older Perls to the last cpm release compatible with them; newer Perls track the cpm release channel.
+    version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+```
+
+## Algorithm
+
+```
+1. Scan .github/workflows/*.yml. Keep files matching the detection rule.
+   Exit early with "no Perl workflows found" if the set is empty.
+2. For each transform in order [1..6]:
+     a. For each in-scope file, compute the diff this transform would produce.
+     b. Skip any file that is already conformant for this transform (idempotent no-op for that file).
+     c. Write the remaining changed files.
+     d. Verify each changed file: yaml.safe_load + the structural assertion
+        for transform t (see Verification). On failure, stop with a clear
+        message; leave files unstaged for inspection.
+     e. Stage the changed files and commit with `workflow: <transform description>`.
+3. Report summary: "Applied N transforms across M files in K commits".
+```
+
+Each transform produces at most one commit (across all in-scope files). Transforms that produce no diff for any file produce no commit.
+
+Suggested commit subjects:
+
+| # | Commit subject |
+|---|---|
+| 1 | `workflow: disable fail-fast on matrix jobs` |
+| 2 | `workflow: extend Linux+macOS matrices through Perl 5.42` |
+| 3 | `workflow: bump build/coverage to perldocker/perl-tester:5.42` |
+| 4 | `workflow: restrict push trigger to default branch` |
+| 5 | `workflow: add concurrency block to cancel superseded runs` |
+| 6 | `workflow: pin App::cpm for Perls ≤ 5.22` |
+
+## Default branch resolution
+
+Used by transform 4.
+
+```bash
+git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@'
+```
+
+- If that prints a branch name, use it.
+- Otherwise check `git show-ref --verify --quiet refs/remotes/origin/master` first, then `refs/heads/master`; if either succeeds, fall back to `master`.
+- Otherwise, bail out of transform 4 with a clear message — do not block transforms 1–3, 5, 6.
+
+## Worked Example
+
+A HTTP-Daemon-shaped workflow that exercises every transform.
+
+### Before
+
+```yaml
+name: dzil build and test
+on:
+  push:
+    branches:
+      - "*"
+  pull_request:
+    branches:
+      - "*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-24.04
+    container:
+      image: perldocker/perl-tester:5.34
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build Dist
+        run: dzil build
+
+  coverage-job:
+    needs: build
+    runs-on: ubuntu-24.04
+    container:
+      image: perldocker/perl-tester:5.34
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+
+  test_linux:
+    name: Perl ${{ matrix.perl-version }} on ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        perl-version:
+          - "5.10"
+          - "5.30"
+          - "5.34"
+    container:
+      image: perldocker/perl-tester:${{ matrix.perl-version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install deps
+        uses: perl-actions/install-with-cpm@v1.9
+        with:
+          cpanfile: "cpanfile"
+          args: "--with-recommends --with-suggests --with-test"
+          sudo: false
+
+  test_macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: ["macos-latest"]
+        perl-version:
+          - "5.30"
+          - "5.34"
+    needs: build
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: ${{ matrix.perl-version }}
+      - name: install deps using cpm
+        uses: perl-actions/install-with-cpm@v1.9
+        with:
+          cpanfile: "cpanfile"
+          args: "--with-recommends --with-suggests --with-test"
+          sudo: false
+```
+
+### After (six transforms applied, default branch is `main`)
+
+```yaml
+name: dzil build and test
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - "*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-24.04
+    container:
+      image: perldocker/perl-tester:5.42
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build Dist
+        run: dzil build
+
+  coverage-job:
+    needs: build
+    runs-on: ubuntu-24.04
+    container:
+      image: perldocker/perl-tester:5.42
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+
+  test_linux:
+    name: Perl ${{ matrix.perl-version }} on ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        perl-version:
+          - "5.10"
+          - "5.30"
+          - "5.34"
+          - "5.36"
+          - "5.38"
+          - "5.40"
+          - "5.42"
+    container:
+      image: perldocker/perl-tester:${{ matrix.perl-version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install deps
+        uses: perl-actions/install-with-cpm@v2
+        with:
+          cpanfile: "cpanfile"
+          args: "--with-recommends --with-suggests --with-test"
+          sudo: false
+          # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
+          version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+
+  test_macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["macos-latest"]
+        perl-version:
+          - "5.30"
+          - "5.34"
+          - "5.36"
+          - "5.38"
+          - "5.40"
+          - "5.42"
+    needs: build
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: ${{ matrix.perl-version }}
+      - name: install deps using cpm
+        uses: perl-actions/install-with-cpm@v2
+        with:
+          cpanfile: "cpanfile"
+          args: "--with-recommends --with-suggests --with-test"
+          sudo: false
+          # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
+          version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+```
+
+Things to notice in the after-state:
+
+- `build` and `coverage-job` containers bumped to `:5.42`. The `test_linux` container still uses `:${{ matrix.perl-version }}` — transform 3 skips any image tag containing `${{`.
+- `pull_request.branches: ["*"]` is preserved — transform 4 only touches `on.push.branches`.
+- Quotes are preserved on existing list entries; new entries match (here, double quotes).
+- `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
+- Both `install-with-cpm` steps got the conditional `version:` line and the `@v2` bump.
+
+## Verification
+
+After **each** transform's edit, before committing:
+
+1. **YAML parse:** `python3 -c 'import yaml; yaml.safe_load(open(path))'`. Failure → stop, leave file unstaged, surface the error.
+2. **Per-transform structural assertion:**
+
+| # | Assertion |
+|---|---|
+| 1 | every job whose `strategy:` contains a `matrix:` has `fail-fast: false` set |
+| 2 | each targeted job's `perl-version` list includes `5.36`, `5.38`, `5.40`, `5.42` |
+| 3 | every `container.image` whose tag contains no `${{` ends in `:5.42` |
+| 4 | `on.push.branches` is a single-item list with the resolved default branch |
+| 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
+| 6 | every `install-with-cpm` step uses `@v2` and has a `with.version` key |
+
+Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
+
+## Common Mistakes
+
+| Mistake | Why it's wrong | Fix |
+|---|---|---|
+| Extending Windows matrix to 5.42 | Scope is Linux + macOS; Windows often has dep/toolchain quirks worth a deliberate decision | Skip Windows in transform 2 |
+| Bumping every `perldocker/perl-tester:<X>` to `:5.42` | Test-matrix jobs use the matrix variable on purpose; only build/coverage are fixed | Only bump literal-tag images; never touch a tag containing `${{` |
+| Adding `concurrency:` when the user already has one | Overwrites their grouping/cancellation choice | Skip transform 5 if any `concurrency:` exists at workflow level |
+| Stripping `pull_request.branches` | Spec says leave `pull_request:` alone | Only touch `on.push.branches`, never `pull_request` |
+| Pinning App::cpm with a hardcoded `version:` (no conditional) | Forces the old release on modern Perls, slowing them down | Always use the matrix-conditional expression |
+| Batching all 6 transforms into one commit | Can't revert one transform without the others | One commit per transform |
+| Auto-reverting on verification failure | Hides bugs in the skill | Stop, surface the failure, leave files uncommitted |
+| Bumping `install-with-cpm@v1.9` to `@v2` without adding the conditional `version:` | v2's default `version: main` is App::cpm v0.999+, which breaks Perls ≤ 5.22 | Always bundle the `version:` line with the `@v2` bump |
+
+## Related
+
+- `kitchen-sink:tune-dependabot-config` — the sister skill (Dependabot config harden).
+- Reference PR: [libwww-perl/HTTP-Daemon#80](https://github.com/libwww-perl/HTTP-Daemon/pull/80) — exact transforms applied to a real Dist::Zilla project.
+- GitHub docs: [`workflow.concurrency`](https://docs.github.com/en/actions/using-jobs/using-concurrency).
+- GitHub docs: [`matrix.fail-fast`](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs#handling-failures).
