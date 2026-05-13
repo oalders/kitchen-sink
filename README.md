@@ -51,6 +51,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
 | **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown |
 | **tune-perl-ci** | Six idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI |
+| **tune-precious** | Migrates a Perl repo from `Code::TidyAll` to `precious` (or sets up `precious` from scratch) — config, `.perltidyrc`, `dist.ini`, CI lint job |
 | **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
 
 ### Hooks
@@ -221,6 +222,17 @@ Six idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions workf
 - Adds a workflow-level `concurrency:` cancel-in-progress block
 - Pins App::cpm for Perls ≤ 5.22 (via conditional `version:` expression on `install-with-cpm@v2`)
 - Each transform lands as its own commit; re-running is a no-op
+
+### tune-precious
+
+Lands [`precious`](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo via five idempotent transforms:
+- Generates (or refreshes) `precious.toml` with `perltidy`, `perlvars`, `omegasort-gitignore`, `omegasort-stopwords`, and optionally `perlcritic`
+- Consolidates the perltidy profile to the hidden `.perltidyrc` and strips `-b`
+- Deletes `Code::TidyAll` config (`.tidyallrc`, `tidyall.ini`, `.tidyall.d/` ignore line)
+- Edits `dist.ini` to drop `Test::TidyAll` and its prereqs via `PluginRemover` + `[RemovePrereqs]`
+- Adds a `.github/workflows/lint.yml` job running `precious lint --all`
+
+Handles three modes: migrate (tidyall present), greenfield (no precious yet), tune (precious already configured). Each transform commits separately; re-running on a tuned repo is a no-op.
 
 ### working-with-dist-zilla
 
