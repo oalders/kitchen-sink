@@ -49,6 +49,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 |-------|-------------|
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
+| **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
 
 ### Hooks
 
@@ -199,6 +200,18 @@ Prevents over-engineering by evaluating whether a task needs heavyweight process
 - Checks indicators: adding constants? < 100 lines? < 3 files?
 - Announces decision with reasoning
 - Routes to direct implementation or subagent workflow
+
+### working-with-dist-zilla
+
+Captures the non-obvious patterns that trip up first-pass `Dist::Zilla` work:
+- Decide PluginRemover vs `[RemovePrereqs]` (and the `-remove` vs `remove` syntax gotcha)
+- Revert build artifacts (`META.json`, `Makefile.PL`, `README.md`) in non-release PRs to avoid diff noise
+- Phase-scoped re-adds via `[Prereqs / DevelopRequires]`
+- Fix `Git::Contributors` warnings with `.mailmap`
+- Verify with `dzil test --release --author`
+- Sandbox notes for `~/.dzil` symlink targets and network-bound author tests
+
+Triggers when the repo contains a `dist.ini` file or the user mentions `dzil`, `Dist::Zilla`, or `@Author::*` bundles.
 
 ## Hooks Overview
 
