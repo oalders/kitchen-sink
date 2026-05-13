@@ -49,6 +49,8 @@ claude plugin marketplace add oalders/kitchen-sink &&
 |-------|-------------|
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
+| **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown |
+| **tune-perl-ci** | Six idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI |
 | **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
 
 ### Hooks
@@ -200,6 +202,25 @@ Prevents over-engineering by evaluating whether a task needs heavyweight process
 - Checks indicators: adding constants? < 100 lines? < 3 files?
 - Announces decision with reasoning
 - Routes to direct implementation or subagent workflow
+
+### tune-dependabot-config
+
+Groups Dependabot minor/patch updates per ecosystem (majors stay individual) and adds a 7-day cooldown so churning releases settle before a PR opens:
+- Idempotent edits to `.github/dependabot.yml`
+- Preserves user-customized schedules, labels, reviewers
+- Adds `groups:` block with `update-types: [minor, patch]` per ecosystem
+- Sets `cooldown.default-days: 7` to absorb release-day churn
+
+### tune-perl-ci
+
+Six idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions workflows under `.github/workflows/`:
+- `fail-fast: false` on every matrix job
+- Extends Linux + macOS matrices through Perl 5.42
+- Bumps build + coverage jobs to `perldocker/perl-tester:5.42`
+- Restricts the `push:` trigger to the default branch
+- Adds a workflow-level `concurrency:` cancel-in-progress block
+- Pins App::cpm for Perls ≤ 5.22 (via conditional `version:` expression on `install-with-cpm@v2`)
+- Each transform lands as its own commit; re-running is a no-op
 
 ### working-with-dist-zilla
 
