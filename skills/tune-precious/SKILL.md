@@ -1,0 +1,503 @@
+---
+name: tune-precious
+description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo. Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, and wires a CI lint job. Idempotent across re-runs.
+version: 1.0.0
+---
+
+# Tune Precious
+
+## Overview
+
+**Five idempotent transforms that land [precious](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo:**
+
+1. Generate or refresh `precious.toml` with `perltidy`, `perlvars`, `omegasort-gitignore`, `omegasort-stopwords`, and optionally `perlcritic`.
+2. Consolidate the `perltidy` profile to the hidden `.perltidyrc` and strip `-b` (precious manages backup mode).
+3. Delete `Code::TidyAll` config (`.tidyallrc`, `tidyall.ini`, `.tidyall.d/` ignore line).
+4. Edit `dist.ini` to remove the tidyall plugin + prereqs via the bundle's `PluginRemover` and a trailing `[RemovePrereqs]` block.
+5. Add a `.github/workflows/lint.yml` job that installs `precious` + `omegasort` via ubi and runs `precious lint --all`.
+
+**Core principle:** apply the canonical recipe without changing the user's tidy/lint intent. Each transform is its own commit so any single change is revertable. Re-running on an already-tuned repo is a no-op.
+
+**Three modes** the skill handles transparently:
+
+| Mode | Trigger | What changes |
+|---|---|---|
+| Migrate | Repo has `.tidyallrc`, `tidyall.ini`, or `[Test::TidyAll]` in `dist.ini` | All five transforms apply |
+| Greenfield | Perl repo, no tidyall config, no `precious.toml` | T1 + T2 (consolidate any visible `perltidyrc`) + T5 |
+| Tune | `precious.toml` already exists | All transforms run as no-ops; surfaces drift between current config and canonical recipe |
+
+**Worked example PR:** [libwww-perl/WWW-Mechanize-Cached#35](https://github.com/libwww-perl/WWW-Mechanize-Cached/pull/35) — the recipe was extracted from this PR.
+
+## Dispatch this skill to a subagent
+
+When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the five transforms inline in the caller's context.**
+
+Why:
+- Each transform reads several files, computes a diff, writes the files, verifies with `precious config list` / TOML parse / YAML parse / `dzil build --no-tgz`, then stages and commits. Across five transforms and several files, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`) and the list of commit SHAs. Everything else is intermediate state.
+
+How to dispatch:
+- Brief the subagent with this SKILL.md as its working spec — pass the path to the file or invoke the skill from inside the subagent.
+- Tell the subagent the working directory.
+- Require the subagent to report back, in under 200 words: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
+- If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
+
+If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
+
+## When to Use
+
+- User asks to migrate from `Code::TidyAll` to `precious`
+- User asks to set up `precious` from scratch in a Perl repo
+- User asks to audit / refresh an existing `precious.toml` against the canonical recipe
+- Repo contains `.tidyallrc` or `tidyall.ini`
+- `dist.ini` includes `Test::TidyAll`, `[@Author::*]` with a tidyall prereqs block, or `[PerlCritic]` you want to migrate behind precious
+
+**Skip when:**
+- Not a Perl repo (no `*.pm`, `*.pl`, `*.t`, `*.psgi`, or `dist.ini`)
+- The user has deliberately customised `precious.toml` for tools outside the canonical set (e.g. they run `prettier` over Mojolicious templates) — idempotency preserves their commands; only report drift in the standard five.
+
+## Workflow
+
+```dot
+digraph tune_precious {
+    "Detect mode" [shape=box];
+    "Migrate or Greenfield or Tune?" [shape=diamond];
+    "T1: precious.toml" [shape=box];
+    "Verify + commit T1" [shape=box];
+    "T2: consolidate .perltidyrc" [shape=box];
+    "Verify + commit T2" [shape=box];
+    "T3: delete tidyall config" [shape=box];
+    "Verify + commit T3" [shape=box];
+    "T4: edit dist.ini" [shape=box];
+    "Verify + commit T4" [shape=box];
+    "T5: add CI lint job" [shape=box];
+    "Verify + commit T5" [shape=box];
+    "Report summary" [shape=box];
+
+    "Detect mode" -> "Migrate or Greenfield or Tune?";
+    "Migrate or Greenfield or Tune?" -> "T1: precious.toml";
+    "T1: precious.toml" -> "Verify + commit T1";
+    "Verify + commit T1" -> "T2: consolidate .perltidyrc";
+    "T2: consolidate .perltidyrc" -> "Verify + commit T2";
+    "Verify + commit T2" -> "T3: delete tidyall config";
+    "T3: delete tidyall config" -> "Verify + commit T3";
+    "Verify + commit T3" -> "T4: edit dist.ini";
+    "T4: edit dist.ini" -> "Verify + commit T4";
+    "Verify + commit T4" -> "T5: add CI lint job";
+    "T5: add CI lint job" -> "Verify + commit T5";
+    "Verify + commit T5" -> "Report summary";
+}
+```
+
+## Scope Detection
+
+Before running, fingerprint the repo:
+
+| Probe | Implication |
+|---|---|
+| `.tidyallrc` or `tidyall.ini` present | Mode = migrate; T3 will delete |
+| `dist.ini` mentions `Test::TidyAll`, `tidyall`, or has a `[Prereqs / *]` block named for tidyall | Mode = migrate; T4 will rewrite |
+| `precious.toml` present | Mode = tune; T1 audits-only and reports drift |
+| Neither tidyall nor precious config present, but `*.pm` files exist | Mode = greenfield; T3 + T4 are no-ops |
+| No Perl files (`*.pm`, `*.pl`, `*.t`, `*.psgi`, `dist.ini`) | Exit cleanly with "no Perl files found" |
+
+`perlcritic` detection (drives whether T1 wires up a `perlcritic` command):
+
+- `.tidyallrc` / `tidyall.ini` has `[PerlCritic]` → auto-enforced; wire up.
+- `dist.ini` has `[Test::Perl::Critic]` → auto-enforced; wire up.
+- `dist.ini` has `[PerlCritic]` (Dist::Zilla plugin) → auto-enforced; wire up.
+- `.perlcriticrc` exists but no auto-enforcement → leave for manual use; do NOT wire up.
+
+**Rule:** don't widen the scan set. If perlcritic wasn't enforced before, precious shouldn't enforce it after.
+
+## The Five Transforms
+
+### 1. Generate or refresh `precious.toml`
+
+**What:** write `precious.toml` at repo root with the canonical commands. Skip blocks whose source file/binary isn't present (no `.stopwords` → skip `omegasort-stopwords`).
+
+**Canonical template:**
+
+```toml
+[commands.perltidy]
+type    = "both"
+include = ["**/*.{pl,pm,t,psgi}"]
+cmd     = ["perltidy", "--profile=$PRECIOUS_ROOT/.perltidyrc"]
+lint_flags = ["--assert-tidy", "--no-standard-output", "--outfile=/dev/null"]
+tidy_flags = ["--backup-and-modify-in-place", "--backup-file-extension=/"]
+ok_exit_codes         = [0]
+lint_failure_exit_codes = [2]
+
+[commands.perlvars]
+type    = "lint"
+include = ["**/*.pm"]
+cmd     = ["perlvars"]
+ok_exit_codes         = [0]
+lint_failure_exit_codes = [1]
+
+[commands.omegasort-gitignore]
+type    = "both"
+include = [".gitignore"]
+cmd     = ["omegasort", "--sort", "path", "--unique"]
+lint_flags = ["--check"]
+ok_exit_codes         = [0]
+lint_failure_exit_codes = [1]
+
+[commands.omegasort-stopwords]
+type    = "both"
+include = [".stopwords"]
+cmd     = ["omegasort", "--sort", "text", "--unique"]
+lint_flags = ["--check"]
+ok_exit_codes         = [0]
+lint_failure_exit_codes = [1]
+
+# Wired only when perlcritic was already auto-enforced (see scope detection).
+[commands.perlcritic]
+type    = "lint"
+include = ["**/*.{pl,pm,t,psgi}"]
+cmd     = ["perlcritic", "--profile=$PRECIOUS_ROOT/.perlcriticrc"]
+ok_exit_codes         = [0]
+lint_failure_exit_codes = [2]
+```
+
+**Why each block:**
+
+- `perltidy` runs as both tidy and lint. `--assert-tidy` makes lint mode return non-zero when the file would change; `--outfile=/dev/null` keeps lint mode from rewriting. The `--backup-file-extension=/` trick deletes perltidy's `.bak` file by writing it to `/` (a directory perltidy can't open), so tidy mode leaves a clean tree.
+- `perlvars` (from `App::perlvars`) is the lint-time replacement for `Code::TidyAll::Plugin::Test::Vars`. Wire it up **even when Test::Vars wasn't previously enforced** — it's cheap, catches unused lexicals, and is the canonical successor.
+- `omegasort-gitignore` keeps `.gitignore` sorted and de-duplicated. Sort mode `path` understands directory hierarchy.
+- `omegasort-stopwords` keeps `.stopwords` (the Pod::Wordlist source for `Test::Spelling`) sorted and de-duplicated. Sort mode `text`.
+- `perlcritic` is only emitted when previously enforced — see Scope Detection above.
+
+**Idempotency rule (tune mode):** if `precious.toml` already exists, parse it; for each canonical block, if the user's version matches the template exactly, leave it alone; if it differs, report drift (per-key diff) but do not auto-rewrite. Only insert blocks that are missing.
+
+**Verify:** `precious config list` exits 0. If precious isn't on `PATH`, fall back to `python3 -c 'import tomllib; tomllib.loads(open("precious.toml","rb").read().decode())'` for a syntax check.
+
+### 2. Consolidate `.perltidyrc`
+
+**What:** ensure the perltidy profile lives at the hidden `.perltidyrc` (what perltidy itself defaults to). Three sub-cases:
+
+| State | Action |
+|---|---|
+| Only `.perltidyrc` exists | Strip `-b` if present (precious manages backups via `--backup-file-extension=/`). Otherwise no-op. |
+| Only `perltidyrc` exists | `git mv perltidyrc .perltidyrc`. Strip `-b`. |
+| Both exist | Diff them. The visible `perltidyrc` is usually the tidyall-managed copy, which typically lacks `-b` (tidyall handles backups itself); the hidden `.perltidyrc` is what humans use for manual `perltidy` runs and is more likely to carry `-b`. Keep `.perltidyrc` (after stripping `-b` if present); `git rm perltidyrc`. If the diff shows non-trivial divergence beyond `-b`, stop and surface the diff for human resolution. |
+| Neither exists | Greenfield: write a minimal `.perltidyrc` (`-pbp`, `-nst`, `-se` is a common starting point) — but only if the user explicitly asks for greenfield setup. Otherwise skip and warn. |
+
+**Why strip `-b`:** in a tidyall world `-b` told perltidy to write a backup before in-place modification, and tidyall cleaned it up. Under precious, the `--backup-file-extension=/` trick in T1's tidy-flags does the cleanup. Leaving `-b` in the profile creates duplicate-backup confusion.
+
+**Verify:** `perltidy --version` exits 0 with the resolved profile loaded (run `perltidy -DEBUG -dump-options` and grep for the profile path).
+
+### 3. Delete `Code::TidyAll` config files
+
+**What:**
+- `git rm .tidyallrc tidyall.ini` (only the ones present).
+- Edit `.gitignore`: remove the `.tidyall.d/` line (and `tidyall.d/` if present without the leading dot). The cache directory is gone with the tidyall plugin.
+- If `.tidyall.d/` itself exists in the working tree as a cached directory, `git rm -r .tidyall.d/`.
+
+**Verify:** `git ls-files | grep -E '(^|/)tidyall' || true` returns nothing.
+
+**Critical:** stage the deletions (`git add -u`) before running `dzil build` in T4. `Dist::Zilla::Plugin::Git::GatherDir` reads `git ls-files`; unstaged deletions mean ghost files still appear in the list, and `dzil` errors with `file does not exist`.
+
+### 4. Edit `dist.ini`
+
+Skip this transform entirely if there is no `dist.ini`.
+
+**4a.i. Read the bundle source for plugin/prereqs-block names.**
+
+`dist.ini` usually begins with a single `[@Author::Foo]` line. Find the bundle source:
+
+```bash
+perldoc -lm Dist::Zilla::PluginBundle::Author::Foo
+```
+
+Read the `configure` / `bundle_config` sub. You're looking for:
+
+- The plugin instance that adds the tidyall test — typically `Test::TidyAll`.
+- The named `[ 'Prereqs' => 'NAME' => { ... } ]` block that lists tidyall modules — in `@Author::OALDERS` this is `'Modules for use with tidyall'`. Other bundles pick different names.
+
+**4a.ii. Cross-check the moniker against `META.json` before editing.**
+
+Bundle-author monikers are the highest-risk free-text part of this transform. Capture the pre-edit baseline:
+
+```bash
+dzil build --no-tgz
+grep -A2 '"develop"' <DistName>-*/META.json | head -30
+grep -E '(Code::TidyAll|Test::TidyAll|Test::Vars)' <DistName>-*/META.json
+```
+
+If the prereqs you see in the `develop` section don't match the moniker you guessed from the bundle source, fix the moniker before proceeding. After T4 lands, re-running the grep should return nothing.
+
+**4b. Use the bundle's `PluginRemover`:**
+
+```ini
+[@Author::Foo]
+-remove = Test::TidyAll
+-remove = Modules for use with tidyall
+```
+
+The first form (`Test::TidyAll`) is a class-name remove and is reliable — it matches `Dist::Zilla::Plugin::Test::TidyAll`. The second form is an instance-name remove against the named Prereqs block; **the moniker is bundle-specific** — if your bundle calls it something else, use that exact string.
+
+**4c. Append `[RemovePrereqs]` after the bundle:**
+
+```ini
+[RemovePrereqs]
+remove = Code::TidyAll
+remove = Code::TidyAll::Plugin::SortLines::Naturally
+remove = Code::TidyAll::Plugin::Test::Vars
+remove = Code::TidyAll::Plugin::UniqueLines
+remove = Test::Code::TidyAll
+remove = Test::Vars
+remove = Pod::Wordlist
+remove = Parallel::ForkManager
+```
+
+Two things to remember about `[RemovePrereqs]`:
+
+- **Plugin order matters.** `[RemovePrereqs]` only sees prereqs added by plugins listed earlier in `dist.ini`. The bundle line goes first, `[RemovePrereqs]` second.
+- **`remove =` not `-remove =`.** The leading-dash form is for PluginBundle `PluginRemover`; inside `[RemovePrereqs]`, Config::MVP raises `multiple values given for property -remove` on the dash form.
+
+**4d. Add develop-phase prereq for `App::perlvars`:**
+
+```ini
+[Prereqs / DevelopRequires]
+App::perlvars = 0
+```
+
+Append to an existing `[Prereqs / DevelopRequires]` block if one already exists. **Skip this sub-step entirely if `App::perlvars` already appears under `prereqs.develop.requires` in the pre-edit `META.json`** (some bundles inject it themselves; a duplicate is harmless but noisy).
+
+**4e. Run `dzil build --no-tgz` and verify.**
+
+```bash
+dzil build --no-tgz
+diff -u cpanfile <DistName>-*/cpanfile        # should be empty after edits
+grep -E '(Code::TidyAll|Test::TidyAll|Test::Vars|Pod::Wordlist|Parallel::ForkManager)' <DistName>-*/META.json
+# above grep should return nothing
+```
+
+**4f. Clean up build artefacts before committing.**
+
+`dzil build` regenerates `META.json`, `Makefile.PL`, `README.md`, and friends via `[CopyFilesFromBuild]`. For non-release commits, these are noise — revert them:
+
+```bash
+git checkout -- META.json Makefile.PL README.md Changes
+rm -rf <DistName>-*/ <DistName>-*.tar.gz
+```
+
+Commit only `dist.ini` and `cpanfile`. The next release commit regenerates the rest cleanly.
+
+(See the `working-with-dist-zilla` skill for the broader rationale.)
+
+### 5. Add CI lint job
+
+**What:** add (or update) `.github/workflows/lint.yml`:
+
+**Before emitting the file, resolve the default branch:**
+
+```bash
+git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@'
+```
+
+Substitute the resolved name (or fall back to `main`) into the `branches:` list below. Repos still on `master` need `master` here, or the push trigger silently never fires.
+
+```yaml
+name: lint
+
+on:
+  push:
+    branches:
+      - main            # ← replace with resolved default branch
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  precious:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: "5.42"
+      - uses: oalders/install-ubi-action@v1
+        with:
+          tools: |
+            houseabsolute/precious
+            houseabsolute/omegasort
+      - uses: perl-actions/install-with-cpm@v2
+        with:
+          install: |
+            App::perlvars
+            Perl::Tidy
+          sudo: false
+      - run: precious lint --all
+```
+
+**Why this shape:**
+
+- `precious` is the single entry point — no per-tool step.
+- `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort are Rust/Go); skips compile time.
+- `install-with-cpm@v2` installs the two CPAN tools precious shells out to.
+- Perl 5.42 (the current matrix max) is enough for the lint job; nothing in this job exercises older Perls.
+- `branches: [<default>]` + workflow-level `concurrency:` block — same conventions as `tune-perl-ci`. Resolve the default branch with the `git symbolic-ref` command shown above and substitute before writing the file.
+
+**Idempotency:** if `.github/workflows/lint.yml` already exists, parse it. If it already runs `precious lint --all` under the same shape, leave it alone. If the existing file uses a different shape (e.g. installs precious from source), surface the drift and skip — do not overwrite a hand-rolled workflow.
+
+**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0.
+
+## Algorithm
+
+```
+1. Detect mode (migrate / greenfield / tune). Exit clean if no Perl files.
+2. For each transform T1..T5 in order, classify into one of:
+   - NO-OP:   change set is empty; skip silently.
+   - APPLY:   change set is non-empty AND it is safe to write
+              (the transform's per-step rules don't say "report drift").
+              Apply, verify, stage, commit.
+   - DRIFT:   change set is non-empty BUT the transform's per-step rules
+              say "surface drift and skip" (e.g. T1 in tune mode when a
+              block exists but differs from canonical; T5 when an
+              existing lint.yml uses a different shape). Record the
+              per-key diff for the final report; do NOT write or commit.
+   On verification failure during APPLY: STOP, leave files unstaged,
+   surface the error.
+3. Report: "Applied N transforms across M files in K commits; surfaced D drift items."
+```
+
+Each transform produces at most one commit. NO-OP and DRIFT outcomes produce no commit; DRIFT outcomes are accumulated and printed at the end of the report.
+
+Suggested commit subjects:
+
+| # | Commit subject |
+|---|---|
+| 1 | `precious: add canonical config` (greenfield) / `precious: refresh canonical config` (migrate) |
+| 2 | `perltidy: consolidate profile to .perltidyrc and drop -b` |
+| 3 | `tidyall: delete config files and ignore entries` |
+| 4 | `dist.ini: drop Code::TidyAll plugin and prereqs` |
+| 5 | `ci: add precious lint job` |
+
+## Worked Example
+
+Repo: a `@Author::OALDERS`-shaped Perl distribution mid-migration.
+
+### Before
+
+```
+dist.ini
+perltidyrc            # visible duplicate, tidyall-managed (no -b)
+.perltidyrc           # canonical, contains -b from manual perltidy use
+.tidyallrc
+.tidyall.d/           # cache, gitignored
+.gitignore            # includes ".tidyall.d/"
+.github/workflows/dzil-build-and-test.yml
+```
+
+`dist.ini`:
+
+```ini
+name    = Acme-Foo
+author  = Olaf Alders <olaf@example.com>
+version = 1.23
+
+[@Author::OALDERS]
+```
+
+`.tidyallrc`:
+
+```
+[PerlTidy]
+select = **/*.{pl,pm,t}
+argv = --profile=$ROOT/perltidyrc
+
+[Test::Vars]
+select = lib/**/*.pm
+
+[SortLines::Naturally]
+select = .gitignore
+
+[UniqueLines]
+select = .stopwords
+```
+
+### After
+
+Five commits land:
+
+1. `precious: add canonical config` — new `precious.toml` at repo root with the five canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`).
+2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped.
+3. `tidyall: delete config files and ignore entries` — `.tidyallrc` removed; `.gitignore` no longer mentions `.tidyall.d/`.
+4. `dist.ini: drop Code::TidyAll plugin and prereqs` — bundle line + `[RemovePrereqs]` + `[Prereqs / DevelopRequires]`:
+
+   ```ini
+   [@Author::OALDERS]
+   -remove = Test::TidyAll
+   -remove = Modules for use with tidyall
+
+   [RemovePrereqs]
+   remove = Code::TidyAll
+   remove = Code::TidyAll::Plugin::SortLines::Naturally
+   remove = Code::TidyAll::Plugin::Test::Vars
+   remove = Code::TidyAll::Plugin::UniqueLines
+   remove = Test::Code::TidyAll
+   remove = Test::Vars
+   remove = Pod::Wordlist
+   remove = Parallel::ForkManager
+
+   [Prereqs / DevelopRequires]
+   App::perlvars = 0
+   ```
+
+5. `ci: add precious lint job` — new `.github/workflows/lint.yml` as specified above.
+
+`cpanfile` is regenerated by T4's `dzil build` and is the only build-output file committed alongside `dist.ini`; `META.json`, `Makefile.PL`, `README.md` are reverted.
+
+## Verification
+
+After **each** transform, before committing:
+
+| # | Verification |
+|---|---|
+| 1 | `precious config list` exits 0; otherwise `python3 -c 'import tomllib; tomllib.loads(open("precious.toml","rb").read().decode())'` |
+| 2 | `grep -E '(^\|\s)(-b\|--backup-and-modify-in-place)(\s\|$)' .perltidyrc` returns nothing; `git ls-files perltidyrc` returns nothing |
+| 3 | `git ls-files \| grep -E '(^\|/)tidyall'` returns nothing; `.gitignore` has no `tidyall` line |
+| 4 | `dzil build --no-tgz` exits 0; `grep -E '(Code::TidyAll\|Test::Vars\|Pod::Wordlist\|Parallel::ForkManager)' <DistName>-*/META.json` returns nothing |
+| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0 |
+
+Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
+
+## Common Mistakes
+
+| Mistake | Why it's wrong | Fix |
+|---|---|---|
+| `dzil build` errors with `file does not exist` after T3 | `Git::GatherDir` reads `git ls-files`; unstaged deletions still show up | `git add -u` (or `git rm`) the tidyall files **before** running `dzil build` in T4 |
+| `[RemovePrereqs]` placed before the bundle | `[RemovePrereqs]` only sees prereqs from plugins listed earlier | Move `[RemovePrereqs]` **after** the `[@Author::*]` line |
+| `[RemovePrereqs]` uses `-remove =` | Dash-form is PluginBundle syntax; Config::MVP raises `multiple values given for property -remove` | Use `remove =` (no dash) inside `[RemovePrereqs]` |
+| Committing regenerated `META.json` / `Makefile.PL` / `README.md` after T4 | These are build-output noise; the next release commit regenerates cleanly | Revert them; commit only `dist.ini` and `cpanfile` |
+| Leaving `-b` in `.perltidyrc` | precious manages backups via `--backup-file-extension=/`; `-b` produces stray backup files | Strip `-b` in T2 |
+| Keeping both `perltidyrc` and `.perltidyrc` | perltidy reads `.perltidyrc` by default; the visible duplicate is the tidyall-managed copy | Delete the visible duplicate; keep `.perltidyrc` |
+| Wiring up `perlcritic` in `precious.toml` when it wasn't enforced before | Widens the scan set; suddenly fails a previously-clean tree on style nits | Only add the `perlcritic` block when tidyall/dist.ini already auto-enforced it (see Scope Detection for the four distinct cases — `.perlcriticrc` alone is NOT enforcement) |
+| Adding `App::perlvars` to runtime prereqs | It's a develop-only tool | Use `[Prereqs / DevelopRequires]` |
+| Bundling all five transforms into one commit | Can't revert one transform without the others | One commit per transform |
+| Overwriting an existing `.github/workflows/lint.yml` | The user may have a custom lint shape | Detect drift, surface it, skip — don't overwrite hand-rolled workflows |
+| Guessing the tidyall prereqs-block moniker | Bundle authors pick these ad-hoc; `'Modules for use with tidyall'` is `@Author::OALDERS`-specific | `perldoc -lm Dist::Zilla::PluginBundle::Author::Foo` and read the source |
+
+## Red Flags
+
+- **`multiple values given for property -remove`** → `-remove =` used inside `[RemovePrereqs]`; drop the dash.
+- **`dzil build` says "file does not exist"** → tidyall files deleted from disk but not staged; `git add -u`.
+- **PR diff includes ~100 lines of regenerated `META.json` / `Makefile.PL`** → T4's cleanup step skipped; revert those files.
+- **`precious lint --all` passes locally but the new CI job fails on `omegasort`** → `oalders/install-ubi-action` step missing or wrong tool name; check it's `houseabsolute/omegasort`.
+- **`precious config list` errors with TOML parse failure after T1** → quoting issue in the heredoc that generated the file; re-emit `precious.toml` from a real template, not string concatenation.
+- **`Test::Vars` still appears in `develop_requires` of `META.json`** → the bundle's tidyall Prereqs block uses a moniker different from `'Modules for use with tidyall'`; read the bundle source and use the right name in `-remove`.
+
+## Related
+
+- `kitchen-sink:working-with-dist-zilla` — `dzil` patterns this skill leans on (PluginRemover vs RemovePrereqs, `CopyFilesFromBuild` rule, `dzil test --release --author`).
+- `kitchen-sink:tune-perl-ci` — sister skill for the test workflow; the lint job in T5 follows its conventions (concurrency, default-branch push, `install-with-cpm@v2`). The lint job pins Perl 5.42, so the App::cpm `version:` conditional from `tune-perl-ci` transform 6 (for Perls ≤ 5.22) is intentionally omitted here.
+- [precious on GitHub](https://github.com/houseabsolute/precious) — tool homepage.
+- [omegasort on GitHub](https://github.com/houseabsolute/omegasort) — sorter used by `omegasort-gitignore` / `omegasort-stopwords`.
+- [App::perlvars on metacpan](https://metacpan.org/pod/App::perlvars) — lint-time replacement for `Test::Vars`.
+- [ubi-action](https://github.com/oalders/install-ubi-action) — universal binary installer used by the CI lint job.
+- Reference PR: [libwww-perl/WWW-Mechanize-Cached#35](https://github.com/libwww-perl/WWW-Mechanize-Cached/pull/35) — the migration this skill was extracted from.
