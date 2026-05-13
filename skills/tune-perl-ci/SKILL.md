@@ -253,3 +253,184 @@ git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@
 - If that prints a branch name, use it.
 - Otherwise check `git show-ref --verify --quiet refs/remotes/origin/master` first, then `refs/heads/master`; if either succeeds, fall back to `master`.
 - Otherwise, bail out of transform 4 with a clear message — do not block transforms 1–3, 5, 6.
+
+## Worked Example
+
+A HTTP-Daemon-shaped workflow that exercises every transform.
+
+### Before
+
+```yaml
+name: dzil build and test
+on:
+  push:
+    branches:
+      - "*"
+  pull_request:
+    branches:
+      - "*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-24.04
+    container:
+      image: perldocker/perl-tester:5.34
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build Dist
+        run: dzil build
+
+  coverage-job:
+    needs: build
+    runs-on: ubuntu-24.04
+    container:
+      image: perldocker/perl-tester:5.34
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+
+  test_linux:
+    name: Perl ${{ matrix.perl-version }} on ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        perl-version:
+          - "5.10"
+          - "5.30"
+          - "5.34"
+    container:
+      image: perldocker/perl-tester:${{ matrix.perl-version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install deps
+        uses: perl-actions/install-with-cpm@v1.9
+        with:
+          cpanfile: "cpanfile"
+          args: "--with-recommends --with-suggests --with-test"
+          sudo: false
+
+  test_macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: ["macos-latest"]
+        perl-version:
+          - "5.30"
+          - "5.34"
+    needs: build
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: ${{ matrix.perl-version }}
+      - name: install deps using cpm
+        uses: perl-actions/install-with-cpm@v1.9
+        with:
+          cpanfile: "cpanfile"
+          args: "--with-recommends --with-suggests --with-test"
+          sudo: false
+```
+
+### After (six transforms applied, default branch is `main`)
+
+```yaml
+name: dzil build and test
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - "*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-24.04
+    container:
+      image: perldocker/perl-tester:5.42
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build Dist
+        run: dzil build
+
+  coverage-job:
+    needs: build
+    runs-on: ubuntu-24.04
+    container:
+      image: perldocker/perl-tester:5.42
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+
+  test_linux:
+    name: Perl ${{ matrix.perl-version }} on ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        perl-version:
+          - "5.10"
+          - "5.30"
+          - "5.34"
+          - "5.36"
+          - "5.38"
+          - "5.40"
+          - "5.42"
+    container:
+      image: perldocker/perl-tester:${{ matrix.perl-version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install deps
+        uses: perl-actions/install-with-cpm@v2
+        with:
+          cpanfile: "cpanfile"
+          args: "--with-recommends --with-suggests --with-test"
+          sudo: false
+          # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
+          version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+
+  test_macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["macos-latest"]
+        perl-version:
+          - "5.30"
+          - "5.34"
+          - "5.36"
+          - "5.38"
+          - "5.40"
+          - "5.42"
+    needs: build
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: ${{ matrix.perl-version }}
+      - name: install deps using cpm
+        uses: perl-actions/install-with-cpm@v2
+        with:
+          cpanfile: "cpanfile"
+          args: "--with-recommends --with-suggests --with-test"
+          sudo: false
+          # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
+          version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+```
+
+Things to notice in the after-state:
+
+- `build` and `coverage-job` containers bumped to `:5.42`. The `test_linux` container still uses `:${{ matrix.perl-version }}` — transform 3 skips any image tag containing `${{`.
+- `pull_request.branches: ["*"]` is preserved — transform 4 only touches `on.push.branches`.
+- Quotes are preserved on existing list entries; new entries match (here, double quotes).
+- `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
+- Both `install-with-cpm` steps got the conditional `version:` line and the `@v2` bump.
