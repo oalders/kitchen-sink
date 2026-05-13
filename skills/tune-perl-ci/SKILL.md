@@ -124,3 +124,91 @@ build:
   container:
     image: perldocker/perl-tester:5.42
 ```
+
+### 4. Restrict `push:` to the default branch
+
+**What:** in top-level `on.push.branches:`, replace the list with a single-entry list naming the default branch. Leave `pull_request:` and `workflow_dispatch:` alone (even if they have their own `branches:` filter).
+
+**Skip** transform 4 if `on.push:` itself is absent — nothing to restrict. If the key is present but `branches:` is missing, add `branches:` with the resolved default branch.
+
+**Default branch resolution:** Resolve the default branch with `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` (fall back to `main`, then `master`).
+
+**Why:** avoid double CI runs when a push is also part of a PR. Each pushed commit triggers both a push run and a PR run, doubling queue time and burning Actions minutes.
+
+**Before:**
+
+```yaml
+on:
+  push:
+    branches:
+      - "*"
+  pull_request:
+  workflow_dispatch:
+```
+
+**After (default branch is `main`):**
+
+```yaml
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+```
+
+### 5. Add a workflow-level `concurrency:` block
+
+**What:** insert this block at workflow level, directly after the `on:` block:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+**Skip** if any `concurrency:` already exists at workflow level — the user has deliberately customised the concurrency block.
+
+**Why:** new pushes to the same ref cancel the still-running job from the previous push.
+
+### 6. Pin App::cpm for Perls ≤ 5.22
+
+**What:** for every step using `perl-actions/install-with-cpm@<any-ref>`:
+
+1. Bump the action ref to `@v2` (which exposes the `version:` input).
+2. Under `with:`, add (if missing):
+
+   ```yaml
+   # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
+   version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+   ```
+
+3. Preserve existing `sudo:`, `args:`, `cpanfile:`, etc.
+
+**Skip** if `version:` is already present under `with:` (user has pinned deliberately).
+
+**Why:** `App::cpm` v0.999.0+ requires Perl 5.24+. Older matrix cells fail to install dependencies with the current cpm release. The expression relies on lexicographic comparison of two-digit-minor strings (`5.10`, `5.12`, …, `5.22`, `5.24`, …), which works for all Perls likely to appear in a matrix.
+
+**Before:**
+
+```yaml
+- name: install deps using cpm
+  uses: perl-actions/install-with-cpm@v1.9
+  with:
+    cpanfile: "cpanfile"
+    args: "--with-suggests --with-recommends --with-test"
+    sudo: false
+```
+
+**After:**
+
+```yaml
+- name: install deps using cpm
+  uses: perl-actions/install-with-cpm@v2
+  with:
+    cpanfile: "cpanfile"
+    args: "--with-suggests --with-recommends --with-test"
+    sudo: false
+    # pin older Perls to the last cpm release compatible with them; newer Perls track the cpm release channel.
+    version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+```
