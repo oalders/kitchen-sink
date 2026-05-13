@@ -99,7 +99,7 @@ Before running, fingerprint the repo:
 | `dist.ini` mentions `Test::TidyAll`, `tidyall`, or has a `[Prereqs / *]` block named for tidyall | Mode = migrate; T4 will rewrite |
 | `precious.toml` present | Mode = tune; T1 audits-only and reports drift |
 | Neither tidyall nor precious config present, but `*.pm` files exist | Mode = greenfield; T3 + T4 are no-ops |
-| No Perl files (`*.pm`, `*.pl`, `*.t`, `dist.ini`) | Exit cleanly with "no Perl files found" |
+| No Perl files (`*.pm`, `*.pl`, `*.t`, `*.psgi`, `dist.ini`) | Exit cleanly with "no Perl files found" |
 
 `perlcritic` detection (drives whether T1 wires up a `perlcritic` command):
 
@@ -263,7 +263,7 @@ Two things to remember about `[RemovePrereqs]`:
 App::perlvars = 0
 ```
 
-Append to an existing `[Prereqs / DevelopRequires]` block if one already exists. **Skip this sub-step entirely if `App::perlvars` already appears in `develop_requires` of the pre-edit `META.json`** (some bundles inject it themselves; a duplicate is harmless but noisy).
+Append to an existing `[Prereqs / DevelopRequires]` block if one already exists. **Skip this sub-step entirely if `App::perlvars` already appears under `prereqs.develop.requires` in the pre-edit `META.json`** (some bundles inject it themselves; a duplicate is harmless but noisy).
 
 **4e. Run `dzil build --no-tgz` and verify.**
 
