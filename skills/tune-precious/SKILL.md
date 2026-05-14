@@ -1,30 +1,31 @@
 ---
 name: tune-precious
-description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo. Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, and wires a CI lint job. Idempotent across re-runs.
-version: 1.0.0
+description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, and wires a CI lint job. Idempotent across re-runs.
+version: 1.1.0
 ---
 
 # Tune Precious
 
 ## Overview
 
-**Five idempotent transforms that land [precious](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo:**
+**Five idempotent transforms that land [precious](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo (or any repo that has opted into `typos`):**
 
-1. Generate or refresh `precious.toml` with `perltidy`, `perlvars`, `omegasort-gitignore`, `omegasort-stopwords`, and optionally `perlcritic`.
+1. Generate or refresh `precious.toml` with `perltidy`, `perlvars`, `omegasort-gitignore`, `omegasort-stopwords`, optionally `perlcritic`, and optionally `typos`.
 2. Consolidate the `perltidy` profile to the hidden `.perltidyrc` and strip `-b` (precious manages backup mode).
 3. Delete `Code::TidyAll` config (`.tidyallrc`, `tidyall.ini`, `.tidyall.d/` ignore line).
 4. Edit `dist.ini` to remove the tidyall plugin + prereqs via the bundle's `PluginRemover` and a trailing `[RemovePrereqs]` block.
-5. Add a `.github/workflows/lint.yml` job that installs `precious` + `omegasort` via ubi and runs `precious lint --all`.
+5. Add a `.github/workflows/lint.yml` job that installs `precious` + `omegasort` (+ `typos` when wired) via ubi and runs `precious lint --all`.
 
 **Core principle:** apply the canonical recipe without changing the user's tidy/lint intent. Each transform is its own commit so any single change is revertable. Re-running on an already-tuned repo is a no-op.
 
-**Three modes** the skill handles transparently:
+**Four modes** the skill handles transparently:
 
 | Mode | Trigger | What changes |
 |---|---|---|
 | Migrate | Repo has `.tidyallrc`, `tidyall.ini`, or `[Test::TidyAll]` in `dist.ini` | All five transforms apply |
 | Greenfield | Perl repo, no tidyall config, no `precious.toml` | T1 + T2 (consolidate any visible `perltidyrc`) + T5 |
 | Tune | `precious.toml` already exists | All transforms run as no-ops; surfaces drift between current config and canonical recipe |
+| Typos-only | No Perl files, but `typos.toml` / `_typos.toml` / `.typos.toml` is present | T1 (typos block only) + T5; T2/T3/T4 are no-ops |
 
 **Worked example PR:** [libwww-perl/WWW-Mechanize-Cached#35](https://github.com/libwww-perl/WWW-Mechanize-Cached/pull/35) — the recipe was extracted from this PR.
 
@@ -53,15 +54,15 @@ If the user explicitly asks to run inline (e.g. "do it here so I can watch"), ho
 - `dist.ini` includes `Test::TidyAll`, `[@Author::*]` with a tidyall prereqs block, or `[PerlCritic]` you want to migrate behind precious
 
 **Skip when:**
-- Not a Perl repo (no `*.pm`, `*.pl`, `*.t`, `*.psgi`, or `dist.ini`)
-- The user has deliberately customised `precious.toml` for tools outside the canonical set (e.g. they run `prettier` over Mojolicious templates) — idempotency preserves their commands; only report drift in the standard five.
+- Not a Perl repo (no `*.pm`, `*.pl`, `*.t`, `*.psgi`, or `dist.ini`) **and** no typos config (`typos.toml`, `_typos.toml`, `.typos.toml`) at repo root
+- The user has deliberately customised `precious.toml` for tools outside the canonical set (e.g. they run `prettier` over Mojolicious templates) — idempotency preserves their commands; only report drift in the six canonical commands.
 
 ## Workflow
 
 ```dot
 digraph tune_precious {
     "Detect mode" [shape=box];
-    "Migrate or Greenfield or Tune?" [shape=diamond];
+    "Migrate, Greenfield, Tune, or Typos-only?" [shape=diamond];
     "T1: precious.toml" [shape=box];
     "Verify + commit T1" [shape=box];
     "T2: consolidate .perltidyrc" [shape=box];
@@ -74,8 +75,8 @@ digraph tune_precious {
     "Verify + commit T5" [shape=box];
     "Report summary" [shape=box];
 
-    "Detect mode" -> "Migrate or Greenfield or Tune?";
-    "Migrate or Greenfield or Tune?" -> "T1: precious.toml";
+    "Detect mode" -> "Migrate, Greenfield, Tune, or Typos-only?";
+    "Migrate, Greenfield, Tune, or Typos-only?" -> "T1: precious.toml";
     "T1: precious.toml" -> "Verify + commit T1";
     "Verify + commit T1" -> "T2: consolidate .perltidyrc";
     "T2: consolidate .perltidyrc" -> "Verify + commit T2";
@@ -99,7 +100,8 @@ Before running, fingerprint the repo:
 | `dist.ini` mentions `Test::TidyAll`, `tidyall`, or has a `[Prereqs / *]` block named for tidyall | Mode = migrate; T4 will rewrite |
 | `precious.toml` present | Mode = tune; T1 audits-only and reports drift |
 | Neither tidyall nor precious config present, but `*.pm` files exist | Mode = greenfield; T3 + T4 are no-ops |
-| No Perl files (`*.pm`, `*.pl`, `*.t`, `*.psgi`, `dist.ini`) | Exit cleanly with "no Perl files found" |
+| `typos.toml`, `_typos.toml`, or `.typos.toml` present at repo root | T1 wires up `typos`; T5 adds `crate-ci/typos` to the ubi `projects:` list |
+| No Perl files AND no typos config | Exit cleanly with "no Perl or typos config found" |
 
 `perlcritic` detection (drives whether T1 wires up a `perlcritic` command):
 
@@ -109,6 +111,13 @@ Before running, fingerprint the repo:
 - `.perlcriticrc` exists but no auto-enforcement → leave for manual use; do NOT wire up.
 
 **Rule:** don't widen the scan set. If perlcritic wasn't enforced before, precious shouldn't enforce it after.
+
+`typos` detection (drives whether T1 wires up a `typos` command):
+
+- `typos.toml`, `_typos.toml`, or `.typos.toml` exists at repo root → wire up.
+- None of the above → do NOT wire up.
+
+**Rule:** only wire `typos` when the user has already opted in by writing a typos config. Don't introduce a new lint dimension on a previously-clean tree.
 
 ## The Five Transforms
 
@@ -123,42 +132,55 @@ Before running, fingerprint the repo:
 type    = "both"
 include = ["**/*.{pl,pm,t,psgi}"]
 cmd     = ["perltidy", "--profile=$PRECIOUS_ROOT/.perltidyrc"]
-lint_flags = ["--assert-tidy", "--no-standard-output", "--outfile=/dev/null"]
-tidy_flags = ["--backup-and-modify-in-place", "--backup-file-extension=/"]
-ok_exit_codes         = [0]
-lint_failure_exit_codes = [2]
+lint-flags = ["--assert-tidy", "--no-standard-output", "--outfile=/dev/null"]
+tidy-flags = ["--backup-and-modify-in-place", "--backup-file-extension=/"]
+ok-exit-codes = [0]
+lint-failure-exit-codes = [2]
 
 [commands.perlvars]
 type    = "lint"
 include = ["**/*.pm"]
 cmd     = ["perlvars"]
-ok_exit_codes         = [0]
-lint_failure_exit_codes = [1]
+ok-exit-codes = [0]
+lint-failure-exit-codes = [1]
 
 [commands.omegasort-gitignore]
 type    = "both"
 include = [".gitignore"]
 cmd     = ["omegasort", "--sort", "path", "--unique"]
-lint_flags = ["--check"]
-ok_exit_codes         = [0]
-lint_failure_exit_codes = [1]
+lint-flags = ["--check"]
+ok-exit-codes = [0]
+lint-failure-exit-codes = [1]
 
 [commands.omegasort-stopwords]
 type    = "both"
 include = [".stopwords"]
 cmd     = ["omegasort", "--sort", "text", "--unique"]
-lint_flags = ["--check"]
-ok_exit_codes         = [0]
-lint_failure_exit_codes = [1]
+lint-flags = ["--check"]
+ok-exit-codes = [0]
+lint-failure-exit-codes = [1]
 
 # Wired only when perlcritic was already auto-enforced (see scope detection).
 [commands.perlcritic]
 type    = "lint"
 include = ["**/*.{pl,pm,t,psgi}"]
 cmd     = ["perlcritic", "--profile=$PRECIOUS_ROOT/.perlcriticrc"]
-ok_exit_codes         = [0]
-lint_failure_exit_codes = [2]
+ok-exit-codes = [0]
+lint-failure-exit-codes = [2]
+
+# Wired only when a typos config exists at repo root (see scope detection).
+[commands.typos]
+type      = "both"
+include   = ["**/*"]
+invoke    = "once"
+path-args = "none"
+cmd       = ["typos"]
+tidy-flags = ["--write-changes"]
+ok-exit-codes = [0]
+lint-failure-exit-codes = [2]
 ```
+
+**Key naming:** precious uses kebab-case for all config keys (`lint-flags`, `tidy-flags`, `ok-exit-codes`, `lint-failure-exit-codes`, `path-args`, `working-dir`, `ignore-stderr`, …). Do NOT use snake_case (`lint_flags`, `ok_exit_codes`) — precious's serde deserializer does not register snake_case aliases and `precious config list` will fail with a parse error.
 
 **Why each block:**
 
@@ -167,6 +189,7 @@ lint_failure_exit_codes = [2]
 - `omegasort-gitignore` keeps `.gitignore` sorted and de-duplicated. Sort mode `path` understands directory hierarchy.
 - `omegasort-stopwords` keeps `.stopwords` (the Pod::Wordlist source for `Test::Spelling`) sorted and de-duplicated. Sort mode `text`.
 - `perlcritic` is only emitted when previously enforced — see Scope Detection above.
+- `typos` ([crate-ci/typos](https://github.com/crate-ci/typos)) is a fast, content-agnostic spell checker. `invoke = "once"` + `path-args = "none"` lets typos walk the tree itself, applying its own `.gitignore` + `extend-exclude` logic from the user's `typos.toml`. `--write-changes` is typos' in-place fixer (no path arg needed; works at the tree level). typos exits `0` clean and `2` on findings — matches the exit-code contract used by perltidy. Only emitted when a typos config exists at repo root — see Scope Detection above.
 
 **Idempotency rule (tune mode):** if `precious.toml` already exists, parse it; for each canonical block, if the user's version matches the template exactly, leave it alone; if it differs, report drift (per-key diff) but do not auto-rewrite. Only insert blocks that are missing.
 
@@ -323,9 +346,10 @@ jobs:
           perl-version: "5.42"
       - uses: oalders/install-ubi-action@v1
         with:
-          tools: |
+          projects: |
             houseabsolute/precious
             houseabsolute/omegasort
+            crate-ci/typos
       - uses: perl-actions/install-with-cpm@v2
         with:
           install: |
@@ -335,10 +359,15 @@ jobs:
       - run: precious lint --all
 ```
 
+**Conditional lines:**
+
+- Add the `crate-ci/typos` line to `projects:` **only when T1 wired the `[commands.typos]` block.** Otherwise omit it so the install step doesn't pull a tool the lint run won't use.
+- Skip the `shogo82148/actions-setup-perl` and `perl-actions/install-with-cpm` steps entirely in typos-only mode (no Perl files in the repo means there are no CPAN tools to install).
+
 **Why this shape:**
 
 - `precious` is the single entry point — no per-tool step.
-- `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort are Rust/Go); skips compile time.
+- `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort + typos are Rust/Go); skips compile time. The input is `projects:` (newline-delimited list of `owner/repo` slugs passed to `ubi --project`).
 - `install-with-cpm@v2` installs the two CPAN tools precious shells out to.
 - Perl 5.42 (the current matrix max) is enough for the lint job; nothing in this job exercises older Perls.
 - `branches: [<default>]` + workflow-level `concurrency:` block — same conventions as `tune-perl-ci`. Resolve the default branch with the `git symbolic-ref` command shown above and substitute before writing the file.
@@ -347,10 +376,23 @@ jobs:
 
 **Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0.
 
+## Optional: pre-commit hook
+
+precious ships a `--staged` mode that runs the configured commands against only the staged files, which is well-suited to a pre-commit hook. The hook script is command-agnostic — `precious lint --staged` covers every command the user has wired (perltidy, perlvars, omegasort, perlcritic, typos, …) without per-tool branching.
+
+Suggested install path:
+
+- `.githooks/pre-commit` (tracked in the repo) containing `exec precious lint --staged "$@"`
+- One-line install step (often in `README.md` or `CONTRIBUTING.md`): `git config core.hooksPath .githooks`
+
+**Heads-up to call out in the skill output:** `core.hooksPath` is per-clone state, not committed. Contributors must re-run the install command once per fresh clone — the tracked hook script alone is not enough.
+
+Do NOT auto-wire this hook as part of the five transforms. The skill should mention the option in its final report when typos or any other tidy/lint command is configured, but installation is the user's call.
+
 ## Algorithm
 
 ```
-1. Detect mode (migrate / greenfield / tune). Exit clean if no Perl files.
+1. Detect mode (migrate / greenfield / tune / typos-only). Exit clean if no Perl files AND no typos config.
 2. For each transform T1..T5 in order, classify into one of:
    - NO-OP:   change set is empty; skip silently.
    - APPLY:   change set is non-empty AND it is safe to write
@@ -425,7 +467,7 @@ select = .stopwords
 
 Five commits land:
 
-1. `precious: add canonical config` — new `precious.toml` at repo root with the five canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`).
+1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config).
 2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped.
 3. `tidyall: delete config files and ignore entries` — `.tidyallrc` removed; `.gitignore` no longer mentions `.tidyall.d/`.
 4. `dist.ini: drop Code::TidyAll plugin and prereqs` — bundle line + `[RemovePrereqs]` + `[Prereqs / DevelopRequires]`:
@@ -478,6 +520,9 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Leaving `-b` in `.perltidyrc` | precious manages backups via `--backup-file-extension=/`; `-b` produces stray backup files | Strip `-b` in T2 |
 | Keeping both `perltidyrc` and `.perltidyrc` | perltidy reads `.perltidyrc` by default; the visible duplicate is the tidyall-managed copy | Delete the visible duplicate; keep `.perltidyrc` |
 | Wiring up `perlcritic` in `precious.toml` when it wasn't enforced before | Widens the scan set; suddenly fails a previously-clean tree on style nits | Only add the `perlcritic` block when tidyall/dist.ini already auto-enforced it (see Scope Detection for the four distinct cases — `.perlcriticrc` alone is NOT enforcement) |
+| Wiring up `typos` in `precious.toml` without a typos config | Introduces a new lint dimension on a previously-clean tree; users get noisy false positives | Only emit the `typos` block when `typos.toml` / `_typos.toml` / `.typos.toml` exists at repo root |
+| Adding `crate-ci/typos` to the ubi `projects:` list without wiring the `typos` command | CI installs a tool the lint run won't use; wastes a download and confuses readers | Add `crate-ci/typos` to T5 only when T1 wired the typos block |
+| Using `tools:` for the ubi-action input | `oalders/install-ubi-action` reads `inputs.projects`, not `inputs.tools` — unknown inputs are silently dropped, so no binaries get installed and `precious lint --all` fails on missing commands | Use `projects:` (the documented input name) |
 | Adding `App::perlvars` to runtime prereqs | It's a develop-only tool | Use `[Prereqs / DevelopRequires]` |
 | Bundling all five transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Overwriting an existing `.github/workflows/lint.yml` | The user may have a custom lint shape | Detect drift, surface it, skip — don't overwrite hand-rolled workflows |
@@ -488,9 +533,12 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **`multiple values given for property -remove`** → `-remove =` used inside `[RemovePrereqs]`; drop the dash.
 - **`dzil build` says "file does not exist"** → tidyall files deleted from disk but not staged; `git add -u`.
 - **PR diff includes ~100 lines of regenerated `META.json` / `Makefile.PL`** → T4's cleanup step skipped; revert those files.
-- **`precious lint --all` passes locally but the new CI job fails on `omegasort`** → `oalders/install-ubi-action` step missing or wrong tool name; check it's `houseabsolute/omegasort`.
+- **`precious lint --all` passes locally but the new CI job fails on `omegasort` (or any other binary)** → `oalders/install-ubi-action` step missing, using `tools:` instead of `projects:` (silently dropped → nothing installed), or wrong slug in `projects:`; check the input key is `projects:` and the slug is `houseabsolute/omegasort`.
 - **`precious config list` errors with TOML parse failure after T1** → quoting issue in the heredoc that generated the file; re-emit `precious.toml` from a real template, not string concatenation.
 - **`Test::Vars` still appears in `develop_requires` of `META.json`** → the bundle's tidyall Prereqs block uses a moniker different from `'Modules for use with tidyall'`; read the bundle source and use the right name in `-remove`.
+- **`precious lint --all` fails because the `typos` block matches no files** → `path-args = "none"` was dropped from the typos block, so precious is passing per-file paths and typos can't reconcile them with its own tree walk; restore `invoke = "once"` + `path-args = "none"`.
+- **`precious config list` errors with a TOML deserialization / unknown-field error** → keys are snake_case (`lint_flags`, `ok_exit_codes`, …). precious uses kebab-case — rewrite with hyphens (`lint-flags`, `ok-exit-codes`).
+- **CI installs `typos` but the lint run never invokes it** → T1 didn't emit a `[commands.typos]` block; either remove `crate-ci/typos` from the ubi `projects:` list or add the missing block.
 
 ## Related
 
@@ -499,5 +547,6 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - [precious on GitHub](https://github.com/houseabsolute/precious) — tool homepage.
 - [omegasort on GitHub](https://github.com/houseabsolute/omegasort) — sorter used by `omegasort-gitignore` / `omegasort-stopwords`.
 - [App::perlvars on metacpan](https://metacpan.org/pod/App::perlvars) — lint-time replacement for `Test::Vars`.
+- [typos on GitHub](https://github.com/crate-ci/typos) — fast content-agnostic spell checker; wired into T1 when a typos config exists.
 - [ubi-action](https://github.com/oalders/install-ubi-action) — universal binary installer used by the CI lint job.
 - Reference PR: [libwww-perl/WWW-Mechanize-Cached#35](https://github.com/libwww-perl/WWW-Mechanize-Cached/pull/35) — the migration this skill was extracted from.
