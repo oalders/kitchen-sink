@@ -538,7 +538,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **`Test::Vars` still appears in `develop_requires` of `META.json`** → the bundle's tidyall Prereqs block uses a moniker different from `'Modules for use with tidyall'`; read the bundle source and use the right name in `-remove`.
 - **`precious lint --all` fails because the `typos` block matches no files** → `path-args = "none"` was dropped from the typos block, so precious is passing per-file paths and typos can't reconcile them with its own tree walk; restore `invoke = "once"` + `path-args = "none"`.
 - **`precious config list` errors with a TOML deserialization / unknown-field error** → keys are snake_case (`lint_flags`, `ok_exit_codes`, …). precious uses kebab-case — rewrite with hyphens (`lint-flags`, `ok-exit-codes`).
-- **CI installs `typos` but the lint run never invokes it** → T1 didn't emit a `[commands.typos]` block; either remove `crate-ci/typos` from the ubi `tools:` list or add the missing block.
+- **CI installs `typos` but the lint run never invokes it** → T1 didn't emit a `[commands.typos]` block; either remove `crate-ci/typos` from the ubi `projects:` list or add the missing block.
 
 ## Related
 
