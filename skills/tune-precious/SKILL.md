@@ -100,7 +100,7 @@ Before running, fingerprint the repo:
 | `dist.ini` mentions `Test::TidyAll`, `tidyall`, or has a `[Prereqs / *]` block named for tidyall | Mode = migrate; T4 will rewrite |
 | `precious.toml` present | Mode = tune; T1 audits-only and reports drift |
 | Neither tidyall nor precious config present, but `*.pm` files exist | Mode = greenfield; T3 + T4 are no-ops |
-| `typos.toml`, `_typos.toml`, or `.typos.toml` present at repo root | T1 wires up `typos`; T5 adds `crate-ci/typos` to the ubi tools list |
+| `typos.toml`, `_typos.toml`, or `.typos.toml` present at repo root | T1 wires up `typos`; T5 adds `crate-ci/typos` to the ubi `projects:` list |
 | No Perl files AND no typos config | Exit cleanly with "no Perl or typos config found" |
 
 `perlcritic` detection (drives whether T1 wires up a `perlcritic` command):
