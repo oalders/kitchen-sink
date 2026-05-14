@@ -22,6 +22,35 @@ Don't use when:
 - Not working on a GitHub issue
 - Just exploring code (use other skills)
 
+## Dispatch the implementation tail to a subagent
+
+For the **direct implementation** branch (i.e. when `superpowers:subagent-driven-development` is not chosen), dispatch the implementation-through-PR steps to a `general-purpose` subagent via the `Agent` tool. **Do not run implement / test / fix-and-re-review / verify / PR creation inline in the caller's context.**
+
+What stays in the caller's context (interactive, decisional):
+- Issue number resolution and `gh issue view`
+- Complexity assessment
+- The "should we brainstorm?" decision and `superpowers:brainstorming` itself
+- The choice of implementation approach (SDD vs `writing-plans` vs direct)
+
+What the subagent runs (steps 7–10 below):
+- Implementation edits and the test-writing / test-running cycle
+- Specialized review fan-out (the subagent invokes `/frontend-review`, `/security-review`, etc. itself)
+- The fix-and-re-review loop iterations
+- `superpowers:verification-before-completion`
+- Draft PR creation
+
+Why:
+- The implement / test / fix-and-re-review / verify loop reads, edits, and runs tests across many files. None of that intermediate state is useful to the caller — only the final PR URL, commit SHAs, and a short summary.
+- The fix-and-re-review loop compounds: each iteration accumulates reads and edits. Keeping it in a subagent prevents a single issue from filling the caller's context window.
+
+How to dispatch:
+- Brief the subagent with this command file as its working spec, plus: the issue number, the brainstorming output (if any), the chosen approach, the branch name, and the working directory.
+- Require the subagent to follow steps 7–10 verbatim — including the **same specialized reviewer(s)** rule and the fix-and-re-review loop.
+- Require the subagent to report back, in under 200 words: the PR URL, the commit SHAs, which reviewer(s) were invoked, and a one-line summary of what was changed.
+- If a review surfaces an issue the subagent is unsure how to resolve (e.g. a Minor flag that looks counterproductive), the subagent must stop and surface the decision to the caller rather than guess.
+
+If the user explicitly asks to run inline (e.g. "do it here so I can watch"), or the chosen approach is `superpowers:subagent-driven-development` (already in fresh subagent contexts), skip this dispatch.
+
 ## Workflow
 
 ```dot
