@@ -1,20 +1,21 @@
 ---
 name: tune-precious
-description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, and wires a CI lint job. Idempotent across re-runs.
-version: 1.1.0
+description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, wires a CI lint job, and adds a self-installing `scripts/pre-commit` shell hook so `precious lint --staged` runs locally on commit. Idempotent across re-runs.
+version: 1.2.0
 ---
 
 # Tune Precious
 
 ## Overview
 
-**Five idempotent transforms that land [precious](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo (or any repo that has opted into `typos`):**
+**Six idempotent transforms that land [precious](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo (or any repo that has opted into `typos`):**
 
 1. Generate or refresh `precious.toml` with `perltidy`, `perlvars`, `omegasort-gitignore`, `omegasort-stopwords`, optionally `perlcritic`, and optionally `typos`.
 2. Consolidate the `perltidy` profile to the hidden `.perltidyrc` and strip `-b` (precious manages backup mode).
 3. Delete `Code::TidyAll` config (`.tidyallrc`, `tidyall.ini`, `.tidyall.d/` ignore line).
 4. Edit `dist.ini` to remove the tidyall plugin + prereqs via the bundle's `PluginRemover` and a trailing `[RemovePrereqs]` block.
 5. Add a `.github/workflows/lint.yml` job that installs `precious` + `omegasort` (+ `typos` when wired) via ubi and runs `precious lint --all`.
+6. Add a self-installing `scripts/pre-commit` shell hook that runs `precious lint --staged` and blocks direct commits to the default branch, so contributors catch tidy/lint drift before pushing.
 
 **Core principle:** apply the canonical recipe without changing the user's tidy/lint intent. Each transform is its own commit so any single change is revertable. Re-running on an already-tuned repo is a no-op.
 
@@ -22,8 +23,8 @@ version: 1.1.0
 
 | Mode | Trigger | What changes |
 |---|---|---|
-| Migrate | Repo has `.tidyallrc`, `tidyall.ini`, or `[Test::TidyAll]` in `dist.ini` | All five transforms apply |
-| Greenfield | Perl repo, no tidyall config, no `precious.toml` | T1 + T2 (consolidate any visible `perltidyrc`) + T5 |
+| Migrate | Repo has `.tidyallrc`, `tidyall.ini`, or `[Test::TidyAll]` in `dist.ini` | All six transforms apply |
+| Greenfield | Perl repo, no tidyall config, no `precious.toml` | T1 + T2 (consolidate any visible `perltidyrc`) + T5 + T6 |
 | Tune | `precious.toml` already exists | All transforms run as no-ops; surfaces drift between current config and canonical recipe |
 | Typos-only | No Perl files, but `typos.toml` / `_typos.toml` / `.typos.toml` is present | T1 (typos block only) + T5; T2/T3/T4 are no-ops |
 
@@ -31,10 +32,10 @@ version: 1.1.0
 
 ## Dispatch this skill to a subagent
 
-When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the five transforms inline in the caller's context.**
+When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the six transforms inline in the caller's context.**
 
 Why:
-- Each transform reads several files, computes a diff, writes the files, verifies with `precious config list` / TOML parse / YAML parse / `dzil build --no-tgz`, then stages and commits. Across five transforms and several files, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
+- Each transform reads several files, computes a diff, writes the files, verifies with `precious config list` / TOML parse / YAML parse / `dzil build --no-tgz`, then stages and commits. Across six transforms and several files, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
 - The caller only needs the final summary line (`Applied N transforms across M files in K commits`) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
@@ -73,6 +74,8 @@ digraph tune_precious {
     "Verify + commit T4" [shape=box];
     "T5: add CI lint job" [shape=box];
     "Verify + commit T5" [shape=box];
+    "T6: add pre-commit hook" [shape=box];
+    "Verify + commit T6" [shape=box];
     "Report summary" [shape=box];
 
     "Detect mode" -> "Migrate, Greenfield, Tune, or Typos-only?";
@@ -86,7 +89,9 @@ digraph tune_precious {
     "T4: edit dist.ini" -> "Verify + commit T4";
     "Verify + commit T4" -> "T5: add CI lint job";
     "T5: add CI lint job" -> "Verify + commit T5";
-    "Verify + commit T5" -> "Report summary";
+    "Verify + commit T5" -> "T6: add pre-commit hook";
+    "T6: add pre-commit hook" -> "Verify + commit T6";
+    "Verify + commit T6" -> "Report summary";
 }
 ```
 
@@ -119,7 +124,7 @@ Before running, fingerprint the repo:
 
 **Rule:** only wire `typos` when the user has already opted in by writing a typos config. Don't introduce a new lint dimension on a previously-clean tree.
 
-## The Five Transforms
+## The Six Transforms
 
 ### 1. Generate or refresh `precious.toml`
 
@@ -376,24 +381,103 @@ jobs:
 
 **Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0.
 
-## Optional: pre-commit hook
+### 6. Add `scripts/pre-commit` hook for `precious lint`
 
-precious ships a `--staged` mode that runs the configured commands against only the staged files, which is well-suited to a pre-commit hook. The hook script is command-agnostic — `precious lint --staged` covers every command the user has wired (perltidy, perlvars, omegasort, perlcritic, typos, …) without per-tool branching.
+**What:** add a checked-in shell script at `scripts/pre-commit` that runs `precious lint --staged` and blocks direct commits to the default branch. The script self-installs via `scripts/pre-commit --init`, which symlinks `.git/hooks/pre-commit` to it. No external hook framework (no `pre-commit` Python package, no lefthook).
 
-Suggested install path:
+**Canonical script:**
 
-- `.githooks/pre-commit` (tracked in the repo) containing `exec precious lint --staged "$@"`
-- One-line install step (often in `README.md` or `CONTRIBUTING.md`): `git config core.hooksPath .githooks`
+```sh
+#!/bin/sh
+# Pre-commit hook: enforce `precious lint` on staged files and
+# block direct commits to the default branch.
+#
+# Install (run once per clone):
+#   scripts/pre-commit --init
 
-**Heads-up to call out in the skill output:** `core.hooksPath` is per-clone state, not committed. Contributors must re-run the install command once per fresh clone — the tracked hook script alone is not enough.
+set -eu
 
-Do NOT auto-wire this hook as part of the five transforms. The skill should mention the option in its final report when typos or any other tidy/lint command is configured, but installation is the user's call.
+if [ "${1:-}" = "--init" ]; then
+    repo_root=$(git rev-parse --show-toplevel)
+    hook_path="$repo_root/.git/hooks/pre-commit"
+    target="../../scripts/pre-commit"
+    if [ -e "$hook_path" ] && [ ! -L "$hook_path" ]; then
+        echo "ERROR: $hook_path exists and is not a symlink." >&2
+        echo "Move or remove it, then re-run scripts/pre-commit --init." >&2
+        exit 1
+    fi
+    chmod +x "$repo_root/scripts/pre-commit"
+    ln -sf "$target" "$hook_path"
+    echo "Installed pre-commit hook: $hook_path -> $target"
+    exit 0
+fi
+
+# Block direct commits to the default branch.
+default_branch="main"   # ← skill substitutes the resolved default branch here
+branch=$(git symbolic-ref --short HEAD 2>/dev/null || true)
+if [ "$branch" = "$default_branch" ]; then
+    echo "ERROR: Direct commits to '$default_branch' branch are not allowed." >&2
+    echo "Please create a feature branch instead:" >&2
+    echo "  git checkout -b feature/your-feature-name" >&2
+    exit 1
+fi
+
+# Run precious lint on staged files
+if ! precious lint -q --staged; then
+    echo "pre-commit hook failed: precious lint found issues with staged files" >&2
+    echo "Please run 'precious tidy -q --staged' and try again" >&2
+    exit 1
+fi
+```
+
+**Resolve the default branch before writing the script.** Use the same recipe as T5:
+
+```bash
+git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@'
+```
+
+Substitute the resolved name (or fall back to `main`) into `default_branch="..."`. A repo on `master` with `default_branch="main"` would silently never trigger the guard.
+
+**Why this shape:**
+
+- **Native POSIX `sh`, no framework.** Contributors don't need to install the `pre-commit` Python package, lefthook, or husky. The only requirement is `precious` on `PATH` — same as CI.
+- **`scripts/pre-commit --init` self-installs.** One command per clone. The skill mentions it in the commit body; no extra setup script, Makefile target, or README surgery required (leave docs to the maintainer's judgment).
+- **Symlink, not copy.** Edits to `scripts/pre-commit` propagate to `.git/hooks/pre-commit` immediately. A copy would let the two drift silently.
+- **Default-branch guard.** Mirrors the same "no direct commits to main" policy that CI's branch-protection rules enforce server-side. Catches it before the push, with a clearer error message.
+- **`precious lint -q --staged`, not `--all`.** Fast on every commit; matches what's about to land. `--all` is CI's job (T5).
+- **Lint, not tidy.** A hook that rewrites files behind the contributor is surprising. Lint fails loudly; the contributor runs `precious tidy` themselves and re-stages — same UX as CI failures.
+- **`|| true` on `git symbolic-ref`.** `set -eu` would otherwise abort the script on a detached HEAD (rebase, bisect). The branch guard then sees `branch=""`, which never matches `default_branch`, so the lint check still runs.
+
+**Activation:** writing `scripts/pre-commit` does NOT enable the hook. Each contributor runs `scripts/pre-commit --init` once after clone. Mention this in the commit body.
+
+**Idempotency:**
+
+- If `scripts/pre-commit` already exists and `grep -q 'precious lint' scripts/pre-commit` returns true, **NO-OP** (assume the user's version is canonical-equivalent; do not auto-rewrite).
+- If `scripts/pre-commit` exists but does NOT mention `precious lint`, surface a drift line (`T6 skipped: scripts/pre-commit exists but does not invoke precious lint; review manually`) and skip — don't overwrite a hand-rolled hook.
+- If `scripts/pre-commit` does not exist, write it.
+
+**Other-framework / other-location detection — skip T6 with a drift line if any of these is present:**
+
+- `.pre-commit-config.yaml` (Python `pre-commit` framework)
+- `lefthook.yml` or `.lefthook.yml` at repo root
+- `.husky/` directory at repo root
+- `.githooks/pre-commit` (canonical for `core.hooksPath`-style setups — same intent, different home)
+- `core.hooksPath` git config set to a non-default value (`git config --get core.hooksPath`) where that path contains an existing `pre-commit` script
+
+Surface a drift entry naming the conflicting framework or path; do NOT write `scripts/pre-commit`. Two competing hook setups is worse than none.
+
+**Verify:**
+
+- `sh -n scripts/pre-commit` exits 0 (POSIX syntax check).
+- `[ -x scripts/pre-commit ]` — executable bit set (the skill must `chmod +x` before staging; otherwise `--init`'s symlink target won't be runnable).
+- `grep -q 'default_branch="' scripts/pre-commit && ! grep -q 'default_branch="main"   # ←' scripts/pre-commit` if the resolved branch was anything other than `main` — ensures the placeholder substitution actually happened.
+- `grep -q 'precious lint' scripts/pre-commit` — the precious invocation survived.
 
 ## Algorithm
 
 ```
 1. Detect mode (migrate / greenfield / tune / typos-only). Exit clean if no Perl files AND no typos config.
-2. For each transform T1..T5 in order, classify into one of:
+2. For each transform T1..T6 in order, classify into one of:
    - NO-OP:   change set is empty; skip silently.
    - APPLY:   change set is non-empty AND it is safe to write
               (the transform's per-step rules don't say "report drift").
@@ -419,6 +503,7 @@ Suggested commit subjects:
 | 3 | `tidyall: delete config files and ignore entries` |
 | 4 | `dist.ini: drop Code::TidyAll plugin and prereqs` |
 | 5 | `ci: add precious lint job` |
+| 6 | `hooks: add scripts/pre-commit for precious lint` |
 
 ## Worked Example
 
@@ -465,7 +550,7 @@ select = .stopwords
 
 ### After
 
-Five commits land:
+Six commits land:
 
 1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config).
 2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped.
@@ -492,6 +577,7 @@ Five commits land:
    ```
 
 5. `ci: add precious lint job` — new `.github/workflows/lint.yml` as specified above.
+6. `hooks: add scripts/pre-commit for precious lint` — new `scripts/pre-commit` (executable bit set) with `default_branch="main"` substituted from the resolved default branch. Commit body notes that contributors run `scripts/pre-commit --init` once per clone.
 
 `cpanfile` is regenerated by T4's `dzil build` and is the only build-output file committed alongside `dist.ini`; `META.json`, `Makefile.PL`, `README.md` are reverted.
 
@@ -506,6 +592,7 @@ After **each** transform, before committing:
 | 3 | `git ls-files \| grep -E '(^\|/)tidyall'` returns nothing; `.gitignore` has no `tidyall` line |
 | 4 | `dzil build --no-tgz` exits 0; `grep -E '(Code::TidyAll\|Test::Vars\|Pod::Wordlist\|Parallel::ForkManager)' <DistName>-*/META.json` returns nothing |
 | 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0 |
+| 6 | `sh -n scripts/pre-commit` exits 0; `[ -x scripts/pre-commit ]`; `grep -q 'precious lint' scripts/pre-commit` |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
 
@@ -524,9 +611,12 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Adding `crate-ci/typos` to the ubi `projects:` list without wiring the `typos` command | CI installs a tool the lint run won't use; wastes a download and confuses readers | Add `crate-ci/typos` to T5 only when T1 wired the typos block |
 | Using `tools:` for the ubi-action input | `oalders/install-ubi-action` reads `inputs.projects`, not `inputs.tools` — unknown inputs are silently dropped, so no binaries get installed and `precious lint --all` fails on missing commands | Use `projects:` (the documented input name) |
 | Adding `App::perlvars` to runtime prereqs | It's a develop-only tool | Use `[Prereqs / DevelopRequires]` |
-| Bundling all five transforms into one commit | Can't revert one transform without the others | One commit per transform |
+| Bundling all six transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Overwriting an existing `.github/workflows/lint.yml` | The user may have a custom lint shape | Detect drift, surface it, skip — don't overwrite hand-rolled workflows |
 | Guessing the tidyall prereqs-block moniker | Bundle authors pick these ad-hoc; `'Modules for use with tidyall'` is `@Author::OALDERS`-specific | `perldoc -lm Dist::Zilla::PluginBundle::Author::Foo` and read the source |
+| Hardcoding `default_branch="main"` in `scripts/pre-commit` on a `master` repo | The branch guard silently never fires; direct commits to `master` slip through | Resolve via `git symbolic-ref --short refs/remotes/origin/HEAD` before writing T6 — same recipe as T5 |
+| Forgetting `chmod +x scripts/pre-commit` before staging | `--init` creates a symlink to a non-executable file; `git commit` skips the hook silently | `chmod +x scripts/pre-commit` before `git add` in T6; verify with `[ -x scripts/pre-commit ]` |
+| Writing `scripts/pre-commit` when `.pre-commit-config.yaml` or `lefthook.yml` already exists | Two competing hook frameworks; contributors don't know which one is authoritative | Detect competing frameworks in T6's pre-write check; surface drift and skip |
 
 ## Red Flags
 
@@ -539,6 +629,8 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **`precious lint --all` fails because the `typos` block matches no files** → `path-args = "none"` was dropped from the typos block, so precious is passing per-file paths and typos can't reconcile them with its own tree walk; restore `invoke = "once"` + `path-args = "none"`.
 - **`precious config list` errors with a TOML deserialization / unknown-field error** → keys are snake_case (`lint_flags`, `ok_exit_codes`, …). precious uses kebab-case — rewrite with hyphens (`lint-flags`, `ok-exit-codes`).
 - **CI installs `typos` but the lint run never invokes it** → T1 didn't emit a `[commands.typos]` block; either remove `crate-ci/typos` from the ubi `projects:` list or add the missing block.
+- **Contributor commits directly to `main` and the branch guard never fires** → `scripts/pre-commit`'s `default_branch=` was set to `main` but the repo is on `master`, OR `scripts/pre-commit --init` was never run on that clone; check the symlink with `ls -l .git/hooks/pre-commit`.
+- **`git commit` succeeds despite obvious tidy violations** → `.git/hooks/pre-commit` symlink targets a non-executable `scripts/pre-commit`; `chmod +x scripts/pre-commit` and try again.
 
 ## Related
 
