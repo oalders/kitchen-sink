@@ -1,7 +1,7 @@
 ---
 name: tune-precious
 description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, wires a CI lint job, and adds a self-installing `scripts/pre-commit` shell hook so `precious lint --staged` runs locally on commit. Idempotent across re-runs.
-version: 1.2.0
+version: 1.2.1
 ---
 
 # Tune Precious
@@ -383,7 +383,7 @@ jobs:
 
 ### 6. Add `scripts/pre-commit` hook for `precious lint`
 
-**What:** add a checked-in shell script at `scripts/pre-commit` that runs `precious lint --staged` and blocks direct commits to the default branch. The script self-installs via `scripts/pre-commit --init`, which symlinks `.git/hooks/pre-commit` to it. No external hook framework (no `pre-commit` Python package, no lefthook).
+**What:** add a checked-in shell script at `scripts/pre-commit` that runs `precious lint --staged` and blocks direct commits to the default branch. The script self-installs via `scripts/pre-commit --init`, which symlinks the repo's pre-commit hook to it (resolved via `git rev-parse --git-path hooks` so it works in plain repos and linked worktrees). No external hook framework (no `pre-commit` Python package, no lefthook).
 
 **Canonical script:**
 
@@ -399,14 +399,14 @@ set -eu
 
 if [ "${1:-}" = "--init" ]; then
     repo_root=$(git rev-parse --show-toplevel)
-    hook_path="$repo_root/.git/hooks/pre-commit"
-    target="../../scripts/pre-commit"
+    hook_path="$(git rev-parse --git-path hooks)/pre-commit"
+    target="$repo_root/scripts/pre-commit"
     if [ -e "$hook_path" ] && [ ! -L "$hook_path" ]; then
         echo "ERROR: $hook_path exists and is not a symlink." >&2
         echo "Move or remove it, then re-run scripts/pre-commit --init." >&2
         exit 1
     fi
-    chmod +x "$repo_root/scripts/pre-commit"
+    chmod +x "$target"
     ln -sf "$target" "$hook_path"
     echo "Installed pre-commit hook: $hook_path -> $target"
     exit 0
@@ -442,7 +442,8 @@ Substitute the resolved name (or fall back to `main`) into `default_branch="..."
 
 - **Native POSIX `sh`, no framework.** Contributors don't need to install the `pre-commit` Python package, lefthook, or husky. The only requirement is `precious` on `PATH` — same as CI.
 - **`scripts/pre-commit --init` self-installs.** One command per clone. The skill mentions it in the commit body; no extra setup script, Makefile target, or README surgery required (leave docs to the maintainer's judgment).
-- **Symlink, not copy.** Edits to `scripts/pre-commit` propagate to `.git/hooks/pre-commit` immediately. A copy would let the two drift silently.
+- **Symlink, not copy.** Edits to `scripts/pre-commit` propagate to the installed hook immediately. A copy would let the two drift silently.
+- **`git rev-parse --git-path hooks` for the install path.** Resolves the correct hooks dir in plain repos, linked worktrees (where `.git` is a file pointing into the common git dir), and setups that override `core.hooksPath`. Hardcoding `$repo_root/.git/hooks` breaks in worktrees. The symlink target is the absolute path to `scripts/pre-commit` so it resolves the same regardless of where the hooks dir actually lives.
 - **Default-branch guard.** Mirrors the same "no direct commits to main" policy that CI's branch-protection rules enforce server-side. Catches it before the push, with a clearer error message.
 - **`precious lint -q --staged`, not `--all`.** Fast on every commit; matches what's about to land. `--all` is CI's job (T5).
 - **Lint, not tidy.** A hook that rewrites files behind the contributor is surprising. Lint fails loudly; the contributor runs `precious tidy` themselves and re-stages — same UX as CI failures.
@@ -617,6 +618,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Hardcoding `default_branch="main"` in `scripts/pre-commit` on a `master` repo | The branch guard silently never fires; direct commits to `master` slip through | Resolve via `git symbolic-ref --short refs/remotes/origin/HEAD` before writing T6 — same recipe as T5 |
 | Forgetting `chmod +x scripts/pre-commit` before staging | `--init` creates a symlink to a non-executable file; `git commit` skips the hook silently | `chmod +x scripts/pre-commit` before `git add` in T6; verify with `[ -x scripts/pre-commit ]` |
 | Writing `scripts/pre-commit` when `.pre-commit-config.yaml` or `lefthook.yml` already exists | Two competing hook frameworks; contributors don't know which one is authoritative | Detect competing frameworks in T6's pre-write check; surface drift and skip |
+| Hardcoding `$repo_root/.git/hooks/pre-commit` as the install path in `--init` | In a linked worktree `.git` is a file, not a directory, so the path doesn't exist; the symlink fails or lands in the wrong place. Also ignores `core.hooksPath` | Use `$(git rev-parse --git-path hooks)/pre-commit` and an absolute symlink target |
 
 ## Red Flags
 
