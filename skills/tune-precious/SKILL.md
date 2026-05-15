@@ -399,7 +399,17 @@ set -eu
 
 if [ "${1:-}" = "--init" ]; then
     repo_root=$(git rev-parse --show-toplevel)
-    hook_path="$(git rev-parse --git-path hooks)/pre-commit"
+    # Resolve the hooks dir via git so it works in plain repos, linked
+    # worktrees (where `.git` is a file pointing into the common git dir),
+    # and setups that override `core.hooksPath`. Run with `-C "$repo_root"`
+    # so the output is anchored under the worktree root regardless of
+    # which subdirectory the contributor invoked `--init` from.
+    hooks_dir=$(git -C "$repo_root" rev-parse --git-path hooks)
+    case "$hooks_dir" in
+        /*) ;;
+        *) hooks_dir="$repo_root/$hooks_dir" ;;
+    esac
+    hook_path="$hooks_dir/pre-commit"
     target="$repo_root/scripts/pre-commit"
     if [ -e "$hook_path" ] && [ ! -L "$hook_path" ]; then
         echo "ERROR: $hook_path exists and is not a symlink." >&2
@@ -443,7 +453,7 @@ Substitute the resolved name (or fall back to `main`) into `default_branch="..."
 - **Native POSIX `sh`, no framework.** Contributors don't need to install the `pre-commit` Python package, lefthook, or husky. The only requirement is `precious` on `PATH` — same as CI.
 - **`scripts/pre-commit --init` self-installs.** One command per clone. The skill mentions it in the commit body; no extra setup script, Makefile target, or README surgery required (leave docs to the maintainer's judgment).
 - **Symlink, not copy.** Edits to `scripts/pre-commit` propagate to the installed hook immediately. A copy would let the two drift silently.
-- **`git rev-parse --git-path hooks` for the install path.** Resolves the correct hooks dir in plain repos, linked worktrees (where `.git` is a file pointing into the common git dir), and setups that override `core.hooksPath`. Hardcoding `$repo_root/.git/hooks` breaks in worktrees. The symlink target is the absolute path to `scripts/pre-commit` so it resolves the same regardless of where the hooks dir actually lives.
+- **`git -C "$repo_root" rev-parse --git-path hooks` for the install path.** Resolves the correct hooks dir in plain repos, linked worktrees (where `.git` is a file pointing into the common git dir), and setups that override `core.hooksPath`. Hardcoding `$repo_root/.git/hooks` breaks in worktrees. The `-C "$repo_root"` is load-bearing: without it, `--git-path` returns a path relative to the contributor's cwd, which lands the symlink in the wrong place when `--init` is run from a subdirectory. The symlink target is the absolute path to `scripts/pre-commit` so it resolves the same regardless of where the hooks dir actually lives.
 - **Default-branch guard.** Mirrors the same "no direct commits to main" policy that CI's branch-protection rules enforce server-side. Catches it before the push, with a clearer error message.
 - **`precious lint -q --staged`, not `--all`.** Fast on every commit; matches what's about to land. `--all` is CI's job (T5).
 - **Lint, not tidy.** A hook that rewrites files behind the contributor is surprising. Lint fails loudly; the contributor runs `precious tidy` themselves and re-stages — same UX as CI failures.
