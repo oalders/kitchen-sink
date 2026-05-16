@@ -1,7 +1,7 @@
 ---
 name: tune-precious
 description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, wires a CI lint job, and adds a self-installing `scripts/pre-commit` shell hook so `precious lint --staged` runs locally on commit. Idempotent across re-runs.
-version: 1.2.1
+version: 1.3.0
 ---
 
 # Tune Precious
@@ -327,6 +327,15 @@ git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@
 
 Substitute the resolved name (or fall back to `main`) into the `branches:` list below. Repos still on `master` need `master` here, or the push trigger silently never fires.
 
+**Before emitting the file, verify every action version.** The `@`-refs in the template below were correct when this skill was written, but action tags move and not every action ever reaches `v1`. For each `uses:` line, resolve a tag that actually exists before writing it:
+
+```bash
+gh api repos/<owner>/<repo>/releases/latest --jq .tag_name   # newest release, if the repo cuts releases
+gh api repos/<owner>/<repo>/tags --jq '.[].name'             # all tags, for repos with no "latest" release
+```
+
+Never assume `@v1`. `oalders/install-ubi-action`, for example, has never tagged a `v1` — its latest is in the `v0.0.x` line, which is why the template pins `@v0.0.6`. When an action only publishes `v0.0.x` tags, pin the exact latest `v0.0.x`; when it publishes a moving major tag (`actions/checkout` → `v6`), that major tag is fine.
+
 ```yaml
 name: lint
 
@@ -349,8 +358,9 @@ jobs:
       - uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: "5.42"
-      - uses: oalders/install-ubi-action@v1
+      - uses: oalders/install-ubi-action@v0.0.6   # ← verify the latest tag before writing (see above)
         with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           projects: |
             houseabsolute/precious
             houseabsolute/omegasort
@@ -372,14 +382,16 @@ jobs:
 **Why this shape:**
 
 - `precious` is the single entry point — no per-tool step.
-- `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort + typos are Rust/Go); skips compile time. The input is `projects:` (newline-delimited list of `owner/repo` slugs passed to `ubi --project`).
+- `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort + typos are Rust/Go); skips compile time. The input is `projects:` (newline-delimited list of `owner/repo` slugs passed to `ubi --project`). Always pass `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` under `with:` — ubi pulls binaries through the GitHub releases API, and without an authenticated token the unauthenticated rate limit fails the install step intermittently.
 - `install-with-cpm@v2` installs the two CPAN tools precious shells out to.
 - Perl 5.42 (the current matrix max) is enough for the lint job; nothing in this job exercises older Perls.
 - `branches: [<default>]` + workflow-level `concurrency:` block — same conventions as `tune-perl-ci`. Resolve the default branch with the `git symbolic-ref` command shown above and substitute before writing the file.
 
+**Lint job and build jobs:** the generated `lint.yml` is a standalone workflow with no build job, so the `precious` job declares no `needs:`. If you instead add a precious-lint job to a workflow that already contains a build job, that lint job **must** declare `needs: <build-job>` — running lint against a tree whose build is already failing wastes a runner and clutters the failure signal.
+
 **Idempotency:** if `.github/workflows/lint.yml` already exists, parse it. If it already runs `precious lint --all` under the same shape, leave it alone. If the existing file uses a different shape (e.g. installs precious from source), surface the drift and skip — do not overwrite a hand-rolled workflow.
 
-**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0.
+**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
 
 ### 6. Add `scripts/pre-commit` hook for `precious lint`
 
@@ -628,7 +640,7 @@ After **each** transform, before committing:
 | 2 | `grep -E '(^\|\s)(-b\|--backup-and-modify-in-place)(\s\|$)' .perltidyrc` returns nothing; `git ls-files perltidyrc` returns nothing |
 | 3 | `git ls-files \| grep -E '(^\|/)tidyall'` returns nothing; `.gitignore` has no `tidyall` line |
 | 4 | `dzil build --no-tgz` exits 0; `grep -E '(Code::TidyAll\|Test::Vars\|Pod::Wordlist\|Parallel::ForkManager)' <DistName>-*/META.json` returns nothing |
-| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0 |
+| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; every `uses:` ref resolves to an existing tag |
 | 6 | `sh -n scripts/pre-commit` exits 0; `[ -x scripts/pre-commit ]`; `grep -q 'precious lint' scripts/pre-commit`; if `dist.ini` exists, `dzil build --no-tgz` exits 0 and `find <DistName>-*/ -path '*/scripts/pre-commit'` returns nothing |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
@@ -647,6 +659,9 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Wiring up `typos` in `precious.toml` without a typos config | Introduces a new lint dimension on a previously-clean tree; users get noisy false positives | Only emit the `typos` block when `typos.toml` / `_typos.toml` / `.typos.toml` exists at repo root |
 | Adding `crate-ci/typos` to the ubi `projects:` list without wiring the `typos` command | CI installs a tool the lint run won't use; wastes a download and confuses readers | Add `crate-ci/typos` to T5 only when T1 wired the typos block |
 | Using `tools:` for the ubi-action input | `oalders/install-ubi-action` reads `inputs.projects`, not `inputs.tools` — unknown inputs are silently dropped, so no binaries get installed and `precious lint --all` fails on missing commands | Use `projects:` (the documented input name) |
+| Pinning an action to `@v1` (or any tag) without checking it exists | Not every action reaches `v1` — `oalders/install-ubi-action`'s latest is `v0.0.6`. A non-existent ref fails the workflow on every run | Resolve a real tag with `gh api repos/<owner>/<repo>/releases/latest` (or `/tags`) before writing each `uses:` line |
+| Omitting `GITHUB_TOKEN` from the `install-ubi-action` step | ubi hits the GitHub releases API unauthenticated; the lower rate limit fails the install step intermittently | Pass `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` under the action's `with:` |
+| Adding a precious-lint job to a workflow that has a build job, with no `needs:` | Lint burns a runner while the build is already broken; the failure signal is muddied | Give the lint job `needs: <build-job>` whenever it shares a workflow with a build job |
 | Adding `App::perlvars` to runtime prereqs | It's a develop-only tool | Use `[Prereqs / DevelopRequires]` |
 | Bundling all six transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Overwriting an existing `.github/workflows/lint.yml` | The user may have a custom lint shape | Detect drift, surface it, skip — don't overwrite hand-rolled workflows |
@@ -664,6 +679,8 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **`dzil build` says "file does not exist"** → tidyall files deleted from disk but not staged; `git add -u`.
 - **PR diff includes ~100 lines of regenerated `META.json` / `Makefile.PL`** → T4's cleanup step skipped; revert those files.
 - **`precious lint --all` passes locally but the new CI job fails on `omegasort` (or any other binary)** → `oalders/install-ubi-action` step missing, using `tools:` instead of `projects:` (silently dropped → nothing installed), or wrong slug in `projects:`; check the input key is `projects:` and the slug is `houseabsolute/omegasort`.
+- **A workflow run fails immediately with `Unable to resolve action owner/repo@vN, repository or version not found`** → the pinned action tag does not exist (e.g. `install-ubi-action@v1` — there is no `v1`); resolve the real latest tag with `gh api` and re-pin.
+- **The `install-ubi-action` step fails intermittently with a GitHub API 403 / rate-limit error** → `GITHUB_TOKEN` is missing from the step's `with:`; add `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}`.
 - **`precious config list` errors with TOML parse failure after T1** → quoting issue in the heredoc that generated the file; re-emit `precious.toml` from a real template, not string concatenation.
 - **`Test::Vars` still appears in `develop_requires` of `META.json`** → the bundle's tidyall Prereqs block uses a moniker different from `'Modules for use with tidyall'`; read the bundle source and use the right name in `-remove`.
 - **`precious lint --all` fails because the `typos` block matches no files** → `path-args = "none"` was dropped from the typos block, so precious is passing per-file paths and typos can't reconcile them with its own tree walk; restore `invoke = "once"` + `path-args = "none"`.
