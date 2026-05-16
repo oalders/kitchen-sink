@@ -1,7 +1,7 @@
 ---
 name: tune-precious
 description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, wires a CI lint job, and adds a self-installing `scripts/pre-commit` shell hook so `precious lint --staged` runs locally on commit. Idempotent across re-runs.
-version: 1.2.0
+version: 1.2.1
 ---
 
 # Tune Precious
@@ -383,7 +383,7 @@ jobs:
 
 ### 6. Add `scripts/pre-commit` hook for `precious lint`
 
-**What:** add a checked-in shell script at `scripts/pre-commit` that runs `precious lint --staged` and blocks direct commits to the default branch. The script self-installs via `scripts/pre-commit --init`, which symlinks `.git/hooks/pre-commit` to it. No external hook framework (no `pre-commit` Python package, no lefthook).
+**What:** add a checked-in shell script at `scripts/pre-commit` that runs `precious lint --staged` and blocks direct commits to the default branch. The script self-installs via `scripts/pre-commit --init`, which symlinks the repo's pre-commit hook to it (resolved via `git rev-parse --git-path hooks` so it works in plain repos and linked worktrees). No external hook framework (no `pre-commit` Python package, no lefthook).
 
 **Canonical script:**
 
@@ -399,14 +399,24 @@ set -eu
 
 if [ "${1:-}" = "--init" ]; then
     repo_root=$(git rev-parse --show-toplevel)
-    hook_path="$repo_root/.git/hooks/pre-commit"
-    target="../../scripts/pre-commit"
+    # Resolve the hooks dir via git so it works in plain repos, linked
+    # worktrees (where `.git` is a file pointing into the common git dir),
+    # and setups that override `core.hooksPath`. Run with `-C "$repo_root"`
+    # so the output is anchored under the worktree root regardless of
+    # which subdirectory the contributor invoked `--init` from.
+    hooks_dir=$(git -C "$repo_root" rev-parse --git-path hooks)
+    case "$hooks_dir" in
+        /*) ;;
+        *) hooks_dir="$repo_root/$hooks_dir" ;;
+    esac
+    hook_path="$hooks_dir/pre-commit"
+    target="$repo_root/scripts/pre-commit"
     if [ -e "$hook_path" ] && [ ! -L "$hook_path" ]; then
         echo "ERROR: $hook_path exists and is not a symlink." >&2
         echo "Move or remove it, then re-run scripts/pre-commit --init." >&2
         exit 1
     fi
-    chmod +x "$repo_root/scripts/pre-commit"
+    chmod +x "$target"
     ln -sf "$target" "$hook_path"
     echo "Installed pre-commit hook: $hook_path -> $target"
     exit 0
@@ -442,7 +452,8 @@ Substitute the resolved name (or fall back to `main`) into `default_branch="..."
 
 - **Native POSIX `sh`, no framework.** Contributors don't need to install the `pre-commit` Python package, lefthook, or husky. The only requirement is `precious` on `PATH` — same as CI.
 - **`scripts/pre-commit --init` self-installs.** One command per clone. The skill mentions it in the commit body; no extra setup script, Makefile target, or README surgery required (leave docs to the maintainer's judgment).
-- **Symlink, not copy.** Edits to `scripts/pre-commit` propagate to `.git/hooks/pre-commit` immediately. A copy would let the two drift silently.
+- **Symlink, not copy.** Edits to `scripts/pre-commit` propagate to the installed hook immediately. A copy would let the two drift silently.
+- **`git -C "$repo_root" rev-parse --git-path hooks` for the install path.** Resolves the correct hooks dir in plain repos, linked worktrees (where `.git` is a file pointing into the common git dir), and setups that override `core.hooksPath`. Hardcoding `$repo_root/.git/hooks` breaks in worktrees. The `-C "$repo_root"` is load-bearing: without it, `--git-path` returns a path relative to the contributor's cwd, which lands the symlink in the wrong place when `--init` is run from a subdirectory. The symlink target is the absolute path to `scripts/pre-commit` so it resolves the same regardless of where the hooks dir actually lives.
 - **Default-branch guard.** Mirrors the same "no direct commits to main" policy that CI's branch-protection rules enforce server-side. Catches it before the push, with a clearer error message.
 - **`precious lint -q --staged`, not `--all`.** Fast on every commit; matches what's about to land. `--all` is CI's job (T5).
 - **Lint, not tidy.** A hook that rewrites files behind the contributor is surprising. Lint fails loudly; the contributor runs `precious tidy` themselves and re-stages — same UX as CI failures.
@@ -466,12 +477,31 @@ Substitute the resolved name (or fall back to `main`) into `default_branch="..."
 
 Surface a drift entry naming the conflicting framework or path; do NOT write `scripts/pre-commit`. Two competing hook setups is worse than none.
 
+**dist.ini exclusion (dzil repos only):**
+
+If `dist.ini` exists at repo root, `scripts/pre-commit` is a developer-only file and must not ship in the CPAN tarball. Add (or extend) a `[PruneFiles]` block in `dist.ini` so dzil drops it from the manifest:
+
+```ini
+[PruneFiles]
+filename = scripts/pre-commit
+```
+
+- If `[PruneFiles]` already exists, append `filename = scripts/pre-commit` to it. Do NOT introduce a second `[PruneFiles]` section — `Config::MVP` accepts it but the duplicate-section noise is confusing.
+- If an existing `[PruneFiles]` block already lists `scripts/pre-commit` (exact match) or a `match =` regex that covers it (e.g. `match = ^scripts/`), **NO-OP** on the dist.ini edit.
+- Skip this sub-step entirely if `dist.ini` does not exist (greenfield / typos-only / non-dzil Perl repo).
+- Bundle the dist.ini edit into the same T6 commit as `scripts/pre-commit` — they're a logical unit, and the exclusion is meaningless without the file it excludes.
+
+After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `scripts/pre-commit` is absent from the build output (`find <DistName>-*/ -path '*/scripts/pre-commit'` returns nothing). Then revert regenerated build artefacts the same way T4 does (`git checkout -- META.json Makefile.PL README.md Changes`; `rm -rf <DistName>-*/ <DistName>-*.tar.gz`) — commit only `dist.ini` and `scripts/pre-commit`.
+
+**Why prune, not gitignore:** dzil's `Git::GatherDir` reads `git ls-files`, and the script is intentionally tracked (contributors need it on clone). Gitignoring it would untrack it and break `--init`. `[PruneFiles]` is the right lever: tracked in git, omitted from the dist.
+
 **Verify:**
 
 - `sh -n scripts/pre-commit` exits 0 (POSIX syntax check).
 - `[ -x scripts/pre-commit ]` — executable bit set (the skill must `chmod +x` before staging; otherwise `--init`'s symlink target won't be runnable).
 - `grep -q 'default_branch="' scripts/pre-commit && ! grep -q 'default_branch="main"   # ←' scripts/pre-commit` if the resolved branch was anything other than `main` — ensures the placeholder substitution actually happened.
 - `grep -q 'precious lint' scripts/pre-commit` — the precious invocation survived.
+- If `dist.ini` exists: `dzil build --no-tgz` exits 0 AND `find <DistName>-*/ -path '*/scripts/pre-commit'` returns nothing — confirms the prune landed.
 
 ## Algorithm
 
@@ -577,7 +607,14 @@ Six commits land:
    ```
 
 5. `ci: add precious lint job` — new `.github/workflows/lint.yml` as specified above.
-6. `hooks: add scripts/pre-commit for precious lint` — new `scripts/pre-commit` (executable bit set) with `default_branch="main"` substituted from the resolved default branch. Commit body notes that contributors run `scripts/pre-commit --init` once per clone.
+6. `hooks: add scripts/pre-commit for precious lint` — new `scripts/pre-commit` (executable bit set) with `default_branch="main"` substituted from the resolved default branch, plus a `[PruneFiles]` entry appended to `dist.ini` so the hook script doesn't ship in the CPAN tarball:
+
+   ```ini
+   [PruneFiles]
+   filename = scripts/pre-commit
+   ```
+
+   Commit body notes that contributors run `scripts/pre-commit --init` once per clone.
 
 `cpanfile` is regenerated by T4's `dzil build` and is the only build-output file committed alongside `dist.ini`; `META.json`, `Makefile.PL`, `README.md` are reverted.
 
@@ -592,7 +629,7 @@ After **each** transform, before committing:
 | 3 | `git ls-files \| grep -E '(^\|/)tidyall'` returns nothing; `.gitignore` has no `tidyall` line |
 | 4 | `dzil build --no-tgz` exits 0; `grep -E '(Code::TidyAll\|Test::Vars\|Pod::Wordlist\|Parallel::ForkManager)' <DistName>-*/META.json` returns nothing |
 | 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0 |
-| 6 | `sh -n scripts/pre-commit` exits 0; `[ -x scripts/pre-commit ]`; `grep -q 'precious lint' scripts/pre-commit` |
+| 6 | `sh -n scripts/pre-commit` exits 0; `[ -x scripts/pre-commit ]`; `grep -q 'precious lint' scripts/pre-commit`; if `dist.ini` exists, `dzil build --no-tgz` exits 0 and `find <DistName>-*/ -path '*/scripts/pre-commit'` returns nothing |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
 
@@ -617,6 +654,9 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Hardcoding `default_branch="main"` in `scripts/pre-commit` on a `master` repo | The branch guard silently never fires; direct commits to `master` slip through | Resolve via `git symbolic-ref --short refs/remotes/origin/HEAD` before writing T6 — same recipe as T5 |
 | Forgetting `chmod +x scripts/pre-commit` before staging | `--init` creates a symlink to a non-executable file; `git commit` skips the hook silently | `chmod +x scripts/pre-commit` before `git add` in T6; verify with `[ -x scripts/pre-commit ]` |
 | Writing `scripts/pre-commit` when `.pre-commit-config.yaml` or `lefthook.yml` already exists | Two competing hook frameworks; contributors don't know which one is authoritative | Detect competing frameworks in T6's pre-write check; surface drift and skip |
+| Adding `scripts/pre-commit` to a dzil repo without pruning it | `Git::GatherDir` picks it up and ships a dev-only hook in the CPAN tarball; CPAN users get a useless script in their installed share dir | Append `filename = scripts/pre-commit` to `[PruneFiles]` in `dist.ini` as part of T6, then re-run `dzil build --no-tgz` and confirm the file is absent from the build output |
+| Gitignoring `scripts/pre-commit` instead of pruning it | `--init` symlinks to the file; untracking it means contributors don't get it on clone and the hook never installs | Keep it tracked; use `[PruneFiles]` to drop it from the dist only |
+| Hardcoding `$repo_root/.git/hooks/pre-commit` as the install path in `--init` | In a linked worktree `.git` is a file, not a directory, so the path doesn't exist; the symlink fails or lands in the wrong place. Also ignores `core.hooksPath` | Use `$(git rev-parse --git-path hooks)/pre-commit` and an absolute symlink target |
 
 ## Red Flags
 
@@ -631,6 +671,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **CI installs `typos` but the lint run never invokes it** → T1 didn't emit a `[commands.typos]` block; either remove `crate-ci/typos` from the ubi `projects:` list or add the missing block.
 - **Contributor commits directly to `main` and the branch guard never fires** → `scripts/pre-commit`'s `default_branch=` was set to `main` but the repo is on `master`, OR `scripts/pre-commit --init` was never run on that clone; check the symlink with `ls -l .git/hooks/pre-commit`.
 - **`git commit` succeeds despite obvious tidy violations** → `.git/hooks/pre-commit` symlink targets a non-executable `scripts/pre-commit`; `chmod +x scripts/pre-commit` and try again.
+- **`scripts/pre-commit` shows up in `<DistName>-*/MANIFEST` or the released tarball** → T6's `[PruneFiles]` step was skipped on a dzil repo; append `filename = scripts/pre-commit` to `[PruneFiles]` in `dist.ini` and rebuild.
 
 ## Related
 
