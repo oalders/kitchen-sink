@@ -14,7 +14,7 @@ Two subagents review the same work in parallel, competing under an incentive tha
 
 - The user asks for an "adversarial review", "review this adversarially", or wants two reviewers competing.
 - You have a concrete patch, PR, plan, or change to review (not an open-ended question).
-- You already know what invariants the patch claims and can name a threat model (this is the precondition Step 1 enforces; if you can't, this isn't the right skill).
+- You can already name the invariants the patch claims and its threat model (the precondition Step 1 enforces).
 
 If you can't supply the preamble, this is the wrong skill. Use `superpowers:requesting-code-review` or `/request-review` instead — those don't require scope to work.
 
