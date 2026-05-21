@@ -1,6 +1,6 @@
 {
   "name": "kitchen-sink",
-  "version": "1.14.0",
+  "version": "2.0.0",
   "description": "A collection of useful Claude Code skills and commands for software development workflows",
   "author": {
     "name": "Olaf Alders",
