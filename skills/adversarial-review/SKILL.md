@@ -169,4 +169,4 @@ Structure the final output as:
 
 Original technique: https://blog.fsck.com/2026/05/01/adversarial-review/
 
-Scope-discipline rewrite motivated by GitHub issue #11 (worked example: 5-round review of a `WWW::RobotRules::parse` patch where finding count stayed high but real-defect convergence stalled by round 3...issue #11).
+Scope-discipline rewrite motivated by GitHub issue #11 (worked example: 5-round review of a `WWW::RobotRules::parse` patch where finding count stayed high but real-defect convergence stalled by round 3).
