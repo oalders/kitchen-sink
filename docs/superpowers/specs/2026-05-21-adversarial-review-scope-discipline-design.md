@@ -37,7 +37,9 @@ Rewrite `skills/adversarial-review/SKILL.md` so the load-bearing wording (scope,
 
 ### File to modify
 - `skills/adversarial-review/SKILL.md` — full rewrite (22 → ~170 lines)
-- Bump version: `1.0.0` → `2.0.0` (breaking change to invocation contract — callers must now supply preamble + round number)
+- Skill-internal frontmatter version: `1.0.0` → `2.0.0` (breaking change to invocation contract — callers must now supply preamble + round number, and invocations without them abort)
+
+The plugin-level version also bumps to major (see [Plugin version bump](#plugin-version-bump) below) — this is the same breaking change, surfaced at both layers.
 
 ### Section 1 — Frontmatter + Overview
 
@@ -78,15 +80,17 @@ If the caller can't supply these, the skill **aborts** with:
 
 ### Section 3 — Step 2: Round-number gate
 
-Caller MUST also state which round this is (1, 2, 3, ...). If the caller can't supply a round number, the skill aborts with the same posture as the preamble gate (round number is part of the required input).
+Caller MUST state which round this is — a positive integer (1, 2, 3, ...) where the number counts *the current invocation including this one*. So "round 1" means first invocation on this patch; "round 3" means this is the third.
+
+If the caller can't supply a round number, or supplies something other than a positive integer, the skill aborts with the same posture as the preamble gate (round number is part of the required input).
 
 If round is 1 or 2: proceed silently to Step 3.
 
-If round >= 3: pause and surface this to the user verbatim:
+If round >= 3: pause and surface this to the user verbatim (substitute N with the caller-supplied round number, which includes the current invocation):
 
-> You've run adversarial-review N times on this patch. If findings haven't converged, more rounds usually won't help — every fix creates new surface for the next round to attack. Consider **simplifying the patch** (shrink to one or two invariants) instead of adding another round. Continue anyway? [yes / step back]
+> You're about to run adversarial-review for the Nth time on this patch. If findings haven't converged, more rounds usually won't help — every fix creates new surface for the next round to attack. Consider **simplifying the patch** (shrink to one or two invariants) instead of adding another round. Continue anyway? [yes / step back]
 
-Only dispatches if the user confirms "yes" (or equivalent). If the user picks "step back" or asks to simplify, the skill exits without dispatching.
+Only dispatches if the user confirms "yes" (or equivalent affirmation). If the user picks "step back" or asks to simplify, the skill exits without dispatching.
 
 ### Section 4 — Step 3: Assemble reviewer brief (verbatim template)
 
@@ -112,9 +116,17 @@ OUT OF SCOPE — these findings are worth ZERO points:
 SCORING:
 Five points go to the reviewer who finds the most IN-SCOPE DEFECTS WITH WORKING
 REPROS. A finding without a repro is worth zero points. A finding that proposes
-new behavior is worth zero points. A test-quality finding counts only if you
-can demonstrate the flagged test would PASS against deliberately broken
+new behavior is worth zero points.
+
+Anti-splitting rule: findings that share the same invariant violation count as
+ONE finding for scoring, no matter how many input variants you list. Don't
+split "URL parser breaks" into separate findings for http://, https://, file://.
+Pick the strongest single repro and list the variants under it.
+
+A test-quality finding counts only if you can argue, citing the specific
+assertion in the test, why the test would PASS against deliberately broken
 (pre-patch) code — otherwise the test is real and your finding is theatre.
+You don't need to execute the pre-patch code; reason from the assertion.
 
 REQUIRED OUTPUT SECTIONS (use these exact headings):
 
@@ -123,15 +135,18 @@ For each finding:
 - Title
 - Severity (Critical / Important / Minor)
 - Invariant violated: {which stated invariant}
-- Repro: {minimal code or input sequence demonstrating the defect}
+- Repro: {minimal code or input sequence demonstrating the defect; list
+  additional variants here, not as separate findings}
 
 ## Tests Verified Falsifying
 For each test the patch adds/modifies that you ACCEPT as real:
 - Test name
-- Demonstrate it would FAIL against pre-patch code: {how you verified}
+- Argue why it would FAIL against pre-patch code: {cite the assertion and
+  the pre-patch behavior the assertion would catch}
 For each test you REJECT as theatre:
 - Test name
-- Demonstrate it would PASS against deliberately broken code: {how}
+- Argue why it would PASS against deliberately broken code: {cite the
+  assertion and the trivially-true condition it actually checks}
 
 ## Hypotheses Checked Clean
 For each attack lane or concern you investigated and dismissed:
@@ -209,14 +224,20 @@ No automated tests required — this is a prompt-design change, not code.
 
 ## Plugin version bump
 
-This is a behavioural change to an existing skill — per `CLAUDE.md`, minor bump.
+<a id="plugin-version-bump"></a>
+
+This is a **breaking change** to an existing skill's invocation contract — pre-rewrite invocations (without preamble + round number) will abort post-rewrite. Per `CLAUDE.md`: breaking change → **major bump**.
 
 Current version: `1.14.0` (confirmed in both `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`).
 
-Target version: `1.15.0` in **three** locations (per `CLAUDE.md` — must match exactly or the plugin cache serves stale versions):
+Target version: `2.0.0` in **three** locations (per `CLAUDE.md` — must match exactly or the plugin cache serves stale versions):
 
 - `.claude-plugin/plugin.json` — top-level `version`
 - `.claude-plugin/marketplace.json` — `metadata.version`
 - `.claude-plugin/marketplace.json` — `plugins[0].version` (single entry, since this is one plugin)
 
-Separately, the skill's internal frontmatter version (`skills/adversarial-review/SKILL.md`) bumps `1.0.0` → `2.0.0` because the invocation contract has changed (callers must now supply preamble + round number). The skill-internal version is independent of the plugin version.
+The skill's internal frontmatter version (`skills/adversarial-review/SKILL.md`) also bumps `1.0.0` → `2.0.0`. Same change, surfaced at both layers — the plugin-level version is the user-facing one (plugin cache uses it); the skill-internal version is for skill authors tracking the skill's own evolution.
+
+### Downstream caller audit
+
+Grepped the repo for references to `adversarial-review` and `adversarial review`. The only matches are the skill file itself and this spec — no other skills or commands invoke it. So the breaking change has no internal callers to update; only users who directly invoke the skill will see the new requirements.
