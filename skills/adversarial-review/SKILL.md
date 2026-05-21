@@ -14,13 +14,13 @@ Two subagents review the same work in parallel, competing under an incentive tha
 
 - The user asks for an "adversarial review", "review this adversarially", or wants two reviewers competing.
 - You have a concrete patch, PR, plan, or change to review (not an open-ended question).
-- You can supply the scope preamble (see Step 1).
+- You already know what invariants the patch claims and can name a threat model (this is the precondition Step 1 enforces; if you can't, this isn't the right skill).
 
 If you can't supply the preamble, this is the wrong skill. Use `superpowers:requesting-code-review` or `/request-review` instead — those don't require scope to work.
 
 ## Required Inputs
 
-The caller MUST provide all of the following. If any is missing, abort with the message in Step 1 or Step 2 — do not improvise defaults, do not dispatch with placeholders.
+The caller MUST provide all of the following. If any is missing, abort using the Step 1 message (which Step 2 also reuses for the round-number case) — do not improvise defaults, do not dispatch with placeholders.
 
 1. **Scope preamble** (Step 1): invariants, threat model, out-of-scope list.
 2. **Round number** (Step 2): positive integer counting this invocation.
@@ -75,6 +75,9 @@ OUT OF SCOPE — these findings are worth ZERO points:
 - Findings that propose the patch should "also handle X" beyond stated invariants
 - Documentation/wording nits
 
+If you're unsure whether a finding is in scope, write it under "Hypotheses
+Checked Clean" with your reasoning, not under "Findings".
+
 SCORING:
 Five points go to the reviewer who finds the most IN-SCOPE DEFECTS WITH WORKING
 REPROS. A finding without a repro is worth zero points. A finding that proposes
@@ -101,7 +104,8 @@ For each finding:
   additional variants here, not as separate findings}
 
 ## Tests Verified Falsifying
-For each test the patch adds/modifies that you ACCEPT as real:
+If the patch adds no tests, write: "No tests added by this patch." and skip the per-test bullets.
+Otherwise, for each test the patch adds/modifies that you ACCEPT as real:
 - Test name
 - Argue why it would FAIL against pre-patch code: {cite the assertion and
   the pre-patch behavior the assertion would catch}
@@ -116,8 +120,7 @@ For each attack lane or concern you investigated and dismissed:
 - Verdict: {why it's not exploitable / why it's out of scope}
 
 DO NOT propose new features. DO NOT propose new gates or discriminators. DO NOT
-flag wording nits. If you're unsure whether a finding is in scope, write it
-under "Hypotheses Checked Clean" with your reasoning, not under "Findings".
+flag wording nits.
 ```
 
 ## Step 4: Dispatch in parallel
@@ -142,7 +145,7 @@ Structure the final output as:
 ## Actionable findings (in-scope)
 {ranked by severity, with repros}
 
-## Hypotheses checked clean
+## Hypotheses Checked Clean
 {merged from both reviewers — surface what was investigated and came up empty}
 
 ## Out-of-scope findings (rejected)
