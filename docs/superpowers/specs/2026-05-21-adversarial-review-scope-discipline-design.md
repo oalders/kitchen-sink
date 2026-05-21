@@ -212,7 +212,7 @@ Skills don't have unit tests in this repo. The rewritten skill will be validated
 
 1. **Self-review**: re-read the rewritten SKILL.md against each of the six failure modes from the issue and confirm the skill structurally blocks each one (vs relies on the dispatcher to remember).
 2. **Dry run**: walk through a hypothetical invocation (caller skips preamble → skill aborts; caller supplies preamble, round=4 → skill prompts to simplify; caller supplies everything → skill dispatches with verbatim brief). Verify each gate fires as designed.
-3. **Plugin version bump**: per `CLAUDE.md`, bump version in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (both entries) since this is a behavioural change to an existing skill (minor bump).
+3. **Plugin version bump**: per `CLAUDE.md`, bump version in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (both entries) — see [Plugin version bump](#plugin-version-bump) below for target version and rationale.
 
 No automated tests required — this is a prompt-design change, not code.
 
