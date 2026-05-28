@@ -210,5 +210,6 @@ Task(superpowers:code-reviewer):
 ## Related Commands
 
 - **superpowers:code-reviewer** - The subagent this command invokes
+- **/geo-review** - LLM/answer-engine optimization review (run alongside `/seo-review` for full coverage)
 - **/frontend-review** - Frontend review with accessibility focus
 - **/security-review** - Security-focused review
