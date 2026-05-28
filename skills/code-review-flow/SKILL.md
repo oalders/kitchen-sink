@@ -179,3 +179,4 @@ This skill works because:
 
 - **superpowers:requesting-code-review** - The skill this wraps
 - **superpowers:receiving-code-review** - How to handle review feedback
+- **/code-review-intense-flow** - Heavyweight variant that also fans out to specialized reviewers (security, frontend, seo, geo, playwright) based on the diff
