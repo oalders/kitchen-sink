@@ -1,7 +1,7 @@
 ---
 name: tune-precious
 description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, wires a CI lint job, and adds a self-installing `scripts/pre-commit` shell hook so `precious lint --staged` runs locally on commit. Idempotent across re-runs.
-version: 1.3.0
+version: 1.4.0
 ---
 
 # Tune Precious
@@ -200,6 +200,20 @@ lint-failure-exit-codes = [2]
 
 **Verify:** `precious config list` exits 0. If precious isn't on `PATH`, fall back to `python3 -c 'import tomllib; tomllib.loads(open("precious.toml","rb").read().decode())'` for a syntax check.
 
+**dist.ini exclusion (dzil repos only):**
+
+If `dist.ini` exists at repo root, the `precious.toml` you just wrote is a developer-only config and must not ship in the CPAN tarball — exactly the same problem T6 handles for `scripts/pre-commit`. `precious.toml` is a root config file that never belongs in the dist, so prefer `exclude_filename`; fall back to `[PruneFiles]` when `[Git::GatherDir]` is bundle-owned (the common `@Author::*` case, where you can't pass `exclude_filename` from `dist.ini`).
+
+- If `dist.ini` has an explicit, configurable `[Git::GatherDir]` (or `[GatherDir]`) block, add `exclude_filename = precious.toml` to it.
+- Otherwise (the `[Git::GatherDir]` is owned by an `[@Author::*]` bundle), append `filename = precious.toml` to the `[PruneFiles]` block. If no `[PruneFiles]` block exists, add one; do NOT introduce a second `[PruneFiles]` section if one already exists.
+- **Idempotency:** if `precious.toml` is already excluded — via an `exclude_filename = precious.toml`, a `[PruneFiles] filename = precious.toml`, or a covering `match =` regex (e.g. `match = \.toml$`) — **NO-OP** on the dist.ini edit.
+- Skip this sub-step entirely if `dist.ini` does not exist (greenfield / typos-only / non-dzil Perl repo).
+- Bundle the dist.ini edit into the same T1 commit as `precious.toml` — they're a logical unit.
+
+After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `precious.toml` is absent from the build output (`find <DistName>-*/ -name precious.toml` returns nothing). Then revert regenerated build artefacts the way T4 does (`git checkout -- META.json Makefile.PL README.md Changes`; `rm -rf <DistName>-*/ <DistName>-*.tar.gz`).
+
+See the `working-with-dist-zilla` skill's §7 for the canonical exclusion list and the `exclude_filename` vs `[PruneFiles]` decision.
+
 ### 2. Consolidate `.perltidyrc`
 
 **What:** ensure the perltidy profile lives at the hidden `.perltidyrc` (what perltidy itself defaults to). Three sub-cases:
@@ -214,6 +228,8 @@ lint-failure-exit-codes = [2]
 **Why strip `-b`:** in a tidyall world `-b` told perltidy to write a backup before in-place modification, and tidyall cleaned it up. Under precious, the `--backup-file-extension=/` trick in T1's tidy-flags does the cleanup. Leaving `-b` in the profile creates duplicate-backup confusion.
 
 **Verify:** `perltidy --version` exits 0 with the resolved profile loaded (run `perltidy -DEBUG -dump-options` and grep for the profile path).
+
+**dist.ini exclusion (dzil repos only):** `.perltidyrc` (and any visible `perltidyrc`) is likewise a developer-only config that must not ship to CPAN. In a dzil repo, exclude it the same way T1 excludes `precious.toml` — prefer `exclude_filename` on an explicit `[Git::GatherDir]`, else append to `[PruneFiles]`; NO-OP if it's already excluded. See T1's dist.ini-exclusion sub-step and the `working-with-dist-zilla` skill's §7 for the mechanism and canonical list. Bundle the dist.ini edit into the same T2 commit.
 
 ### 3. Delete `Code::TidyAll` config files
 
@@ -594,8 +610,8 @@ select = .stopwords
 
 Six commits land:
 
-1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config).
-2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped.
+1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config). Because this is a dzil repo and the `[@Author::OALDERS]` bundle owns `[Git::GatherDir]`, the same commit also keeps `precious.toml` out of the dist by appending `filename = precious.toml` to a `[PruneFiles]` block — `exclude_filename` isn't reachable from `dist.ini` when the bundle owns the gather step (see `working-with-dist-zilla` §7).
+2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped, and kept out of the dist the same way — `filename = .perltidyrc` appended to the same `[PruneFiles]` block.
 3. `tidyall: delete config files and ignore entries` — `.tidyallrc` removed; `.gitignore` no longer mentions `.tidyall.d/`.
 4. `dist.ini: drop Code::TidyAll plugin and prereqs` — bundle line + `[RemovePrereqs]` + `[Prereqs / DevelopRequires]`:
 
@@ -619,10 +635,12 @@ Six commits land:
    ```
 
 5. `ci: add precious lint job` — new `.github/workflows/lint.yml` as specified above.
-6. `hooks: add scripts/pre-commit for precious lint` — new `scripts/pre-commit` (executable bit set) with `default_branch="main"` substituted from the resolved default branch, plus a `[PruneFiles]` entry appended to `dist.ini` so the hook script doesn't ship in the CPAN tarball:
+6. `hooks: add scripts/pre-commit for precious lint` — new `scripts/pre-commit` (executable bit set) with `default_branch="main"` substituted from the resolved default branch, plus `filename = scripts/pre-commit` appended to the same `[PruneFiles]` block that T1/T2 started, so the hook script doesn't ship in the CPAN tarball. By now the block lists all three dev-only files:
 
    ```ini
    [PruneFiles]
+   filename = precious.toml
+   filename = .perltidyrc
    filename = scripts/pre-commit
    ```
 
@@ -670,6 +688,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Forgetting `chmod +x scripts/pre-commit` before staging | `--init` creates a symlink to a non-executable file; `git commit` skips the hook silently | `chmod +x scripts/pre-commit` before `git add` in T6; verify with `[ -x scripts/pre-commit ]` |
 | Writing `scripts/pre-commit` when `.pre-commit-config.yaml` or `lefthook.yml` already exists | Two competing hook frameworks; contributors don't know which one is authoritative | Detect competing frameworks in T6's pre-write check; surface drift and skip |
 | Adding `scripts/pre-commit` to a dzil repo without pruning it | `Git::GatherDir` picks it up and ships a dev-only hook in the CPAN tarball; CPAN users get a useless script in their installed share dir | Append `filename = scripts/pre-commit` to `[PruneFiles]` in `dist.ini` as part of T6, then re-run `dzil build --no-tgz` and confirm the file is absent from the build output |
+| Writing `precious.toml` / `.perltidyrc` to a dzil repo without excluding them | `Git::GatherDir` sweeps the generated dev configs into the CPAN tarball, where they're dead weight | Exclude in T1/T2: `exclude_filename` on an explicit `[Git::GatherDir]`, else append to `[PruneFiles]`; rebuild and confirm absence (see `working-with-dist-zilla` §7) |
 | Gitignoring `scripts/pre-commit` instead of pruning it | `--init` symlinks to the file; untracking it means contributors don't get it on clone and the hook never installs | Keep it tracked; use `[PruneFiles]` to drop it from the dist only |
 | Hardcoding `$repo_root/.git/hooks/pre-commit` as the install path in `--init` | In a linked worktree `.git` is a file, not a directory, so the path doesn't exist; the symlink fails or lands in the wrong place. Also ignores `core.hooksPath` | Use `$(git rev-parse --git-path hooks)/pre-commit` and an absolute symlink target |
 
@@ -689,10 +708,11 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **Contributor commits directly to `main` and the branch guard never fires** → `scripts/pre-commit`'s `default_branch=` was set to `main` but the repo is on `master`, OR `scripts/pre-commit --init` was never run on that clone; check the symlink with `ls -l .git/hooks/pre-commit`.
 - **`git commit` succeeds despite obvious tidy violations** → `.git/hooks/pre-commit` symlink targets a non-executable `scripts/pre-commit`; `chmod +x scripts/pre-commit` and try again.
 - **`scripts/pre-commit` shows up in `<DistName>-*/MANIFEST` or the released tarball** → T6's `[PruneFiles]` step was skipped on a dzil repo; append `filename = scripts/pre-commit` to `[PruneFiles]` in `dist.ini` and rebuild.
+- **`precious.toml` or `.perltidyrc` shows up in `<DistName>-*/MANIFEST` or the released tarball** → T1/T2's dist.ini-exclusion step was skipped on a dzil repo; exclude via `exclude_filename` (or `[PruneFiles]` when the bundle owns `[Git::GatherDir]`) and rebuild (see `working-with-dist-zilla` §7).
 
 ## Related
 
-- `kitchen-sink:working-with-dist-zilla` — `dzil` patterns this skill leans on (PluginRemover vs RemovePrereqs, `CopyFilesFromBuild` rule, `dzil test --release --author`).
+- `kitchen-sink:working-with-dist-zilla` — `dzil` patterns this skill leans on (PluginRemover vs RemovePrereqs, `CopyFilesFromBuild` rule, `dzil test --release --author`, and §7's tooling-config exclusion — the canonical `exclude_filename` vs `[PruneFiles]` list this skill defers to for `precious.toml` / `.perltidyrc` / `scripts/pre-commit`).
 - `kitchen-sink:tune-perl-ci` — sister skill for the test workflow; the lint job in T5 follows its conventions (concurrency, default-branch push, `install-with-cpm@v2`). The lint job pins Perl 5.42, so the App::cpm `version:` conditional from `tune-perl-ci` transform 6 (for Perls ≤ 5.22) is intentionally omitted here.
 - [precious on GitHub](https://github.com/houseabsolute/precious) — tool homepage.
 - [omegasort on GitHub](https://github.com/houseabsolute/omegasort) — sorter used by `omegasort-gitignore` / `omegasort-stopwords`.
