@@ -1,7 +1,7 @@
 ---
 name: working-with-dist-zilla
 description: Use when working in a Perl repo containing a dist.ini file, or when the user mentions dzil, Dist::Zilla, or @Author::* PluginBundles.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Working with Dist::Zilla Repositories
@@ -132,7 +132,41 @@ diff -u cpanfile <Dist>-*/cpanfile
 
 If they differ, run `dzil build` again — your edit hasn't been reflected yet.
 
-## 7. Common warning: `Git::Contributors` → `.mailmap`
+## 7. Keep developer-only tooling configs out of the dist
+
+Linter/formatter config and dev hook scripts matter only to contributors working in the repo; they add nothing to an installed dist. Unless excluded, `[Git::GatherDir]` (which gathers from `git ls-files`) sweeps them into the tarball and ships them to CPAN, where they are dead weight.
+
+**Canonical file list** — the dev-only configs that should never reach the dist:
+
+- `precious.toml`
+- `.perltidyrc` / `perltidyrc`
+- `.perlcriticrc`
+- `perlimports.toml`
+- `.tidyallrc` / `tidyall.ini` (legacy `Code::TidyAll`)
+- lint / pre-commit hook scripts (e.g. `scripts/pre-commit`)
+
+**Two mechanisms** — pick by whether the file should ever enter the manifest:
+
+| Mechanism | Syntax | What it does | Reach for it when |
+|-----------|--------|--------------|-------------------|
+| `[Git::GatherDir]` (or `[GatherDir]`) | `exclude_filename = <name>` | Keeps the file out of the gather step entirely — it never enters the manifest | Files that never need to be in the dist (the root config files above) |
+| `[PruneFiles]` | `filename = <name>` or `match = <regex>` | Drops a file that was already gathered | Tracked files contributors need locally but that must not ship (e.g. `scripts/pre-commit`, which contributors symlink as a git hook — see the `tune-precious` skill's T6) |
+
+**Practical caveat:** `exclude_filename` only works on a `[Git::GatherDir]` block you actually control in `dist.ini`. When `[Git::GatherDir]` is supplied by an `[@Author::*]` PluginBundle (the common case), you usually can't pass `exclude_filename` to it from `dist.ini` — use the bundle's documented exclude passthrough if it has one, otherwise `[PruneFiles]` is the universal fallback that works regardless of who gathered the file.
+
+```ini
+[Git::GatherDir]
+exclude_filename = precious.toml
+exclude_filename = .perltidyrc
+exclude_filename = perlimports.toml
+
+[PruneFiles]
+filename = scripts/pre-commit
+```
+
+**Verify:** after editing, `dzil build --no-tgz` exits 0 and `find <Dist>-*/ -name <file>` (or `grep` of the built `MANIFEST`) shows the excluded files are absent from the build output.
+
+## 8. Common warning: `Git::Contributors` → `.mailmap`
 
 `dzil build` emits warnings via `@Author::OALDERS/Git::Contributors` (or any bundle that runs the plugin) when commit history has duplicate author identities — usually case-different emails, or one person committing under multiple addresses. Fix with a `.mailmap` at the repo root:
 
@@ -147,7 +181,7 @@ Verify the warnings are gone by inspecting the deduplicated identity list:
 git log --use-mailmap --format='%aN <%aE>' | sort -u
 ```
 
-## 8. Verification: `dzil test --release --author`
+## 9. Verification: `dzil test --release --author`
 
 Always run author + release tests before committing `dist.ini` changes:
 
@@ -162,7 +196,7 @@ This catches:
 
 If the tests fail because a generated `xt/release-*.t` references a plugin you removed, delete the test file — it was a build artifact of the old bundle config.
 
-## 9. Sandbox considerations
+## 10. Sandbox considerations
 
 Two `dzil` quirks bite inside restricted execution sandboxes:
 
@@ -188,6 +222,7 @@ Two `dzil` quirks bite inside restricted execution sandboxes:
 | Skipping `dzil test --release --author` | Author tests catch removed-prereq leftovers and stale `xt/` tests |
 | Ignoring `Git::Contributors` warnings | Add a `.mailmap`; cheap, one-time fix |
 | Guessing at bundle plugin names | `perldoc -lm Dist::Zilla::PluginBundle::Author::Foo` and read the source |
+| Shipping `precious.toml` / `.perltidyrc` / dev hooks to CPAN because they weren't excluded (§7) | Exclude root config via `exclude_filename` (or `[PruneFiles]` when the bundle owns `[Git::GatherDir]`); prune tracked-but-local files like `scripts/pre-commit` |
 
 ## Red Flags
 
@@ -197,9 +232,11 @@ Two `dzil` quirks bite inside restricted execution sandboxes:
 - **`dzil test --release --author` passes but `dzil build` warns about Git::Contributors** → add a `.mailmap`
 - **`xt/release-*.t` failing for a plugin you removed** → delete the stale test file, it was a build artifact
 - **Sandbox: `Cannot read ~/.dzil`** → grant read access to the symlink TARGET, not just `~/.dzil`
+- **A released tarball / `MANIFEST` contains `precious.toml`, `.perltidyrc`, or `scripts/pre-commit`** → the tooling-config exclusion (§7) was skipped
 
 ## Related
 
+- `kitchen-sink:tune-precious` — generates `precious.toml` / `.perltidyrc` / `scripts/pre-commit` and applies the §7 exclusion rule for the files it writes
 - [Dist::Zilla on metacpan](https://metacpan.org/pod/Dist::Zilla)
 - [Dist::Zilla::Plugin::RemovePrereqs](https://metacpan.org/pod/Dist::Zilla::Plugin::RemovePrereqs)
 - [Dist::Zilla::Role::PluginBundle::PluginRemover](https://metacpan.org/pod/Dist::Zilla::Role::PluginBundle::PluginRemover)
