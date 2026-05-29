@@ -154,6 +154,8 @@ Linter/formatter config and dev hook scripts matter only to contributors working
 
 **Practical caveat:** `exclude_filename` only works on a `[Git::GatherDir]` block you actually control in `dist.ini`. When `[Git::GatherDir]` is supplied by an `[@Author::*]` PluginBundle (the common case), you usually can't pass `exclude_filename` to it from `dist.ini` — use the bundle's documented exclude passthrough if it has one, otherwise `[PruneFiles]` is the universal fallback that works regardless of who gathered the file.
 
+`exclude_filename` matches the file's path **relative to the dist root**, not a bare basename — for the root-level configs above the path equals the name, so a single `exclude_filename = precious.toml` is correct. For path-bearing or pattern matches use `exclude_match = <regex>` (GatherDir) or `[PruneFiles] match = <regex>`.
+
 ```ini
 [Git::GatherDir]
 exclude_filename = precious.toml
