@@ -610,8 +610,8 @@ select = .stopwords
 
 Six commits land:
 
-1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config). Because this is a dzil repo, the same commit also excludes `precious.toml` from the dist (`exclude_filename` on an explicit `[Git::GatherDir]`, or `filename = precious.toml` appended to `[PruneFiles]` when the `@Author::OALDERS` bundle owns the gather step).
-2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped, and excluded from the dist the same way as `precious.toml`.
+1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config). Because this is a dzil repo and the `[@Author::OALDERS]` bundle owns `[Git::GatherDir]`, the same commit also keeps `precious.toml` out of the dist by appending `filename = precious.toml` to a `[PruneFiles]` block — `exclude_filename` isn't reachable from `dist.ini` when the bundle owns the gather step (see `working-with-dist-zilla` §7).
+2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped, and kept out of the dist the same way — `filename = .perltidyrc` appended to the same `[PruneFiles]` block.
 3. `tidyall: delete config files and ignore entries` — `.tidyallrc` removed; `.gitignore` no longer mentions `.tidyall.d/`.
 4. `dist.ini: drop Code::TidyAll plugin and prereqs` — bundle line + `[RemovePrereqs]` + `[Prereqs / DevelopRequires]`:
 
@@ -635,10 +635,12 @@ Six commits land:
    ```
 
 5. `ci: add precious lint job` — new `.github/workflows/lint.yml` as specified above.
-6. `hooks: add scripts/pre-commit for precious lint` — new `scripts/pre-commit` (executable bit set) with `default_branch="main"` substituted from the resolved default branch, plus a `[PruneFiles]` entry appended to `dist.ini` so the hook script doesn't ship in the CPAN tarball:
+6. `hooks: add scripts/pre-commit for precious lint` — new `scripts/pre-commit` (executable bit set) with `default_branch="main"` substituted from the resolved default branch, plus `filename = scripts/pre-commit` appended to the same `[PruneFiles]` block that T1/T2 started, so the hook script doesn't ship in the CPAN tarball. By now the block lists all three dev-only files:
 
    ```ini
    [PruneFiles]
+   filename = precious.toml
+   filename = .perltidyrc
    filename = scripts/pre-commit
    ```
 
