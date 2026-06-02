@@ -1,7 +1,7 @@
 ---
 name: tune-perl-ci
-description: Use when modernizing a Perl project's GitHub Actions CI — applies seven idempotent transforms (fail-fast flag, Perl 5.42 matrix, perl-tester image bump, default-branch push, concurrency cancel, App::cpm pin, drop pre-5.24 macOS/Windows cells) to Dist::Zilla-style workflows.
-version: 1.2.0
+description: Use when modernizing a Perl project's GitHub Actions CI — applies seven idempotent transforms (fail-fast flag, Perl 5.42 matrix, perl-tester image bump, default-branch push, concurrency cancel, setup-cpm + cpm install, drop pre-5.24 macOS/Windows cells) to Dist::Zilla-style workflows.
+version: 1.3.0
 ---
 
 # Tune Perl CI
@@ -15,7 +15,7 @@ version: 1.2.0
 3. Bump build + coverage jobs to `perldocker/perl-tester:5.42`
 4. Restrict the `push:` trigger to the default branch
 5. Add a workflow-level `concurrency:` cancel-in-progress block
-6. Pin App::cpm for Perls ≤ 5.22
+6. Install deps with `setup-cpm` + a `cpm install` run step
 7. Drop macOS + Windows tests for Perls < 5.24
 
 **Core principle:** modernize the workflow without changing intent. Each transform lands as its own commit so any single change is revertable. Re-running the skill on an already-tuned workflow is a no-op.
@@ -189,33 +189,45 @@ concurrency:
 
 **Why:** new pushes to the same ref cancel the still-running job from the previous push.
 
-### 6. Standardize on `install-with-cpm@v2` and pin App::cpm for Perls ≤ 5.22
+### 6. Install deps with `setup-cpm` + a `cpm install` run step
 
-**What:** for every step using either `perl-actions/install-with-cpm@<any-ref>` or `perl-actions/install-with-cpanm@<any-ref>`:
+**What:** for every step using either `perl-actions/install-with-cpm@<any-ref>` or `perl-actions/install-with-cpanm@<any-ref>`, replace the single composite step with **two** steps:
 
-1. Rewrite the action ref to `perl-actions/install-with-cpm@v2`. This both migrates from the legacy `install-with-cpanm` action (cpanm-based, slower, no parallelism) and exposes the `version:` input introduced in cpm v2.
-2. Under `with:`, add (if missing):
+1. A setup step that installs the single-file `cpm` tool:
 
    ```yaml
-   # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
-   version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+   - uses: perl-actions/setup-cpm@v1
+     with:
+       version: compat
    ```
 
-3. Preserve existing `sudo:`, `args:`, `cpanfile:`, etc. — the `with:` interface is compatible between the two actions for these keys.
+2. An explicit install run step (faithful arg mapping from the old step):
 
-**Skip** if `version:` is already present under `with:` (user has pinned deliberately) — but still rewrite a `install-with-cpanm` ref to `install-with-cpm@v2`.
+   ```yaml
+   - run: cpm install -g --cpanfile <cpanfile-value> <args-verbatim>
+   ```
+
+Mapping rules:
+- The old `cpanfile:` value becomes `--cpanfile <value>`. If no `cpanfile:` key was present, omit `--cpanfile` (cpm reads `./cpanfile` by default).
+- The old `args:` value is appended verbatim after `--cpanfile …` (e.g. `--with-recommends --with-suggests --with-test`).
+- Keep `-g` (global install) to preserve `install-with-cpm`'s default global-install behavior.
+- **Drop the old `sudo:` key.** No sudo is needed: `perldocker/perl-tester` containers run as root, and `shogo82148/actions-setup-perl` provisions a user-local Perl, so the install target is already writable.
+
+The matrix-conditional `version:` expression is gone entirely — `version: compat` on the `setup-cpm` step auto-selects cpm `0.998003` for old Perls (≤ 5.22) and the latest cpm for newer ones, handling the old-Perl pinning upstream.
+
+**Skip** a step already in `setup-cpm@v1` + `cpm install` form — it is a no-op. Still convert any remaining `install-with-cpm`/`install-with-cpanm` step in the file.
 
 **Why:**
-- `install-with-cpm` is the maintained, parallel installer; `install-with-cpanm` is the older serial one. Standardizing on cpm gives faster CI and a single supported action.
-- `App::cpm` v0.999.0+ requires Perl 5.24+. Older matrix cells fail to install dependencies with the current cpm release. The expression relies on lexicographic comparison of two-digit-minor strings (`5.10`, `5.12`, …, `5.22`, `5.24`, …), which works for all Perls likely to appear in a matrix.
+- `setup-cpm` installs cpm itself and leaves the install command explicit and inspectable, instead of hiding the dependency install behind a composite action's input surface. It also migrates away from the legacy `install-with-cpanm` action (cpanm-based, serial, no parallelism).
+- The `version: compat` default auto-selects cpm `0.998003` on Perls ≤ 5.22 (the last cpm release compatible with them) and the latest cpm on newer Perls, replacing the hand-rolled matrix-conditional pin.
 
-**Verify the action ref exists before writing it.** This transform pins `perl-actions/install-with-cpm@v2` deliberately — `v2` is the release that introduced the `version:` input step 2 relies on. Still confirm the tag resolves before emitting the ref:
+**Verify the action ref exists before writing it.** This transform pins `perl-actions/setup-cpm@v1`. Confirm the tag resolves before emitting the ref:
 
 ```bash
-gh api repos/perl-actions/install-with-cpm/git/refs/tags/v2   # 404 → the tag does not exist
+gh api repos/perl-actions/setup-cpm/git/refs/tags/v1   # 404 → the tag does not exist
 ```
 
-Action tags move, and not every action ever publishes a given major version — never assume `@v1` (or `@v2`) is available. Pin only a ref you have confirmed exists. If `install-with-cpm` has moved past v2, check that the `version:` input still exists on the newer major before bumping.
+Action tags move, and not every action ever publishes a given major version — never assume `@v1` is available. Pin only a ref you have confirmed exists.
 
 **Before:**
 
@@ -238,23 +250,15 @@ Action tags move, and not every action ever publishes a given major version — 
 **After:**
 
 ```yaml
-- name: install deps using cpm
-  uses: perl-actions/install-with-cpm@v2
+- uses: perl-actions/setup-cpm@v1
   with:
-    cpanfile: "cpanfile"
-    args: "--with-suggests --with-recommends --with-test"
-    sudo: false
-    # pin older Perls to the last cpm release compatible with them; newer Perls track the cpm release channel.
-    version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+    version: compat
+- run: cpm install -g --cpanfile cpanfile --with-suggests --with-recommends --with-test
 
-- name: install deps using cpm
-  uses: perl-actions/install-with-cpm@v2
+- uses: perl-actions/setup-cpm@v1
   with:
-    cpanfile: "cpanfile"
-    args: "--with-suggests --with-recommends --with-test"
-    sudo: false
-    # pin older Perls to the last cpm release compatible with them; newer Perls track the cpm release channel.
-    version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+    version: compat
+- run: cpm install -g --cpanfile cpanfile --with-suggests --with-recommends --with-test
 ```
 
 ### 7. Drop macOS + Windows tests for Perls < 5.24
@@ -268,7 +272,7 @@ A job targets macOS exclusively when **either**:
 Same rule for Windows with `windows-*`.
 
 **Skip when:**
-- The job is Linux (`perldocker/perl-tester` containers handle older Perls cleanly — the App::cpm pin from transform 6 covers them).
+- The job is Linux (`perldocker/perl-tester` containers handle older Perls cleanly — `version: compat` from transform 6 covers their cpm install).
 - The job has a mixed `matrix.os` (e.g. `[ubuntu-latest, macos-latest]`). Trimming a single `perl-version` entry drops the cell from every OS in the matrix; the right tool there is an explicit `matrix.exclude:` block, which is too situational to auto-generate. Surface a one-line warning naming the job and move on.
 - The job's `perl-version` list has no entries < `5.24` (idempotent no-op).
 
@@ -326,7 +330,7 @@ Suggested commit subjects:
 | 3 | `workflow: bump build/coverage to perldocker/perl-tester:5.42` |
 | 4 | `workflow: restrict push trigger to default branch` |
 | 5 | `workflow: add concurrency block to cancel superseded runs` |
-| 6 | `workflow: standardize on install-with-cpm@v2 and pin App::cpm for Perls ≤ 5.22` |
+| 6 | `workflow: install deps with setup-cpm + cpm install` |
 | 7 | `workflow: drop macOS/Windows tests for Perls < 5.24` |
 
 ## Default branch resolution
@@ -477,14 +481,10 @@ jobs:
       image: perldocker/perl-tester:${{ matrix.perl-version }}
     steps:
       - uses: actions/checkout@v6
-      - name: Install deps
-        uses: perl-actions/install-with-cpm@v2
+      - uses: perl-actions/setup-cpm@v1
         with:
-          cpanfile: "cpanfile"
-          args: "--with-recommends --with-suggests --with-test"
-          sudo: false
-          # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
-          version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+          version: compat
+      - run: cpm install -g --cpanfile cpanfile --with-recommends --with-suggests --with-test
 
   test_macos:
     runs-on: ${{ matrix.os }}
@@ -505,14 +505,10 @@ jobs:
       - uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: ${{ matrix.perl-version }}
-      - name: install deps using cpm
-        uses: perl-actions/install-with-cpm@v2
+      - uses: perl-actions/setup-cpm@v1
         with:
-          cpanfile: "cpanfile"
-          args: "--with-recommends --with-suggests --with-test"
-          sudo: false
-          # App::cpm v0.999.0+ requires Perl 5.24+; pin older Perls to the last compatible release.
-          version: ${{ matrix.perl-version <= '5.22' && '0.998003' || 'main' }}
+          version: compat
+      - run: cpm install -g --cpanfile cpanfile --with-recommends --with-suggests --with-test
 ```
 
 Things to notice in the after-state:
@@ -521,7 +517,7 @@ Things to notice in the after-state:
 - `pull_request.branches: ["*"]` is preserved — transform 4 only touches `on.push.branches`.
 - Quotes are preserved on existing list entries; new entries match (here, double quotes).
 - `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
-- Both `install-with-cpm` steps got the conditional `version:` line and the `@v2` bump.
+- Both `install-with-cpm` steps became a `setup-cpm@v1` step (`version: compat`) followed by an explicit `cpm install -g` run step; the old `sudo:` key was dropped (the perl-tester container runs as root and the macOS Perl is user-local) and the matrix-conditional `version:` expression is gone — `version: compat` pins old Perls upstream.
 - `test_macos.matrix.perl-version` lost `"5.20"` (transform 7) but `test_linux.matrix.perl-version` keeps `"5.10"` — transform 7 leaves Linux container jobs alone.
 
 ## Verification
@@ -538,7 +534,7 @@ After **each** transform's edit, before committing:
 | 3 | every `container.image` whose tag contains no `${{` ends in `:5.42` |
 | 4 | `on.push.branches` is a single-item list with the resolved default branch |
 | 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
-| 6 | no `install-with-cpanm` steps remain; every `install-with-cpm` step uses `@v2` (and the `v2` tag resolves via `gh api`) and has a `with.version` key |
+| 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm@v1` step with `version: compat` (and the `v1` tag resolves via `gh api`) |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
@@ -551,13 +547,13 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 | Bumping every `perldocker/perl-tester:<X>` to `:5.42` | Test-matrix jobs use the matrix variable on purpose; only build/coverage are fixed | Only bump literal-tag images; never touch a tag containing `${{` |
 | Adding `concurrency:` when the user already has one | Overwrites their grouping/cancellation choice | Skip transform 5 if any `concurrency:` exists at workflow level |
 | Stripping `pull_request.branches` | Spec says leave `pull_request:` alone | Only touch `on.push.branches`, never `pull_request` |
-| Pinning App::cpm with a hardcoded `version:` (no conditional) | Forces the old release on modern Perls, slowing them down | Always use the matrix-conditional expression |
+| Hardcoding a single cpm `version:` on the `setup-cpm` step | Forces one cpm release across all Perls instead of per-Perl selection | Use `version: compat` so old Perls get cpm `0.998003` and newer Perls get the latest |
 | Batching all 6 transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Auto-reverting on verification failure | Hides bugs in the skill | Stop, surface the failure, leave files uncommitted |
-| Bumping `install-with-cpm@v1.9` to `@v2` without adding the conditional `version:` | v2's default `version: main` is App::cpm v0.999+, which breaks Perls ≤ 5.22 | Always bundle the `version:` line with the `@v2` bump |
-| Leaving `perl-actions/install-with-cpanm` in place | The cpanm action is the legacy serial installer; cpm is parallel and the supported path | Rewrite any `install-with-cpanm@*` ref to `install-with-cpm@v2` in the same transform |
-| Pinning `install-with-cpm@v2` (or any action ref) without checking the tag exists | Action tags move and some actions never publish a given major; a non-existent ref fails the workflow on every run | Confirm the tag resolves with `gh api repos/<owner>/<repo>/git/refs/tags/<ref>` before writing the `uses:` line |
-| Trimming pre-5.24 Perls from Linux container jobs | `perldocker/perl-tester` images carry working older Perls; transform 6 already covers the App::cpm install path | Transform 7 only touches macOS-only and Windows-only jobs |
+| Carrying the old `sudo:` key onto the `cpm install` run step | There is no `sudo:` input on a `run:` step, and the install target is already writable (root container / user-local Perl) | Drop `sudo:` when converting to `setup-cpm` + `cpm install` |
+| Leaving `perl-actions/install-with-cpanm` in place | The cpanm action is the legacy serial installer; cpm is parallel and the supported path | Rewrite any `install-with-cpanm@*` step to `setup-cpm@v1` + `cpm install` in the same transform |
+| Pinning `setup-cpm@v1` (or any action ref) without checking the tag exists | Action tags move and some actions never publish a given major; a non-existent ref fails the workflow on every run | Confirm the tag resolves with `gh api repos/<owner>/<repo>/git/refs/tags/<ref>` before writing the `uses:` line |
+| Trimming pre-5.24 Perls from Linux container jobs | `perldocker/perl-tester` images carry working older Perls; transform 6 already covers the cpm install path via `version: compat` | Transform 7 only touches macOS-only and Windows-only jobs |
 | Trimming pre-5.24 entries from a mixed-OS matrix (`os: [ubuntu, macos]`) | `perl-version` is a single axis — dropping one entry kills the cell on every OS, including Linux | Skip mixed matrices in transform 7; use `matrix.exclude:` manually if you really want per-OS trimming |
 
 ## Related
