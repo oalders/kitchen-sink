@@ -149,10 +149,10 @@ Step 7: Post clean review to PR
 $ gh pr comment 123 --body "[Complete review in markdown]"
 ✓ Review posted to PR #123
 
-Step 8: Check for /monitor-ci
+Step 8: Check for /monitor-ci (pick the first that applies)
 - /monitor-ci exists → invoke it
-- /monitor-ci not found → fall back to /poll-ci
-- (or: neither found → inform user review is complete)
+- else /poll-ci exists → fall back to /poll-ci
+- else → inform user review is complete
 ```
 
 ## Integration with Permissions

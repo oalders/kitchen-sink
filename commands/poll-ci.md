@@ -12,7 +12,7 @@ Steps:
    git rev-parse --abbrev-ref HEAD
    ```
 
-2. Find the most recent CI run for that branch:
+2. Find the most recent CI run for that branch (`<branch>` is the value from step 1):
    ```bash
    gh run list --branch "<branch>" --limit 1 \
      --json databaseId,status,conclusion,workflowName,headSha,url
@@ -29,8 +29,8 @@ Steps:
    - If `gh run watch` is unavailable or you need finer control, poll manually instead: re-run the `gh run list` command from step 2 every ~20 seconds until `status` is `completed`, reporting `queued` -> `in_progress` -> `completed` transitions as they happen. Cap polling at a sensible limit (e.g. 30 minutes) and stop with a timeout message if exceeded.
 
 4. Report the final status to the user:
-   - **Pass** — `conclusion` is `success`. State that CI passed and include the run URL.
-   - **Fail** — `conclusion` is `failure`, `cancelled`, or `timed_out`. State that CI failed, include the run URL, and surface the failing jobs:
+   - **Pass** — `conclusion` is `success`. State that CI passed and include the run URL. Treat `skipped` and `neutral` as non-failing outcomes too: report success but note the qualifier.
+   - **Fail** — `conclusion` is `failure`, `cancelled`, `timed_out`, `startup_failure`, or `stale`. State that CI failed, include the run URL, and surface the failing jobs:
      ```bash
      gh run view <databaseId> --json jobs \
        -q '.jobs[] | select(.conclusion != "success") | .name'
@@ -38,6 +38,7 @@ Steps:
      Offer to show failing logs with `gh run view <databaseId> --log-failed`.
    - **Needs attention** — `conclusion` is `action_required` (e.g. a job awaiting manual approval). This is not a failure; report that the run is paused pending action and include the run URL so the user can approve or investigate.
    - **In progress** — only if polling was stopped early (timeout or user interrupt). Report the current `status` and the run URL so the user can resume checking.
+   - **Any other `conclusion`** — report the raw value verbatim along with the run URL rather than guessing, so no terminal state is silently swallowed.
 
 **Notes:**
 - Operate on the current branch's CI; do not switch branches.
