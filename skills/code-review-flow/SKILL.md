@@ -109,7 +109,8 @@ Once the review finds no remaining issues:
 1. Post the final clean review to the PR (if one exists)
 2. **Check if `/monitor-ci` slash command exists** in the current project's available skills
 3. If `/monitor-ci` exists, invoke it to monitor CI status
-4. If `/monitor-ci` does not exist, inform the user the review is complete
+4. If `/monitor-ci` does not exist, fall back to `/poll-ci` (the generic `gh`-based CI poller) to monitor CI status
+5. If neither command is available, inform the user the review is complete
 
 ## Example
 
@@ -150,7 +151,8 @@ $ gh pr comment 123 --body "[Complete review in markdown]"
 
 Step 8: Check for /monitor-ci
 - /monitor-ci exists → invoke it
-- (or: /monitor-ci not found → inform user review is complete)
+- /monitor-ci not found → fall back to /poll-ci
+- (or: neither found → inform user review is complete)
 ```
 
 ## Integration with Permissions
