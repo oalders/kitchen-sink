@@ -204,10 +204,12 @@ concurrency:
 2. An explicit install run step (faithful arg mapping from the old step):
 
    ```yaml
-   - run: cpm install -g --cpanfile <cpanfile-value> <args-verbatim>
+   - name: <old-step-name>
+     run: cpm install -g --cpanfile <cpanfile-value> <args-verbatim>
    ```
 
 Mapping rules:
+- Carry the old step's `name:` onto the `cpm install` run step so the CI log keeps its descriptive label. If the old step had no `name:`, omit it.
 - The old `cpanfile:` value becomes `--cpanfile <value>`. If no `cpanfile:` key was present, omit `--cpanfile` (cpm reads `./cpanfile` by default).
 - The old `args:` value is appended verbatim after `--cpanfile …` (e.g. `--with-recommends --with-suggests --with-test`).
 - Keep `-g` (global install) to preserve `install-with-cpm`'s default global-install behavior.
@@ -253,12 +255,14 @@ Action tags move, and not every action ever publishes a given major version — 
 - uses: perl-actions/setup-cpm@v1
   with:
     version: compat
-- run: cpm install -g --cpanfile cpanfile --with-suggests --with-recommends --with-test
+- name: install deps using cpm
+  run: cpm install -g --cpanfile cpanfile --with-suggests --with-recommends --with-test
 
 - uses: perl-actions/setup-cpm@v1
   with:
     version: compat
-- run: cpm install -g --cpanfile cpanfile --with-suggests --with-recommends --with-test
+- name: install deps using cpanm
+  run: cpm install -g --cpanfile cpanfile --with-suggests --with-recommends --with-test
 ```
 
 ### 7. Drop macOS + Windows tests for Perls < 5.24
@@ -484,7 +488,8 @@ jobs:
       - uses: perl-actions/setup-cpm@v1
         with:
           version: compat
-      - run: cpm install -g --cpanfile cpanfile --with-recommends --with-suggests --with-test
+      - name: Install deps
+        run: cpm install -g --cpanfile cpanfile --with-recommends --with-suggests --with-test
 
   test_macos:
     runs-on: ${{ matrix.os }}
@@ -508,7 +513,8 @@ jobs:
       - uses: perl-actions/setup-cpm@v1
         with:
           version: compat
-      - run: cpm install -g --cpanfile cpanfile --with-recommends --with-suggests --with-test
+      - name: install deps using cpm
+        run: cpm install -g --cpanfile cpanfile --with-recommends --with-suggests --with-test
 ```
 
 Things to notice in the after-state:
@@ -517,7 +523,7 @@ Things to notice in the after-state:
 - `pull_request.branches: ["*"]` is preserved — transform 4 only touches `on.push.branches`.
 - Quotes are preserved on existing list entries; new entries match (here, double quotes).
 - `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
-- Both `install-with-cpm` steps became a `setup-cpm@v1` step (`version: compat`) followed by an explicit `cpm install -g` run step; the old `sudo:` key was dropped (the perl-tester container runs as root and the macOS Perl is user-local) and the matrix-conditional `version:` expression is gone — `version: compat` pins old Perls upstream.
+- Both `install-with-cpm` steps became a `setup-cpm@v1` step (`version: compat`) followed by an explicit `cpm install -g` run step that carries the old step's `name:`; the old `sudo:` key was dropped (the perl-tester container runs as root and the macOS Perl is user-local) and the matrix-conditional `version:` expression is gone — `version: compat` pins old Perls upstream.
 - `test_macos.matrix.perl-version` lost `"5.20"` (transform 7) but `test_linux.matrix.perl-version` keeps `"5.10"` — transform 7 leaves Linux container jobs alone.
 
 ## Verification
