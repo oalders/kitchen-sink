@@ -18,7 +18,7 @@ Steps:
      --json databaseId,status,conclusion,workflowName,headSha,url
    ```
    - If no runs are found, tell the user no CI run exists for the branch yet (CI may not have started, or the branch may not be pushed). Suggest `git push` if the branch has no remote counterpart, then stop.
-   - If the latest run's `headSha` does not match `git rev-parse HEAD`, warn the user that the newest commit has not triggered a run yet, and ask whether to poll the existing run or wait. If they choose to wait, re-run this `gh run list` command every ~20 seconds (subject to the same timeout cap as step 3) until a run whose `headSha` matches the current HEAD appears, then poll that run.
+   - If the latest run's `headSha` does not match `git rev-parse HEAD`, warn the user that the newest commit has not triggered a run yet, and ask whether to poll the existing run or wait. If they choose to wait, re-run this `gh run list` command every ~20 seconds (capped at ~30 minutes, as in step 3) until a run whose `headSha` matches the current HEAD appears, then poll that run.
 
 3. Poll until the run completes. Prefer `gh run watch`, which blocks until the run finishes:
    ```bash
@@ -30,12 +30,13 @@ Steps:
 
 4. Report the final status to the user:
    - **Pass** — `conclusion` is `success`. State that CI passed and include the run URL.
-   - **Fail** — `conclusion` is `failure`, `cancelled`, `timed_out`, or `action_required`. State that CI failed, include the run URL, and surface the failing jobs:
+   - **Fail** — `conclusion` is `failure`, `cancelled`, or `timed_out`. State that CI failed, include the run URL, and surface the failing jobs:
      ```bash
      gh run view <databaseId> --json jobs \
        -q '.jobs[] | select(.conclusion != "success") | .name'
      ```
      Offer to show failing logs with `gh run view <databaseId> --log-failed`.
+   - **Needs attention** — `conclusion` is `action_required` (e.g. a job awaiting manual approval). This is not a failure; report that the run is paused pending action and include the run URL so the user can approve or investigate.
    - **In progress** — only if polling was stopped early (timeout or user interrupt). Report the current `status` and the run URL so the user can resume checking.
 
 **Notes:**
