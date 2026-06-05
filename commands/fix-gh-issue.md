@@ -40,7 +40,7 @@ What stays in the caller's context (interactive / decisional / delegating):
 What the subagent runs:
 - Implementation edits (step 7)
 - The test-writing / test-running cycle (step 7)
-- Each round of review fixes when the caller dispatches them back (step 8's fix step)
+- Each round of review fixes when the caller dispatches them back (applying the fixes only; the caller still owns the loop and re-runs the review)
 
 The subagent returns — not its intermediate reads/edits — the changed files (or a diff), the test command and its result, the HEAD SHA, and a one-line summary.
 
@@ -160,7 +160,7 @@ digraph fix_issue {
      5. Commit fixes with a clear message referencing the review
      6. Re-run the **same review** with updated HEAD SHA
      7. Repeat until the review passes clean
-   - Do NOT skip re-review — the specialized checklists (accessibility, OWASP, SEO) catch things the generic reviewer misses
+   - Do NOT skip re-review — fixes can introduce new issues, and the same lenses (accessibility, OWASP, SEO) must re-run against the new HEAD
    - **Caller-context only**: `/code-review-intense-flow` (like the specialists it dispatches) fans out via `Task`/subagents, so it MUST run in the caller's context — never inside the dispatched implementation subagent, which has no `Agent`/`Task` tool
 
 9. **Verify fix**:
