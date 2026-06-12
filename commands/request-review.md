@@ -236,9 +236,10 @@ gh pr list --head $(git branch --show-current) --json number,url
    ### Assessment
    **Ready to merge?** [Yes/No/With fixes]
    [Reasoning...]
-   EOF
+EOF
    )"
    ```
+   The `EOF` terminator must sit at column 0 (no leading spaces), or the heredoc won't close.
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash

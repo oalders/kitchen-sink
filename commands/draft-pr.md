@@ -25,18 +25,16 @@ Steps:
    ```bash
    git push -u origin HEAD
    ```
-5. Create the draft PR. Write your own concise title (single-quoted so nothing in it is shell-interpreted) and pass the body via a heredoc — do not interpolate the raw issue title/body, which could contain `$(...)` or backticks:
+5. Create the draft PR. Write your own concise title and body and **single-quote both** so nothing in them is shell-interpreted — do not interpolate the raw issue title/body, which could contain `$(...)` or backticks. Keep your title/body free of literal single quotes (a `'` would close the quoting); use `--body-file <path>` if the body needs one.
    ```bash
    gh pr create --draft \
                 --title 'Fix: <your own short summary of the fix>' \
-                --body-file - <<'EOF'
-   Closes #<number>
+                --body 'Closes #<number>
 
    ## Changes
    - [Summarize changes from git log/diff against origin/main]
 
    ## Testing
-   - [How changes were verified]
-   EOF
+   - [How changes were verified]'
    ```
 6. Report the PR URL to the user
