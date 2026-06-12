@@ -15,6 +15,7 @@ Use when:
 - Handling user input or external data
 - Working with sensitive data
 - Exposing new API endpoints
+- Integrating an LLM/AI model, building agent tooling, or constructing prompts from user/external content
 - Before deploying security-critical features
 
 Don't use when:
@@ -78,7 +79,7 @@ Task(superpowers:code-reviewer):
 
     ## OWASP-Based Security Checklist
 
-    **CRITICAL: Check EVERY category below, even if you think it doesn't apply.**
+    **CRITICAL: Check EVERY category below, even if you think it doesn't apply.** (The one exception is "LLM / AI Integration", which is explicitly gated to code that touches model calls — see its note.)
 
     ### Authentication & Session Management
 
@@ -157,6 +158,32 @@ Task(superpowers:code-reviewer):
     - Integer overflow: Safe arithmetic?
     - Resource exhaustion: Limits on requests/uploads?
     - Workflow bypass: State machine properly enforced?
+
+    ### LLM / AI Integration (OWASP Top 10 for LLM Apps)
+
+    **Only applies if the diff touches model calls, prompt construction, agent tooling, or LLM output handling. Skip entirely for code with no AI integration — do not invent findings here.** When it does apply, check EVERY item:
+
+    **Prompt Injection (LLM01):**
+    - Untrusted content in prompts: Is user input, fetched web/file/DB content, or tool output concatenated into a prompt as if it were instructions? It must be framed/delimited as untrusted data, never trusted directives.
+    - Indirect (second-order) injection: Could stored content (DB row, issue/comment, document, retrieved RAG chunk) carry a payload that executes when later loaded into a prompt?
+    - System-prompt protection: Can untrusted input override or exfiltrate the system prompt / developer instructions?
+    - Trust boundary: Is there a clear separation between trusted instructions and untrusted data in the context window?
+
+    **Insecure Output Handling (LLM02):**
+    - Model output rendered as HTML/markdown without sanitization → stored/reflected XSS?
+    - Model output used to build shell commands, SQL, file paths, or HTTP requests without validation → injection via the model?
+    - Output trusted as control flow (e.g. parsed as JSON commands) without schema validation?
+
+    **Tool / Function-Call Abuse & Excessive Agency (LLM06):**
+    - Tool arguments produced by the model passed to shell/SQL/filesystem/network calls without validation or allowlisting?
+    - Least privilege: Does the agent hold broader tool permissions, scopes, or credentials than the task requires?
+    - Irreversible/high-impact actions (delete, transfer, deploy, send) gated behind confirmation rather than model discretion alone?
+    - Sandboxing: Is code/command execution driven by model output isolated?
+
+    **Supporting Risks:**
+    - Sensitive data in prompts/logs: Secrets, PII, or other users' data placed in context or logged with the prompt?
+    - Training/feedback data poisoning: Untrusted content fed back into fine-tuning or persistent memory without review?
+    - Resource limits: Token/cost/rate caps on model-driven loops to prevent runaway agency or denial-of-wallet?
 
     ## Output Format
 
