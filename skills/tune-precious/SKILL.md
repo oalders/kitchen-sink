@@ -450,6 +450,13 @@ if [ "${1:-}" = "--init" ]; then
     exit 0
 fi
 
+# Anchor to the working-tree root before doing anything else. Git exports
+# GIT_DIR into the hook environment, so `--show-toplevel` resolves the right
+# tree even when a wrapper invokes `git commit` from a directory outside (or
+# beside) the repo. Without this, `precious lint --staged` runs from that
+# foreign cwd, fails to find precious.toml, and the hook breaks.
+cd "$(git rev-parse --show-toplevel)"
+
 # Block direct commits to the default branch.
 default_branch="main"   # ← skill substitutes the resolved default branch here
 branch=$(git symbolic-ref --short HEAD 2>/dev/null || true)
@@ -486,6 +493,7 @@ Substitute the resolved name (or fall back to `main`) into `default_branch="..."
 - **`precious lint -q --staged`, not `--all`.** Fast on every commit; matches what's about to land. `--all` is CI's job (T5).
 - **Lint, not tidy.** A hook that rewrites files behind the contributor is surprising. Lint fails loudly; the contributor runs `precious tidy` themselves and re-stages — same UX as CI failures.
 - **`|| true` on `git symbolic-ref`.** `set -eu` would otherwise abort the script on a detached HEAD (rebase, bisect). The branch guard then sees `branch=""`, which never matches `default_branch`, so the lint check still runs.
+- **`cd "$(git rev-parse --show-toplevel)"` before the checks.** Git runs hooks from the worktree root in the common case, but wrapper scripts that invoke `git commit` from a directory outside (or beside) the repo — relying on `GIT_DIR`/`GIT_WORK_TREE` in the environment — leave the hook's cwd outside the tree. `precious lint --staged` then walks up from a foreign cwd, never finds `precious.toml`, and the hook fails. The `cd` anchors every subsequent command to the repo root; `--show-toplevel` resolves correctly because git exports `GIT_DIR` into the hook environment.
 
 **Activation:** writing `scripts/pre-commit` does NOT enable the hook. Each contributor runs `scripts/pre-commit --init` once after clone. Mention this in the commit body.
 
@@ -691,6 +699,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Writing `precious.toml` / `.perltidyrc` to a dzil repo without excluding them | `Git::GatherDir` sweeps the generated dev configs into the CPAN tarball, where they're dead weight | Exclude in T1/T2: `exclude_filename` on an explicit `[Git::GatherDir]`, else append to `[PruneFiles]`; rebuild and confirm absence (see `working-with-dist-zilla` §7) |
 | Gitignoring `scripts/pre-commit` instead of pruning it | `--init` symlinks to the file; untracking it means contributors don't get it on clone and the hook never installs | Keep it tracked; use `[PruneFiles]` to drop it from the dist only |
 | Hardcoding `$repo_root/.git/hooks/pre-commit` as the install path in `--init` | In a linked worktree `.git` is a file, not a directory, so the path doesn't exist; the symlink fails or lands in the wrong place. Also ignores `core.hooksPath` | Use `$(git rev-parse --git-path hooks)/pre-commit` and an absolute symlink target |
+| Runtime hook assumes cwd is the repo root | A wrapper that runs `git commit` from a directory outside/beside the repo (via `GIT_DIR`/`GIT_WORK_TREE`) leaves the hook's cwd outside the tree; `precious lint --staged` can't find `precious.toml` and the hook breaks | `cd "$(git rev-parse --show-toplevel)"` at the top of the runtime path, after the `--init` block |
 
 ## Red Flags
 
@@ -706,6 +715,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **`precious config list` errors with a TOML deserialization / unknown-field error** → keys are snake_case (`lint_flags`, `ok_exit_codes`, …). precious uses kebab-case — rewrite with hyphens (`lint-flags`, `ok-exit-codes`).
 - **CI installs `typos` but the lint run never invokes it** → T1 didn't emit a `[commands.typos]` block; either remove `crate-ci/typos` from the ubi `projects:` list or add the missing block.
 - **Contributor commits directly to `main` and the branch guard never fires** → `scripts/pre-commit`'s `default_branch=` was set to `main` but the repo is on `master`, OR `scripts/pre-commit --init` was never run on that clone; check the symlink with `ls -l .git/hooks/pre-commit`.
+- **Hook fails with `precious.toml` not found (or lints the wrong tree) only under a commit wrapper** → the wrapper runs `git commit` from outside the repo, so the hook's cwd is foreign; the `cd "$(git rev-parse --show-toplevel)"` line is missing from the runtime path. Add it after the `--init` block.
 - **`git commit` succeeds despite obvious tidy violations** → `.git/hooks/pre-commit` symlink targets a non-executable `scripts/pre-commit`; `chmod +x scripts/pre-commit` and try again.
 - **`scripts/pre-commit` shows up in `<DistName>-*/MANIFEST` or the released tarball** → T6's `[PruneFiles]` step was skipped on a dzil repo; append `filename = scripts/pre-commit` to `[PruneFiles]` in `dist.ini` and rebuild.
 - **`precious.toml` or `.perltidyrc` shows up in `<DistName>-*/MANIFEST` or the released tarball** → T1/T2's dist.ini-exclusion step was skipped on a dzil repo; exclude via `exclude_filename` (or `[PruneFiles]` when the bundle owns `[Git::GatherDir]`) and rebuild (see `working-with-dist-zilla` §7).
