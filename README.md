@@ -230,7 +230,7 @@ Lands [`precious`](https://github.com/houseabsolute/precious) as the canonical t
 - Consolidates the perltidy profile to the hidden `.perltidyrc` and strips `-b`
 - Deletes `Code::TidyAll` config (`.tidyallrc`, `tidyall.ini`, `.tidyall.d/` ignore line)
 - Edits `dist.ini` to drop `Test::TidyAll` and its prereqs via `PluginRemover` + `[RemovePrereqs]`
-- Adds a `.github/workflows/lint.yml` job running `precious lint --all`
+- Adds a `.github/workflows/lint.yml` job running `precious lint` — incrementally (`--git-diff-from` the PR base) on pull requests, `--all` on every other event
 
 Handles three modes: migrate (tidyall present), greenfield (no precious yet), tune (precious already configured). Each transform commits separately; re-running on a tuned repo is a no-op.
 
