@@ -360,6 +360,7 @@ on:
     branches:
       - main            # ← replace with resolved default branch
   pull_request:
+  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -371,6 +372,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # full history so `precious lint --git-diff-from <base>` can resolve the merge base
       - uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: "5.42"
@@ -388,10 +391,13 @@ jobs:
             Perl::Tidy
           sudo: false
       - name: precious lint
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
-            precious lint -q --git-diff-from "origin/${{ github.base_ref }}"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+            precious lint -q --git-diff-from "origin/$BASE_REF"
           else
             precious lint -q --all
           fi
@@ -408,7 +414,10 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 
 - **`--all` on every PR is the wrong default.** It re-lints the whole tree, so unrelated pre-existing lint debt fails an otherwise-clean PR, and it's slower than checking only what the PR changed. `--all` is right for `push`/`merge_group`/scheduled runs — where you *do* want the whole tree green — not for PRs.
 - **Gate on `github.event_name`, never on `github.ref`.** `github.base_ref` is populated **only for `pull_request` events**. In a `merge_group` event the ref is `refs/heads/gh-readonly-queue/<branch>/pr-...` and `base_ref` is empty, so a ref-based gate falls through to the incremental arm and runs `precious lint -q --git-diff-from origin/` → `git diff … origin/` → `fatal: ambiguous argument 'origin/': unknown revision`, exit 128, **blocking the merge queue**. Gating on `github.event_name == "pull_request"` keeps the incremental arm scoped to the only event where `base_ref` exists.
-- **Fetch the base branch by `github.base_ref`, not a hardcoded default branch.** `git fetch origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"` makes the diff target exist locally for a PR against *any* base (a release/maintenance branch, not just the default). Fetching a fixed default branch would leave `origin/<base_ref>` unresolved for PRs that don't target it, and the diff would fail the same way.
+- **Fetch the base branch by `github.base_ref`, not a hardcoded default branch.** Fetching `$BASE_REF:refs/remotes/origin/$BASE_REF` makes the diff target exist locally for a PR against *any* base (a release/maintenance branch, not just the default). Fetching a fixed default branch would leave `origin/<base_ref>` unresolved for PRs that don't target it, and the diff would fail the same way.
+- **Pass the GHA context through `env:`, never interpolate `${{ … }}` straight into `run:`.** `github.base_ref` is a branch name, and although GitHub's ref-name validation rejects shell metacharacters today, a template that substitutes `${{ github.base_ref }}` as literal text into the script body is only safe because of that *external* validation — a `"` in the value would close the template's quotes and the rest would execute. Binding the context to `EVENT_NAME` / `BASE_REF` under `env:` and referencing `"$EVENT_NAME"` / `"$BASE_REF"` makes the step safe by construction: the shell receives the values from the environment and never re-parses them as script. This is GitHub's documented hardening guidance for untrusted `${{ }}` values in `run:` steps.
+- **`fetch-depth: 0` on `actions/checkout`.** `--git-diff-from <base>` needs the merge base between the PR head and the base branch. The default shallow clone (`fetch-depth: 1`) can omit that commit, making the diff fail or over-report; a full-history checkout resolves it regardless of how precious computes the diff. The `else` (`--all`) arm doesn't need history, but the single checkout serves both arms.
+- **`merge_group:` is in the trigger list so the merge-queue arm is real.** When a repo enables a merge queue, GitHub fires `merge_group` events; the `else` arm lints `--all` there (a full-tree green gate before the merge lands). The trigger is inert on repos without a merge queue, so it costs nothing to include and keeps the `event_name` gate meaningful. `schedule:` is intentionally omitted — it needs a cron the maintainer must choose; the `else` arm already handles it if they add one.
 
 **Why this shape:**
 
@@ -427,7 +436,7 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 - **A ref-gated incremental pattern** (`if [ "${{ github.ref }}" = … ]` choosing between `--all` and `--git-diff-from`): flag as drift — this is the merge-queue-breaking shape (`base_ref` is empty outside `pull_request`). Upgrade it to gate on `github.event_name`, or surface the drift line and skip if it's entangled with other customisation.
 - **Any other shape** (e.g. installs precious from source, per-tool steps): surface the drift and skip — do not overwrite a hand-rolled workflow.
 
-**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`) and its incremental arm fetches `origin/${{ github.base_ref }}` before diffing against it; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
+**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds the GHA context to `env:` (`EVENT_NAME` / `BASE_REF`) rather than interpolating `${{ … }}` into `run:`, and its incremental arm fetches `origin/$BASE_REF` before diffing against it; the `checkout` step sets `fetch-depth: 0`; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
 
 ### 6. Add `scripts/pre-commit` hook for `precious lint`
 
@@ -686,7 +695,7 @@ After **each** transform, before committing:
 | 2 | `grep -E '(^\|\s)(-b\|--backup-and-modify-in-place)(\s\|$)' .perltidyrc` returns nothing; `git ls-files perltidyrc` returns nothing |
 | 3 | `git ls-files \| grep -E '(^\|/)tidyall'` returns nothing; `.gitignore` has no `tidyall` line |
 | 4 | `dzil build --no-tgz` exits 0; `grep -E '(Code::TidyAll\|Test::Vars\|Pod::Wordlist\|Parallel::ForkManager)' <DistName>-*/META.json` returns nothing |
-| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), with a `--git-diff-from origin/${{ github.base_ref }}` PR arm and an `--all` else arm; every `uses:` ref resolves to an existing tag |
+| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds `EVENT_NAME`/`BASE_REF` via `env:` (no `${{ … }}` in `run:`), has a `--git-diff-from origin/$BASE_REF` PR arm and an `--all` else arm, and `checkout` uses `fetch-depth: 0`; every `uses:` ref resolves to an existing tag |
 | 6 | `sh -n scripts/pre-commit` exits 0; `[ -x scripts/pre-commit ]`; `grep -q 'precious lint' scripts/pre-commit`; if `dist.ini` exists, `dzil build --no-tgz` exits 0 and `find <DistName>-*/ -path '*/scripts/pre-commit'` returns nothing |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
@@ -710,7 +719,9 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Adding a precious-lint job to a workflow that has a build job, with no `needs:` | Lint burns a runner while the build is already broken; the failure signal is muddied | Give the lint job `needs: <build-job>` whenever it shares a workflow with a build job |
 | Running `precious lint --all` unconditionally on every event | Re-lints the whole tree on every PR, so unrelated pre-existing lint debt fails an otherwise-clean PR, and it's slower than checking only the diff | Gate on `github.event_name == "pull_request"`: incremental `--git-diff-from origin/${{ github.base_ref }}` on PRs, `--all` otherwise |
 | Gating the incremental arm on `github.ref` instead of `github.event_name` | `github.base_ref` is empty outside `pull_request`, so in a `merge_group` event the diff arm runs `--git-diff-from origin/` → `fatal: ambiguous argument 'origin/'`, exit 128, blocking the merge queue | Gate on `github.event_name`; only `pull_request` events populate `base_ref` |
-| Fetching a hardcoded default branch instead of `github.base_ref` before the incremental diff | A PR targeting a non-default base (release/maintenance branch) leaves `origin/<base_ref>` unresolved, and `--git-diff-from` fails | `git fetch origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"` — fetch the actual PR base |
+| Fetching a hardcoded default branch instead of `github.base_ref` before the incremental diff | A PR targeting a non-default base (release/maintenance branch) leaves `origin/<base_ref>` unresolved, and `--git-diff-from` fails | Fetch `"$BASE_REF:refs/remotes/origin/$BASE_REF"` — the actual PR base |
+| Interpolating `${{ github.base_ref }}` directly into the lint step's `run:` block | Untrusted context substituted as literal script text is only safe because GitHub's ref-name validation happens to reject shell metacharacters — a template that relies on that external check is fragile | Bind `BASE_REF`/`EVENT_NAME` under `env:` and reference `"$BASE_REF"` / `"$EVENT_NAME"`; safe by construction (GitHub's documented hardening guidance) |
+| Leaving `actions/checkout` at the default shallow depth | `--git-diff-from <base>` needs the merge base; a `fetch-depth: 1` clone can omit it, so the diff fails or over-reports on long-lived branches | Set `fetch-depth: 0` on the `checkout` step |
 | Adding `App::perlvars` to runtime prereqs | It's a develop-only tool | Use `[Prereqs / DevelopRequires]` |
 | Bundling all six transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Overwriting an existing `.github/workflows/lint.yml` | The user may have a custom lint shape | Detect drift, surface it, skip — don't overwrite hand-rolled workflows |
