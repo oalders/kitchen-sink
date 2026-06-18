@@ -1,7 +1,7 @@
 ---
 name: tune-precious
 description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, wires a CI lint job, and adds a self-installing `scripts/pre-commit` shell hook so `precious lint --staged` runs locally on commit. Idempotent across re-runs.
-version: 1.4.0
+version: 1.5.0
 ---
 
 # Tune Precious
@@ -14,7 +14,7 @@ version: 1.4.0
 2. Consolidate the `perltidy` profile to the hidden `.perltidyrc` and strip `-b` (precious manages backup mode).
 3. Delete `Code::TidyAll` config (`.tidyallrc`, `tidyall.ini`, `.tidyall.d/` ignore line).
 4. Edit `dist.ini` to remove the tidyall plugin + prereqs via the bundle's `PluginRemover` and a trailing `[RemovePrereqs]` block.
-5. Add a `.github/workflows/lint.yml` job that installs `precious` + `omegasort` (+ `typos` when wired) via ubi and runs `precious lint --all`.
+5. Add a `.github/workflows/lint.yml` job that installs `precious` + `omegasort` (+ `typos` when wired) via ubi and runs `precious lint` — incrementally (`--git-diff-from` the PR base) on `pull_request` events, `--all` on every other event.
 6. Add a self-installing `scripts/pre-commit` shell hook that runs `precious lint --staged` and blocks direct commits to the default branch, so contributors catch tidy/lint drift before pushing.
 
 **Core principle:** apply the canonical recipe without changing the user's tidy/lint intent. Each transform is its own commit so any single change is revertable. Re-running on an already-tuned repo is a no-op.
@@ -387,13 +387,28 @@ jobs:
             App::perlvars
             Perl::Tidy
           sudo: false
-      - run: precious lint --all
+      - name: precious lint
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+            precious lint -q --git-diff-from "origin/${{ github.base_ref }}"
+          else
+            precious lint -q --all
+          fi
 ```
 
 **Conditional lines:**
 
 - Add the `crate-ci/typos` line to `projects:` **only when T1 wired the `[commands.typos]` block.** Otherwise omit it so the install step doesn't pull a tool the lint run won't use.
 - Skip the `shogo82148/actions-setup-perl` and `perl-actions/install-with-cpm` steps entirely in typos-only mode (no Perl files in the repo means there are no CPAN tools to install).
+
+**Why the lint command is gated on `github.event_name`:**
+
+The step lints **incrementally on pull requests** (`--git-diff-from` the PR base) and **`--all` on every other event** (`push`, `merge_group`, `workflow_dispatch`, scheduled). Two failure modes this avoids:
+
+- **`--all` on every PR is the wrong default.** It re-lints the whole tree, so unrelated pre-existing lint debt fails an otherwise-clean PR, and it's slower than checking only what the PR changed. `--all` is right for `push`/`merge_group`/scheduled runs — where you *do* want the whole tree green — not for PRs.
+- **Gate on `github.event_name`, never on `github.ref`.** `github.base_ref` is populated **only for `pull_request` events**. In a `merge_group` event the ref is `refs/heads/gh-readonly-queue/<branch>/pr-...` and `base_ref` is empty, so a ref-based gate falls through to the incremental arm and runs `precious lint -q --git-diff-from origin/` → `git diff … origin/` → `fatal: ambiguous argument 'origin/': unknown revision`, exit 128, **blocking the merge queue**. Gating on `github.event_name == "pull_request"` keeps the incremental arm scoped to the only event where `base_ref` exists.
+- **Fetch the base branch by `github.base_ref`, not a hardcoded default branch.** `git fetch origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"` makes the diff target exist locally for a PR against *any* base (a release/maintenance branch, not just the default). Fetching a fixed default branch would leave `origin/<base_ref>` unresolved for PRs that don't target it, and the diff would fail the same way.
 
 **Why this shape:**
 
@@ -405,9 +420,14 @@ jobs:
 
 **Lint job and build jobs:** the generated `lint.yml` is a standalone workflow with no build job, so the `precious` job declares no `needs:`. If you instead add a precious-lint job to a workflow that already contains a build job, that lint job **must** declare `needs: <build-job>` — running lint against a tree whose build is already failing wastes a runner and clutters the failure signal.
 
-**Idempotency:** if `.github/workflows/lint.yml` already exists, parse it. If it already runs `precious lint --all` under the same shape, leave it alone. If the existing file uses a different shape (e.g. installs precious from source), surface the drift and skip — do not overwrite a hand-rolled workflow.
+**Idempotency:** if `.github/workflows/lint.yml` already exists, parse it and classify the lint step:
 
-**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
+- **Already the gated form** (an `event_name == "pull_request"` branch running `--git-diff-from`, with an `--all` else arm): leave it alone — no-op.
+- **Plain unconditional `precious lint --all`** (the shape earlier versions of this skill emitted): this is now **drift, not canonical.** Upgrade it in place to the gated `github.event_name` pattern above, preserving the rest of the workflow, and commit. If you cannot edit it safely without disturbing surrounding customisation, surface the drift line (`T5: lint step runs unconditional 'precious lint --all'; upgrade to the event_name-gated incremental pattern`) and skip rather than guess.
+- **A ref-gated incremental pattern** (`if [ "${{ github.ref }}" = … ]` choosing between `--all` and `--git-diff-from`): flag as drift — this is the merge-queue-breaking shape (`base_ref` is empty outside `pull_request`). Upgrade it to gate on `github.event_name`, or surface the drift line and skip if it's entangled with other customisation.
+- **Any other shape** (e.g. installs precious from source, per-tool steps): surface the drift and skip — do not overwrite a hand-rolled workflow.
+
+**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`) and its incremental arm fetches `origin/${{ github.base_ref }}` before diffing against it; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
 
 ### 6. Add `scripts/pre-commit` hook for `precious lint`
 
@@ -666,7 +686,7 @@ After **each** transform, before committing:
 | 2 | `grep -E '(^\|\s)(-b\|--backup-and-modify-in-place)(\s\|$)' .perltidyrc` returns nothing; `git ls-files perltidyrc` returns nothing |
 | 3 | `git ls-files \| grep -E '(^\|/)tidyall'` returns nothing; `.gitignore` has no `tidyall` line |
 | 4 | `dzil build --no-tgz` exits 0; `grep -E '(Code::TidyAll\|Test::Vars\|Pod::Wordlist\|Parallel::ForkManager)' <DistName>-*/META.json` returns nothing |
-| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; every `uses:` ref resolves to an existing tag |
+| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), with a `--git-diff-from origin/${{ github.base_ref }}` PR arm and an `--all` else arm; every `uses:` ref resolves to an existing tag |
 | 6 | `sh -n scripts/pre-commit` exits 0; `[ -x scripts/pre-commit ]`; `grep -q 'precious lint' scripts/pre-commit`; if `dist.ini` exists, `dzil build --no-tgz` exits 0 and `find <DistName>-*/ -path '*/scripts/pre-commit'` returns nothing |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
@@ -688,6 +708,9 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Pinning an action to `@v1` (or any tag) without checking it exists | Not every action reaches `v1` — `oalders/install-ubi-action`'s latest is `v0.0.6`. A non-existent ref fails the workflow on every run | Resolve a real tag with `gh api repos/<owner>/<repo>/releases/latest` (or `/tags`) before writing each `uses:` line |
 | Omitting `GITHUB_TOKEN` from the `install-ubi-action` step | ubi hits the GitHub releases API unauthenticated; the lower rate limit fails the install step intermittently | Pass `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` under the action's `with:` |
 | Adding a precious-lint job to a workflow that has a build job, with no `needs:` | Lint burns a runner while the build is already broken; the failure signal is muddied | Give the lint job `needs: <build-job>` whenever it shares a workflow with a build job |
+| Running `precious lint --all` unconditionally on every event | Re-lints the whole tree on every PR, so unrelated pre-existing lint debt fails an otherwise-clean PR, and it's slower than checking only the diff | Gate on `github.event_name == "pull_request"`: incremental `--git-diff-from origin/${{ github.base_ref }}` on PRs, `--all` otherwise |
+| Gating the incremental arm on `github.ref` instead of `github.event_name` | `github.base_ref` is empty outside `pull_request`, so in a `merge_group` event the diff arm runs `--git-diff-from origin/` → `fatal: ambiguous argument 'origin/'`, exit 128, blocking the merge queue | Gate on `github.event_name`; only `pull_request` events populate `base_ref` |
+| Fetching a hardcoded default branch instead of `github.base_ref` before the incremental diff | A PR targeting a non-default base (release/maintenance branch) leaves `origin/<base_ref>` unresolved, and `--git-diff-from` fails | `git fetch origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"` — fetch the actual PR base |
 | Adding `App::perlvars` to runtime prereqs | It's a develop-only tool | Use `[Prereqs / DevelopRequires]` |
 | Bundling all six transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Overwriting an existing `.github/workflows/lint.yml` | The user may have a custom lint shape | Detect drift, surface it, skip — don't overwrite hand-rolled workflows |
@@ -707,6 +730,8 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **`dzil build` says "file does not exist"** → tidyall files deleted from disk but not staged; `git add -u`.
 - **PR diff includes ~100 lines of regenerated `META.json` / `Makefile.PL`** → T4's cleanup step skipped; revert those files.
 - **`precious lint --all` passes locally but the new CI job fails on `omegasort` (or any other binary)** → `oalders/install-ubi-action` step missing, using `tools:` instead of `projects:` (silently dropped → nothing installed), or wrong slug in `projects:`; check the input key is `projects:` and the slug is `houseabsolute/omegasort`.
+- **The merge queue fails with `fatal: ambiguous argument 'origin/': unknown revision or path not in the working tree`** → the lint step's incremental arm is gated on `github.ref` (or runs unconditionally) instead of `github.event_name`. `github.base_ref` is empty in `merge_group`/`push`, so `--git-diff-from origin/` has no ref. Gate on `github.event_name == "pull_request"` so the diff arm only runs where `base_ref` is populated.
+- **`--git-diff-from origin/<base>` fails on a PR against a non-default branch** → the step fetched a hardcoded default branch instead of `${{ github.base_ref }}`, so `origin/<base>` was never created locally. Fetch `"${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"` before diffing.
 - **A workflow run fails immediately with `Unable to resolve action owner/repo@vN, repository or version not found`** → the pinned action tag does not exist (e.g. `install-ubi-action@v1` — there is no `v1`); resolve the real latest tag with `gh api` and re-pin.
 - **The `install-ubi-action` step fails intermittently with a GitHub API 403 / rate-limit error** → `GITHUB_TOKEN` is missing from the step's `with:`; add `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}`.
 - **`precious config list` errors with TOML parse failure after T1** → quoting issue in the heredoc that generated the file; re-emit `precious.toml` from a real template, not string concatenation.
