@@ -46,13 +46,16 @@ dispatch is the default, not a hard requirement.
 
 ```bash
 DEFAULT=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
-DEFAULT=${DEFAULT:-main}
+if [ -z "$DEFAULT" ]; then
+  for b in main master; do
+    git show-ref --verify --quiet "refs/heads/$b" && DEFAULT=$b && break
+  done
+fi
 BASE=$(git merge-base "$DEFAULT" HEAD)
 git diff --name-only "$BASE"...HEAD
 ```
 
-If `origin/HEAD` is unset, `DEFAULT` falls back to `main` (then try `master` if
-`main` doesn't exist locally).
+If `origin/HEAD` is unset, the loop falls back to whichever of `main` or `master` exists locally.
 
 **Paths given** (e.g. `lib/Foo.pm t/`) → review those files / directories
 instead of the diff.
