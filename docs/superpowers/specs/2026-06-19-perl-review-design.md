@@ -75,7 +75,7 @@ Matches repo convention — a trigger-laden description drives auto-invocation:
 ```yaml
 ---
 name: perl-review
-description: Use when reviewing or improving Perl code against project standards — reads changed .pm/.pl/.t files (or named paths) and flags violations of the rules in STANDARDS.md (quoting, core-module use, test hygiene, …).
+description: Use when reviewing or improving Perl code against project standards — reads changed .pm/.pl/.t files (or named paths) and flags violations of the rules in STANDARDS.md (quoting, core-module use, URL building, test hygiene, …).
 version: 1.0.0
 ---
 ```

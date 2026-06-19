@@ -48,14 +48,17 @@ dispatch is the default, not a hard requirement.
 DEFAULT=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
 if [ -z "$DEFAULT" ]; then
   for b in main master; do
-    git show-ref --verify --quiet "refs/heads/$b" && DEFAULT=$b && break
+    if git show-ref --verify --quiet "refs/heads/$b" \
+      || git show-ref --verify --quiet "refs/remotes/origin/$b"; then
+      DEFAULT=$b && break
+    fi
   done
 fi
 BASE=$(git merge-base "$DEFAULT" HEAD)
 git diff --name-only "$BASE"...HEAD
 ```
 
-If `origin/HEAD` is unset, the loop falls back to whichever of `main` or `master` exists locally.
+If `origin/HEAD` is unset, the loop falls back to whichever of `main` or `master` exists locally or on `origin` (so remote-only checkouts, e.g. CI, still resolve).
 
 **Paths given** (e.g. `lib/Foo.pm t/`) → review those files / directories
 instead of the diff.
