@@ -49,6 +49,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 |-------|-------------|
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
+| **perl-review** | Flags Perl code that strays from your project standards — quoting, core-module use, URL building, test hygiene — reading a living rules doc you edit freely |
 | **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown |
 | **tune-perl-ci** | Six idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI |
 | **tune-precious** | Migrates a Perl repo from `Code::TidyAll` to `precious` (or sets up `precious` from scratch) — config, `.perltidyrc`, `dist.ini`, CI lint job |
