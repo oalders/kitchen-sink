@@ -214,6 +214,7 @@ Mapping rules:
 - The old `args:` value is appended verbatim after `--cpanfile …` (e.g. `--with-recommends --with-suggests --with-test`).
 - Keep `-g` (global install) to preserve `install-with-cpm`'s default global-install behavior.
 - **Drop the old `sudo:` key.** No sudo is needed: `perldocker/perl-tester` containers run as root, and `shogo82148/actions-setup-perl` provisions a user-local Perl, so the install target is already writable.
+- **Drop `--with-develop` for macOS-only and Windows-only jobs.** When the install step's job targets macOS or Windows exclusively (same job-targeting test as transform 7), strip `--with-develop` from the mapped args. Develop-phase prereqs are author/release tooling the cross-platform matrix never exercises, and they frequently fail to build on hosted macOS/Windows runners. Keep `--with-develop` on Linux jobs and on mixed-OS jobs (where Linux shares the args). If stripping it leaves no args, just omit the rest.
 
 The matrix-conditional `version:` expression is gone entirely — `version: compat` on the `setup-cpm` step auto-selects cpm `0.998003` for old Perls (≤ 5.22) and the latest cpm for newer ones, handling the old-Perl pinning upstream.
 
@@ -403,7 +404,7 @@ jobs:
         uses: perl-actions/install-with-cpm@v1.9
         with:
           cpanfile: "cpanfile"
-          args: "--with-recommends --with-suggests --with-test"
+          args: "--with-recommends --with-suggests --with-test --with-develop"
           sudo: false
 
   test_macos:
@@ -426,7 +427,7 @@ jobs:
         uses: perl-actions/install-with-cpm@v1.9
         with:
           cpanfile: "cpanfile"
-          args: "--with-recommends --with-suggests --with-test"
+          args: "--with-recommends --with-suggests --with-test --with-develop"
           sudo: false
 ```
 
@@ -489,7 +490,7 @@ jobs:
         with:
           version: compat
       - name: Install deps
-        run: cpm install -g --cpanfile cpanfile --with-recommends --with-suggests --with-test
+        run: cpm install -g --cpanfile cpanfile --with-recommends --with-suggests --with-test --with-develop
 
   test_macos:
     runs-on: ${{ matrix.os }}
@@ -524,6 +525,7 @@ Things to notice in the after-state:
 - Quotes are preserved on existing list entries; new entries match (here, double quotes).
 - `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
 - Both `install-with-cpm` steps became a `setup-cpm@v1` step (`version: compat`) followed by an explicit `cpm install -g` run step that carries the old step's `name:`; the old `sudo:` key was dropped (the perl-tester container runs as root and the macOS Perl is user-local) and the matrix-conditional `version:` expression is gone — `version: compat` pins old Perls upstream.
+- `test_linux` keeps `--with-develop` in its `cpm install`, but `test_macos` (a macOS-only job) dropped it — develop-phase prereqs are author/release tooling the cross-platform matrix never exercises and often fail to build on hosted macOS/Windows runners.
 - `test_macos.matrix.perl-version` lost `"5.20"` (transform 7) but `test_linux.matrix.perl-version` keeps `"5.10"` — transform 7 leaves Linux container jobs alone.
 
 ## Verification
@@ -540,7 +542,7 @@ After **each** transform's edit, before committing:
 | 3 | every `container.image` whose tag contains no `${{` ends in `:5.42` |
 | 4 | `on.push.branches` is a single-item list with the resolved default branch |
 | 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
-| 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm@v1` step with `version: compat` (and the `v1` tag resolves via `gh api`) |
+| 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm@v1` step with `version: compat` (and the `v1` tag resolves via `gh api`); no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
@@ -557,6 +559,7 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 | Batching all 6 transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Auto-reverting on verification failure | Hides bugs in the skill | Stop, surface the failure, leave files uncommitted |
 | Carrying the old `sudo:` key onto the `cpm install` run step | There is no `sudo:` input on a `run:` step, and the install target is already writable (root container / user-local Perl) | Drop `sudo:` when converting to `setup-cpm` + `cpm install` |
+| Carrying `--with-develop` onto a macOS-only or Windows-only `cpm install` step | Develop-phase prereqs are author/release tooling the cross-platform matrix never runs, and they often fail to build on hosted macOS/Windows runners | Strip `--with-develop` from the args on macOS-only/Windows-only jobs; keep it on Linux and mixed-OS jobs |
 | Leaving `perl-actions/install-with-cpanm` in place | The cpanm action is the legacy serial installer; cpm is parallel and the supported path | Rewrite any `install-with-cpanm@*` step to `setup-cpm@v1` + `cpm install` in the same transform |
 | Pinning `setup-cpm@v1` (or any action ref) without checking the tag exists | Action tags move and some actions never publish a given major; a non-existent ref fails the workflow on every run | Confirm the tag resolves with `gh api repos/<owner>/<repo>/git/refs/tags/<ref>` before writing the `uses:` line |
 | Trimming pre-5.24 Perls from Linux container jobs | `perldocker/perl-tester` images carry working older Perls; transform 6 already covers the cpm install path via `version: compat` | Transform 7 only touches macOS-only and Windows-only jobs |
