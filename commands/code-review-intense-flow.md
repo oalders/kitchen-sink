@@ -50,7 +50,7 @@ Record the list of changed files. You'll use it for routing.
 | **`/frontend-review`** | Diff touches `*.jsx`, `*.tsx`, `*.vue`, `*.svelte`, `*.html`, `*.css`, `*.scss`, or known frontend paths (`components/`, `pages/`, `app/`, `views/`, `templates/`) |
 | **`/seo-review`** | Diff touches page templates, route definitions, `<head>`/meta tags, `sitemap.*`, `robots.txt`, canonical URL config, Open Graph / Twitter Card tags |
 | **`/geo-review`** | Diff touches content pages, `llms.txt`, `llms-full.txt`, JSON-LD schema, AI-bot rules in `robots.txt`, author bios, About page |
-| **`/playwright-review`** | Test files touched (`*.spec.*`, `*.test.*` under `e2e/`, `tests/e2e/`, `playwright/`) **OR new route added without a corresponding test** (see route detection below) |
+| **`/playwright-review`** | Test files touched (`*.spec.*`, `*.test.*` under `e2e/`, `tests/e2e/`, `playwright/`) **OR new route added without a corresponding test** (see route detection below) **OR new/changed client-side interactive behavior without an e2e test exercising it** — even when no new server route was added (see interaction detection below) |
 
 **Doc-only detection:** the security skip is conservative. ALL changed files must match the doc allowlist AND no code files may be touched. If in doubt, run security.
 
@@ -66,6 +66,17 @@ Record the list of changed files. You'll use it for routing.
 - Mojolicious / Dancer / Catalyst route declarations (Perl)
 
 If a new route is detected AND no Playwright/e2e test was added in the same diff covering it, dispatch `/playwright-review` with an explicit "verify e2e coverage for newly added route(s): <list>" instruction appended to its normal checklist.
+
+**New-interaction detection** (heuristic — scan the diff for added lines matching any of):
+- `addEventListener\(\s*['"](click|submit|change|input|keydown|keyup)` (DOM event handlers)
+- `\.(onclick|onsubmit|onchange)\s*=` or `on(click|submit|change)=` attributes in templates/markup
+- `fetch\(`, `axios\.`, `XMLHttpRequest`, `\$\.(ajax|post|get)\(` (client-initiated requests tied to a user action)
+- `data-action=` / `data-bs-toggle=` wiring, or a new `<button>` / `<form method=` / submit control backed by JS
+- New or changed handlers in `*.js` / `*.ts` / `*.jsx` / `*.tsx` modules, or `<script>` blocks in templates
+
+This trigger exists because **reusing an existing server route still ships untested browser behavior** — a new button that POSTs to an already-defined endpoint, a confirm dialog, an AJAX call, or a client-side redirect is real user-facing logic the route-detection rule will miss. Backend-only tests (unit/handler tests, template-render assertions) do **not** cover the click → request → response → DOM/redirect path.
+
+If new client-side interaction is detected AND no Playwright/e2e test was added or updated in the same diff to exercise it, dispatch `/playwright-review` with an explicit "verify e2e coverage for new client-side interaction(s): <list>" instruction appended to its normal checklist, and flag missing coverage as **Important**.
 
 ### 4. Dispatch in Parallel
 
@@ -161,6 +172,7 @@ Same protocol as `/code-review-flow`:
 - Dispatch in parallel (single message, multiple Task calls)
 - Note skipped reviewers in the summary with the routing reason
 - Pass the "new route, verify e2e coverage" instruction to `/playwright-review` when triggered by route detection (not test-file changes)
+- Fire `/playwright-review` for new client-side interaction (event handlers, `fetch`/AJAX, JS-wired buttons/forms) even when the diff reuses an existing route and adds no new one — a backend test does not cover the browser interaction
 
 **DON'T:**
 - Silently skip security on changes that touch any code file
