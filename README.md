@@ -48,6 +48,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Skill | Description |
 |-------|-------------|
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
+| **implement-design-handoff** | Wires a design-system / component-export handoff into an app's real templates and CSS faithfully, forcing a property-by-property visual-parity check and protecting untouched surfaces |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
 | **perl-review** | Flags Perl code that strays from your project standards — quoting, core-module use, URL building, test hygiene — reading a living rules doc you edit freely |
 | **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown |
