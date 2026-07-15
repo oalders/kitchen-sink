@@ -184,4 +184,4 @@ Same protocol as `/code-review-flow`:
 
 - **`/code-review-flow`** — Lightweight version: general reviewer only, no specialists
 - **`/security-review`**, **`/frontend-review`**, **`/seo-review`**, **`/geo-review`**, **`/playwright-review`** — The specialists this orchestrator dispatches
-- **general-purpose** — The base reviewer agent specialists ultimately spawn
+- **general-purpose** — The base agent specialists ultimately spawn; the reviewer persona comes from the prompt they pass, not the agent itself
