@@ -8,7 +8,7 @@ description: Heavy code review - fans out to all applicable specialized reviewer
 
 Fan-out orchestrator that dispatches **all relevant specialized reviewers** in parallel for a single diff, then aggregates the findings. This is the heavyweight counterpart to `/code-review-flow` — use it when you want every applicable lens applied (security, frontend, SEO, GEO, Playwright) instead of only the general reviewer.
 
-The general `superpowers:code-reviewer` always runs. Specialists fire only when the diff touches their domain, with one exception: `/security-review` runs by default unless the diff is documentation-only.
+The general-purpose reviewer always runs. Specialists fire only when the diff touches their domain, with one exception: `/security-review` runs by default unless the diff is documentation-only.
 
 ## When to Use
 
@@ -45,7 +45,7 @@ Record the list of changed files. You'll use it for routing.
 
 | Reviewer | Fires when |
 |---|---|
-| **General `superpowers:code-reviewer`** | Always |
+| **General-purpose reviewer** | Always |
 | **`/security-review`** | Default. **Skip only if doc-only** (every changed file matches `*.md`, `*.txt`, `docs/**`, `CHANGELOG*`, `LICENSE*`, `README*`, `.github/**/*.md` AND no code files were touched) |
 | **`/frontend-review`** | Diff touches `*.jsx`, `*.tsx`, `*.vue`, `*.svelte`, `*.html`, `*.css`, `*.scss`, or known frontend paths (`components/`, `pages/`, `app/`, `views/`, `templates/`) |
 | **`/seo-review`** | Diff touches page templates, route definitions, `<head>`/meta tags, `sitemap.*`, `robots.txt`, canonical URL config, Open Graph / Twitter Card tags |
@@ -84,7 +84,7 @@ If new client-side interaction is detected AND no Playwright/e2e test was added 
 
 For the general reviewer:
 ```
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   description: General code review of [feature]
   model: "sonnet"
   prompt: [standard code-reviewer prompt with BASE/HEAD SHAs]
@@ -102,7 +102,7 @@ Task(general-purpose):
       Feature: [brief description]
       [If playwright + new-route detected: "ADDITIONAL FOCUS: verify e2e coverage exists for newly added route(s): <list>. Flag missing coverage as Important."]
 
-    Follow the file's instructions exactly. Dispatch superpowers:code-reviewer as the file directs. Return the resulting review verbatim, plus a one-line preamble identifying which specialist you ran.
+    Follow the file's instructions exactly. Dispatch general-purpose as the file directs. Return the resulting review verbatim, plus a one-line preamble identifying which specialist you ran.
 ```
 
 **Important:**
@@ -184,4 +184,4 @@ Same protocol as `/code-review-flow`:
 
 - **`/code-review-flow`** — Lightweight version: general reviewer only, no specialists
 - **`/security-review`**, **`/frontend-review`**, **`/seo-review`**, **`/geo-review`**, **`/playwright-review`** — The specialists this orchestrator dispatches
-- **superpowers:code-reviewer** — The base reviewer agent specialists ultimately spawn
+- **general-purpose** — The base reviewer agent specialists ultimately spawn

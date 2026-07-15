@@ -30,7 +30,7 @@ a3c2f91 Add distance parsing tests
 *Invokes code-reviewer:*
 
 ```
-Task(superpowers:code-reviewer, "Review commits 4f940124..d0e856b"):
+Task(general-purpose, "Review commits 4f940124..d0e856b"):
 
 # Code Review Agent
 

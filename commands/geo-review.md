@@ -6,7 +6,7 @@ description: GEO review for LLM-citation content structure, llms.txt, schema mar
 
 ## Overview
 
-GEO (Generative Engine Optimization) review for changes affecting how LLMs and AI answer engines (ChatGPT, Claude, Perplexity, Google AI Overviews) discover, extract, and cite content. Spawns `superpowers:code-reviewer` subagent.
+GEO (Generative Engine Optimization) review for changes affecting how LLMs and AI answer engines (ChatGPT, Claude, Perplexity, Google AI Overviews) discover, extract, and cite content. Spawns `general-purpose` subagent.
 
 GEO complements SEO: SEO optimizes for ranked link results, GEO optimizes for being cited inside generated answers. Run `/seo-review` for traditional search visibility and `/geo-review` for LLM/answer-engine visibility.
 
@@ -38,7 +38,7 @@ git rev-parse HEAD
 ### 2. Invoke GEO-Focused Code Reviewer
 
 ```
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   description: GEO review of [feature]
   model: "sonnet"
 
@@ -239,6 +239,6 @@ Task(superpowers:code-reviewer):
 
 ## Related Commands
 
-- **superpowers:code-reviewer** - The subagent this command invokes
+- **general-purpose** - The subagent this command invokes
 - **/seo-review** - Traditional SEO review (run alongside `/geo-review` for full coverage)
 - **/frontend-review** - Frontend review with accessibility focus

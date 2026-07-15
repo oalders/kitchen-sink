@@ -117,7 +117,7 @@ Addresses PR code review feedback:
 Request code review during development (before creating PR):
 - Gets git SHAs from conversation context (no permission prompts)
 - Fetches issue details for fix-* branches
-- Invokes `superpowers:code-reviewer` with structured template
+- Invokes `general-purpose` with structured template
 - Returns categorized feedback (Critical/Important/Minor)
 - Allows unattended execution - can leave window while review runs
 
@@ -130,7 +130,7 @@ Frontend-focused code review for HTML/CSS/image changes:
 - CSS best practices (custom properties, relative units, performance)
 - Visual regression checklist for manual testing
 - SVG optimization and preload hints
-- Spawns `superpowers:code-reviewer` with frontend-specific checklist
+- Spawns `general-purpose` with frontend-specific checklist
 
 ### /playwright-review
 
@@ -141,7 +141,7 @@ Specialized review for Playwright E2E tests:
 - Suggests specific optimizations with estimated time savings
 - Checks accessibility test coverage (keyboard navigation, focus management)
 - Provides performance improvement summary table
-- Spawns `superpowers:code-reviewer` with Playwright-specific checklist
+- Spawns `general-purpose` with Playwright-specific checklist
 
 ### /security-review
 
@@ -153,7 +153,7 @@ OWASP-based systematic security review:
 - Security misconfiguration (CSRF, CORS, security headers)
 - Business logic flaws (race conditions, timing attacks)
 - Uses Opus model for comprehensive security analysis
-- Spawns `superpowers:code-reviewer` with OWASP Top 10 checklist
+- Spawns `general-purpose` with OWASP Top 10 checklist
 
 ### /codebase-health
 
@@ -191,7 +191,7 @@ Comprehensive CLAUDE.md audit for quality and accuracy:
 
 Wrapper around `superpowers:requesting-code-review` that eliminates permission prompts during code reviews:
 - Gets git SHAs from conversation context or separate git commands (not compound commands)
-- Invokes `superpowers:code-reviewer` subagent with proper template
+- Invokes `general-purpose` subagent with proper template
 - Allows code reviews to run unattended without blocking on permission prompts
 
 **Benefits:**

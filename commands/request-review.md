@@ -6,7 +6,7 @@ description: Request code review without permission prompts
 
 ## Overview
 
-Streamlined code review workflow that gets git SHAs from context and invokes `superpowers:code-reviewer` without blocking on permission prompts. This allows you to leave the window while the review runs unattended.
+Streamlined code review workflow that gets git SHAs from context and invokes a `general-purpose` code reviewer without blocking on permission prompts. This allows you to leave the window while the review runs unattended.
 
 ## When to Use
 
@@ -86,10 +86,10 @@ BASE_SHA=$(git rev-parse origin/main) && HEAD_SHA=$(git rev-parse HEAD) && echo 
 
 ### 3. Invoke Code Reviewer
 
-Use Task tool with `superpowers:code-reviewer` subagent:
+Use Task tool with `general-purpose` subagent:
 
 ```
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   description: Review [feature/fix name]
 
   prompt:
@@ -294,7 +294,7 @@ $ gh issue view 1065 --json title,body
 Issue: "listed tag order - tags should sort by actual distance"
 
 Step 3: Invoke code-reviewer
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   WHAT_WAS_IMPLEMENTED: Tag sorting with distance unit handling
   PLAN_OR_REQUIREMENTS: Issue #1065 - sort by actual distance value
   BASE_SHA: 4f940124
@@ -323,6 +323,6 @@ Step 8: Address any minor feedback (if applicable)
 
 ## Related Skills
 
-- **superpowers:code-reviewer** - The subagent this command invokes
+- **general-purpose** - The subagent this command invokes
 - **superpowers:receiving-code-review** - How to handle review feedback
 - **code-review-flow** - The skill documenting this pattern
