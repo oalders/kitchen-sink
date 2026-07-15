@@ -46,7 +46,7 @@ Output: `4f940124`
 *Invokes code-reviewer:*
 
 ```
-Task(superpowers:code-reviewer, "Review issue #1234 fix"):
+Task(general-purpose, "Review issue #1234 fix"):
 
 # Code Review Agent
 

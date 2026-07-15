@@ -6,7 +6,7 @@ description: Playwright test review for accessibility, UI issues, and performanc
 
 ## Overview
 
-Specialized review for Playwright E2E tests focusing on: (1) ARIA label enforcement, (2) UI/layout issues like buttons bumping footer, (3) Playwright performance optimizations. Spawns `superpowers:code-reviewer` subagent.
+Specialized review for Playwright E2E tests focusing on: (1) ARIA label enforcement, (2) UI/layout issues like buttons bumping footer, (3) Playwright performance optimizations. Spawns `general-purpose` subagent.
 
 ## When to Use
 
@@ -33,7 +33,7 @@ git rev-parse HEAD
 ### 2. Invoke Playwright-Focused Code Reviewer
 
 ```
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   description: Playwright test review for [feature]
   model: "sonnet"
 
@@ -368,6 +368,6 @@ Task(superpowers:code-reviewer):
 
 ## Related Commands
 
-- **superpowers:code-reviewer** - The subagent this command invokes
+- **general-purpose** - The subagent this command invokes
 - **/request-review** - General code review
 - **/security-review** - Security-focused review

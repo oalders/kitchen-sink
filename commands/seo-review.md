@@ -6,7 +6,7 @@ description: SEO review for meta tags, structured data, Open Graph, headings, an
 
 ## Overview
 
-SEO-focused code review for changes affecting search engine visibility, social sharing, and discoverability. Spawns `superpowers:code-reviewer` subagent.
+SEO-focused code review for changes affecting search engine visibility, social sharing, and discoverability. Spawns `general-purpose` subagent.
 
 ## When to Use
 
@@ -35,7 +35,7 @@ git rev-parse HEAD
 ### 2. Invoke SEO-Focused Code Reviewer
 
 ```
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   description: SEO review of [feature]
   model: "sonnet"
 
@@ -209,7 +209,7 @@ Task(superpowers:code-reviewer):
 
 ## Related Commands
 
-- **superpowers:code-reviewer** - The subagent this command invokes
+- **general-purpose** - The subagent this command invokes
 - **/geo-review** - LLM/answer-engine optimization review (run alongside `/seo-review` for full coverage)
 - **/frontend-review** - Frontend review with accessibility focus
 - **/security-review** - Security-focused review

@@ -26,7 +26,7 @@ Don't use when:
 
 For the **direct implementation** branch (i.e. when `superpowers:subagent-driven-development` is not chosen), dispatch the bulky file editing — implementation and the test-writing / test-running cycle — to a `general-purpose` subagent via the `Agent` tool. **Keep the review fan-out and the fix-and-re-review loop in the caller's context.**
 
-**Why this split (read before changing it):** a subagent has no `Agent`/`Task` tool — it cannot spawn another subagent. The review orchestrator `/code-review-intense-flow` and the individual specialized reviewers (`/security-review`, `/frontend-review`, `/request-review`, etc.) each fan out to `superpowers:code-reviewer` (and, for intense-flow, the specialists) via `Task`, so they only work where nested delegation is available: the caller. Asking the dispatched subagent to run them makes the reviews silently degrade or fail, and you end up re-running them in the caller anyway. The same applies to any other delegating skill (e.g. a test runner that fans out to subagents) — those must run in the caller too.
+**Why this split (read before changing it):** a subagent has no `Agent`/`Task` tool — it cannot spawn another subagent. The review orchestrator `/code-review-intense-flow` and the individual specialized reviewers (`/security-review`, `/frontend-review`, `/request-review`, etc.) each fan out to `general-purpose` (and, for intense-flow, the specialists) via `Task`, so they only work where nested delegation is available: the caller. Asking the dispatched subagent to run them makes the reviews silently degrade or fail, and you end up re-running them in the caller anyway. The same applies to any other delegating skill (e.g. a test runner that fans out to subagents) — those must run in the caller too.
 
 What stays in the caller's context (interactive / decisional / delegating):
 - Issue number resolution and `gh issue view`
@@ -163,7 +163,7 @@ digraph fix_issue {
 
      | Change | Review Command | Why |
      |--------|----------------|-----|
-     | **Non-trivial** (the default for anything that reached the brainstorm gate) | **`/code-review-intense-flow`** | Fans out to the general `superpowers:code-reviewer` (always) + `/security-review` (default unless doc-only) + frontend/seo/geo/playwright by path, plus new-route → e2e-coverage detection. Automated routing closes the gaps manual self-selection leaves. |
+     | **Non-trivial** (the default for anything that reached the brainstorm gate) | **`/code-review-intense-flow`** | Fans out to a general-purpose reviewer (always) + `/security-review` (default unless doc-only) + frontend/seo/geo/playwright by path, plus new-route → e2e-coverage detection. Automated routing closes the gaps manual self-selection leaves. |
      | **Trivial / narrow** (one file, one obvious concern) | `/code-review-flow` (general only) or the single specialist that clearly applies | Intense-flow is overkill for a one-liner; a lighter lens is enough. |
 
      Default to `/code-review-intense-flow` for the non-trivial direct-implementation path. Drop to the lighter option only when the change is genuinely trivial — when in doubt, run intense-flow. Do NOT fall back to hand-matching a single reviewer from a table; that routing now lives inside `/code-review-intense-flow` as the single source of truth, and self-selection is exactly what loses the always-on general reviewer and the default security pass.

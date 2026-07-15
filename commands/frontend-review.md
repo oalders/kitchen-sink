@@ -6,7 +6,7 @@ description: Frontend code review for images, accessibility, responsive design, 
 
 ## Overview
 
-Frontend-focused code review for HTML/CSS/image changes, emphasizing: (1) Image optimization and accessibility, (2) Responsive design across viewports, (3) Visual regression, (4) CSS best practices. Spawns `superpowers:code-reviewer` subagent.
+Frontend-focused code review for HTML/CSS/image changes, emphasizing: (1) Image optimization and accessibility, (2) Responsive design across viewports, (3) Visual regression, (4) CSS best practices. Spawns `general-purpose` subagent.
 
 ## When to Use
 
@@ -33,7 +33,7 @@ git rev-parse HEAD
 ### 2. Invoke Frontend-Focused Code Reviewer
 
 ```
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   description: Frontend review of [feature]
   model: "sonnet"
 
@@ -335,6 +335,6 @@ Task(superpowers:code-reviewer):
 
 ## Related Commands
 
-- **superpowers:code-reviewer** - The subagent this command invokes
+- **general-purpose** - The subagent this command invokes
 - **/playwright-review** - E2E test review with accessibility checks
 - **/security-review** - Security-focused review

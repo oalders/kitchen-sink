@@ -29,7 +29,7 @@ Output shows: `4f940124` as base
 *Now invokes code-reviewer:*
 
 ```
-Task(superpowers:code-reviewer, "Review dark mode feature"):
+Task(general-purpose, "Review dark mode feature"):
 
 # Code Review Agent
 

@@ -1,6 +1,6 @@
 ---
 name: code-review-flow
-description: Streamlined code review workflow - gets SHAs and invokes superpowers:code-reviewer without permission prompts
+description: Streamlined code review workflow - gets SHAs and invokes a general-purpose code reviewer without permission prompts
 version: 1.0.0
 ---
 
@@ -13,7 +13,7 @@ Wrapper around `superpowers:requesting-code-review` that avoids permission promp
 When user requests code review:
 1. Check conversation context for commit SHAs (they're usually visible in recent git output)
 2. If not in context, run separate git commands (not compound commands)
-3. Invoke superpowers:code-reviewer with the template
+3. Invoke a general-purpose reviewer with the template
 
 ## Getting Git SHAs Without Prompts
 
@@ -39,7 +39,7 @@ BASE_SHA=$(git merge-base origin/main HEAD) && HEAD_SHA=$(git rev-parse HEAD) &&
 Once you have the SHAs, invoke the code-reviewer subagent:
 
 ```
-Task tool with subagent_type: superpowers:code-reviewer
+Task tool with subagent_type: general-purpose
 
 Prompt template:
 # Code Review Agent
@@ -122,7 +122,7 @@ Step 1: Check context for SHAs
 - git log showed base: 4f940124
 
 Step 2: Invoke code-reviewer
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   WHAT_WAS_IMPLEMENTED: Tag sorting fix with case-insensitive handling
   PLAN_OR_REQUIREMENTS: Issue #1065 - sort tags by distance value
   BASE_SHA: 4f940124
@@ -134,7 +134,7 @@ Step 3: Review found 1 major issue (missing nil check) and 2 minor issues
 - Commit fixes: [fix-1065 a1b2c3d4]
 
 Step 4: Re-run review with updated HEAD
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   BASE_SHA: 4f940124
   HEAD_SHA: a1b2c3d4
   ... (same params, new HEAD)

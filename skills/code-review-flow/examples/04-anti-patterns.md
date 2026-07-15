@@ -41,7 +41,7 @@ git rev-parse HEAD
 
 **DO INSTEAD:**
 ```
-Task(superpowers:code-reviewer, "Review last commit"):
+Task(general-purpose, "Review last commit"):
   Base: HEAD~1
   Head: HEAD
 ```
@@ -54,7 +54,7 @@ Git accepts symbolic references - no need to resolve them to SHAs.
 
 **DON'T:**
 ```
-Task(superpowers:code-reviewer):
+Task(general-purpose):
   Base: abc123
   Head: def456
 ```
@@ -63,7 +63,7 @@ Task(superpowers:code-reviewer):
 
 **DO INSTEAD:**
 ```
-Task(superpowers:code-reviewer, "Review login feature"):
+Task(general-purpose, "Review login feature"):
 
   ## What Was Implemented
   Added JWT-based authentication with refresh tokens

@@ -36,7 +36,7 @@ a3c2f91 Add login/logout endpoints
 *Now I have the context. Invokes code-reviewer:*
 
 ```
-Task(superpowers:code-reviewer, "Review authentication feature"):
+Task(general-purpose, "Review authentication feature"):
 
 # Code Review Agent
 
