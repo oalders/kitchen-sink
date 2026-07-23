@@ -49,9 +49,11 @@ Every review body a skill posts to a PR ends with this footer (exact id = runnin
 🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
 ```
 
-**Shell safety:** this footer contains backticks. Emit it only through a single-quoted heredoc
-(`<<'BODY'`) or a `--rawfile`/`--body-file` path — never a double-quoted shell word (bash expands
-backticks, `$(...)`, and `$var` inside double quotes) and never a bare literal inside a single-quoted
-`jq` program (there an apostrophe in the text breaks out of the quoting, after which trailing content —
-backticks included — becomes shell-interpreted). See `code-review-flow`'s inline-review protocol for the
-full apostrophe/backtick threat model.
+**Shell safety:** never build the review body — this footer *or* the findings alongside it — with a
+double-quoted shell word or a bare literal inside a single-quoted `jq` program. In a double-quoted word
+bash command-substitutes the footer's backticks (and any `$(...)`/`$var`); in a single-quoted `jq`
+literal an apostrophe anywhere in the body (e.g. an assessment saying "doesn't") breaks the quoting,
+after which trailing content — backticks included — is shell-interpreted. Instead, author the JSON body
+directly with a file-writing tool (no shell at all — the preferred path), or emit it through a
+single-quoted heredoc (`<<'BODY'`) + `--rawfile`/`--body-file`. See `code-review-flow`'s inline-review
+protocol for the full apostrophe/backtick threat model.
