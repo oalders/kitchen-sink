@@ -37,8 +37,11 @@ The recipe replaces the current "Posting Review Results" block (lines ~85-88) an
    ```bash
    gh pr view <n> --json headRefOid -q .headRefOid
    ```
-2. **Build `review.json` with `jq`**, written to a temp file under `$TMPDIR` (falling back to
-   `/tmp` only if unset) rather than a fragile inline heredoc, because finding bodies contain
+2. **Author `review.json` — primary: write it directly with your file-writing tool**, since you
+   produce the JSON and there is no shell quoting to get wrong. The shell-only fallback (no
+   file-writing tool) **builds it with `jq`** into a temp file under `$TMPDIR` (falling back to
+   `/tmp` only if unset), pulling every body — summary included — in via `--rawfile` from a
+   single-quoted heredoc rather than a fragile inline heredoc, because finding bodies contain
    markdown/backticks. Shape:
    ```json
    {
@@ -84,7 +87,10 @@ The recipe replaces the current "Posting Review Results" block (lines ~85-88) an
    apostrophe in a single-quoted-jq literal (e.g. an assessment saying "doesn't") breaks the bash
    arg. Keep every body — summary included — out of the shell: author `review.json` directly with
    your file-writing tool (primary), or in the shell fallback write each body to a file with a
-   single-quoted heredoc (`<<'BODY'`) and pull it in with `jq --rawfile` (`body: $summary`).
+   single-quoted heredoc (`<<'BODY'`) and pull it in with `jq --rawfile` (`body: $summary`). This
+   is absolute: no summary or finding body uses `--arg` or a double-quoted shell word, not even a
+   short fixed boilerplate body. Only the head SHA (`--arg commit "$HEAD_SHA"`, from `gh pr view`)
+   uses `--arg`.
 5. **JSON assembly.** Prefer authoring `review.json` directly with your file-writing tool. In the
    shell fallback, build it with `jq` into a `mktemp -d` workdir (auto-cleaned via
    `trap 'rm -rf "$WORKDIR"' EXIT`), pulling the summary AND every finding body in via `--rawfile`

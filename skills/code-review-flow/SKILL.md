@@ -129,8 +129,9 @@ are reachable only through the REST API via `gh api`.
    breaks the single-quoted bash arg. This covers the summary `body` field EXACTLY as much as each
    `comments[].body`: write every body — summary included — to its own file with a **single-quoted
    heredoc** (`<<'BODY'` suppresses ALL shell expansion regardless of content), then pull them in
-   raw with `jq --rawfile`, so `body: $summary`. The only `--arg` value is the head SHA (safe — it
-   comes from `gh pr view`, not from finding text). Structural fields (`path`, `line`, `side`,
+   raw with `jq --rawfile`, so `body: $summary`. This holds for every body without exception — not
+   even a short fixed boilerplate summary may stay `--arg`/literal. The only `--arg` value is the
+   head SHA (safe — it comes from `gh pr view`, not from finding text). Structural fields (`path`, `line`, `side`,
    `event`) are author-controlled literals inside the jq program. Pick a heredoc delimiter (e.g.
    `BODY`) that does not appear at column 0 inside any finding text; if it might, prefer the
    primary direct-authoring path (or choose an unlikely per-run delimiter).
@@ -205,7 +206,10 @@ are reachable only through the REST API via `gh api`.
    apostrophe in a single-quoted-jq literal (e.g. the assessment saying "doesn't") breaks the bash
    arg. Keep every body — summary included — out of the shell: author `review.json` directly with
    your file-writing tool (primary), or in the shell fallback write each body to a file with a
-   single-quoted heredoc (`<<'BODY'`) and pull it in with `jq --rawfile` (`body: $summary`).
+   single-quoted heredoc (`<<'BODY'`) and pull it in with `jq --rawfile` (`body: $summary`). This
+   is absolute: there is no case where a summary or finding body uses `--arg` or a double-quoted
+   shell word, not even a short fixed boilerplate body. Only the head SHA
+   (`--arg commit "$HEAD_SHA"`, from `gh pr view`) uses `--arg`.
 5. **JSON assembly.** Prefer authoring `review.json` directly with your file-writing tool. In the
    shell fallback, build it with `jq` into a `mktemp -d` workdir (auto-cleaned via
    `trap 'rm -rf "$WORKDIR"' EXIT`), pulling the summary AND every finding body in via `--rawfile`
@@ -270,7 +274,10 @@ $ gh pr list --head fix-1065 --json number
 Step 7: Post clean review to PR as a single review (inline anchored comments + summary body)
 $ HEAD_SHA=$(gh pr view 123 --json headRefOid -q .headRefOid)
 $ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"; trap 'rm -rf "$WORKDIR"' EXIT
-$ jq -n --arg commit "$HEAD_SHA" --arg body "Automated review — passes clean, no remaining issues." \
+$ cat > "$WORKDIR/body.md" <<'BODY'
+Automated review — passes clean, no remaining issues.
+BODY
+$ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
     '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"
 $ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "$WORKDIR/review.json"
 ✓ Review posted to PR #123 (event: COMMENT — never self-approve)

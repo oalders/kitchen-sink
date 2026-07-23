@@ -224,7 +224,9 @@ gh pr list --head $(git branch --show-current) --json number,url
    (`body: $summary`). Never place finding or assessment text in a double-quoted shell word or as a
    bare literal inside the single-quoted `jq` program: bash would expand
    `$(...)`/backticks/`$var` in attacker-controlled diff text before jq runs, and an apostrophe in
-   a literal would break the bash arg. Use `event: "COMMENT"` for this posting step — the
+   a literal would break the bash arg. This is absolute — no summary or finding body uses `--arg`
+   or a double-quoted shell word, not even a short fixed boilerplate body; only the head SHA
+   (`--arg commit "$HEAD_SHA"`, from `gh pr view`) uses `--arg`. Use `event: "COMMENT"` for this posting step — the
    approve/no-approve decision below is applied separately as its own gate.
 
 2. **If review passes (Ready to merge? Yes):**
@@ -298,7 +300,10 @@ $ gh pr list --head fix-1065 --json number
 Step 6: Post review to PR as a single review (inline anchored comments + summary body)
 $ HEAD_SHA=$(gh pr view 123 --json headRefOid -q .headRefOid)
 $ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"; trap 'rm -rf "$WORKDIR"' EXIT
-$ jq -n --arg commit "$HEAD_SHA" --arg body "Automated review — Ready to merge? Yes." \
+$ cat > "$WORKDIR/body.md" <<'BODY'
+Automated review — Ready to merge? Yes.
+BODY
+$ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
     '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"
 $ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "$WORKDIR/review.json"
 ✓ Review posted to PR #123
