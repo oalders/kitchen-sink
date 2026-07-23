@@ -144,6 +144,9 @@ Every commit ends with a blank line then the `Co-authored-by` trailer from `docs
 (display name = the model running at runtime). The message is passed via a single-quoted heredoc
 (`git commit -F - <<'MSG'`) rather than `git commit -m "…"` so nothing in the model-authored body is
 shell-expanded — the same shell-safety discipline `docs/attribution.md` prescribes for review bodies.
+Pick a delimiter (here `MSG`) that cannot appear at column 0 anywhere in the body, so the heredoc can't
+terminate early — the same caveat `code-review-flow`'s inline-review protocol documents for its `BODY`
+heredoc.
 
 ### 5. Commit Message Template
 
