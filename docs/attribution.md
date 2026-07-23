@@ -48,3 +48,8 @@ Every review body a skill posts to a PR ends with this footer (exact id = runnin
 ---
 🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
 ```
+
+**Shell safety:** this footer contains backticks. When posting it via a shell command, emit it only
+through a single-quoted heredoc (`<<'BODY'`) or a `--rawfile`/`--body-file` path — never a double-quoted
+shell word or a bare literal inside a `jq` program, where the backtick-wrapped segment would be treated
+as command substitution.
