@@ -227,7 +227,8 @@ gh pr list --head $(git branch --show-current) --json number,url
    a literal would break the bash arg. This is absolute — no summary or finding body uses `--arg`
    or a double-quoted shell word, not even a short fixed boilerplate body; only the head SHA
    (`--arg commit "$HEAD_SHA"`, from `gh pr view`) uses `--arg`. Use `event: "COMMENT"` for this posting step — the
-   approve/no-approve decision below is applied separately as its own gate.
+   approve/no-approve decision below is applied separately as its own gate. Per `docs/attribution.md`,
+   the review `body` ends with the attribution footer (exact model id, resolved at runtime).
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash
@@ -302,6 +303,9 @@ $ HEAD_SHA=$(gh pr view 123 --json headRefOid -q .headRefOid)
 $ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"; trap 'rm -rf "$WORKDIR"' EXIT
 $ cat > "$WORKDIR/body.md" <<'BODY'
 Automated review — Ready to merge? Yes.
+
+---
+🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
 BODY
 $ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
     '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"

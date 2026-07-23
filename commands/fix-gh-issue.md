@@ -173,7 +173,9 @@ digraph fix_issue {
      2. Fix all Critical, Important, AND Minor issues found
      3. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost
      4. If a Minor issue seems wrong or counterproductive, push back on it rather than blindly implementing — but default to fixing it since it's usually less overhead than creating a follow-up issue
-     5. Commit fixes with a clear message referencing the review
+     5. Commit fixes with a clear message referencing the review. Every commit ends with a blank
+        line then the `Co-authored-by` trailer from `docs/attribution.md` (display name = the model
+        running at runtime), e.g. `Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>`
      6. Re-run the **same review** with updated HEAD SHA
      7. Repeat until the review passes clean
    - Do NOT skip re-review — fixes can introduce new issues, and the same lenses (accessibility, OWASP, SEO) must re-run against the new HEAD
@@ -196,9 +198,12 @@ digraph fix_issue {
    - [What changed]
 
    ## Testing
-   - [How verified]'
+   - [How verified]
+
+   🤖 Generated with [Claude Code](https://claude.com/claude-code)'
    ```
 
+   - The PR body ends with the `🤖 Generated with [Claude Code](https://claude.com/claude-code)` line per `docs/attribution.md`.
    - Single quotes (not double) disable `$(...)`, backticks, and `$var`, so the title and body pass through literally. Do not use a double-quoted string here.
    - The title and body must be *your own* words — do not paste issue or comment text into them verbatim. Keep them free of literal single-quote characters (a `'` would close the quoting); rephrase if needed, or write the body to a file and pass `--body-file <path>`.
 

@@ -162,7 +162,13 @@ Same protocol as `/code-review-flow`:
 - If a PR exists: post findings using `/code-review-flow`'s inline-review protocol — batch them
   into a single `pulls/{n}/reviews` POST (`event: "COMMENT"`) with each `file:line` finding as an
   inline anchored comment and un-anchorable findings in the summary `body`. Specialist findings
-  already carry a lens tag and mostly a `file:line`, so they anchor naturally.
+  already carry a lens tag and mostly a `file:line`, so they anchor naturally. Per that protocol
+  and `docs/attribution.md`, the summary `body` ends with the attribution footer (exact model id,
+  resolved at runtime), e.g.:
+  ```
+  ---
+  🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
+  ```
 - Never self-approve (`event: "COMMENT"`)
 - Fix Critical and Important issues automatically; for diffs > 500 lines, file GitHub issues for Minor
 - Re-run the orchestrator on the new HEAD until clean

@@ -93,6 +93,9 @@ the canonical inline-review protocol; `/code-review-intense-flow` and `/request-
 it. `gh pr comment` / `gh pr review --body` can only post PR-level text — line-anchored comments
 are reachable only through the REST API via `gh api`.
 
+**Attribution:** the review **summary `body`** (not each individual inline finding) must end with
+the attribution footer from `docs/attribution.md`, using the exact model id resolved at runtime.
+
 ### Inline review protocol
 
 1. **Resolve the head SHA robustly** — never assume local `HEAD` matches the PR head:
@@ -110,7 +113,7 @@ are reachable only through the REST API via `gh api`.
    {
      "commit_id": "<head-sha>",
      "event": "COMMENT",
-     "body": "Automated review — inline findings below. <un-anchorable findings / overall assessment here>",
+     "body": "Automated review — inline findings below. <un-anchorable findings / overall assessment here>\n\n---\n🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`",
      "comments": [
        { "path": "go/web/foo.go", "line": 42, "side": "RIGHT",
          "body": "**[Important]** This nil check can move above the loop." },
@@ -146,6 +149,9 @@ are reachable only through the REST API via `gh api`.
    # $(...) / $var / apostrophes in the text are written literally and never executed or broken.
    cat > "$WORKDIR/summary.md" <<'BODY'
    Automated review — inline findings below. <un-anchorable findings / overall assessment here>
+
+   ---
+   🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
    BODY
    cat > "$WORKDIR/b1.md" <<'BODY'
    **[Important]** This nil check can move above the loop.
@@ -224,7 +230,9 @@ When the review finds issues, fix them automatically rather than just reporting:
 1. Fix all Critical, Important, AND Minor issues found
 2. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost
 3. If a Minor issue seems wrong or counterproductive, push back rather than blindly implementing — but default to fixing since it's less overhead than a follow-up issue
-4. Commit fixes with a clear message referencing the review
+4. Commit fixes with a clear message referencing the review. Every such commit ends with a blank
+   line then the `Co-authored-by` trailer from `docs/attribution.md` (display name = the model
+   running at runtime), e.g. `Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>`
 5. **Re-run the review cycle** on the new commits (update HEAD_SHA and review again)
 6. Repeat until the review passes clean
 
@@ -257,7 +265,7 @@ Task(general-purpose):
 
 Step 3: Review found 1 major issue (missing nil check) and 2 minor issues
 - Diff is 180 lines (under 400) → fix all issues
-- Commit fixes: [fix-1065 a1b2c3d4]
+- Commit fixes: [fix-1065 a1b2c3d4] (commit ends with the `Co-authored-by` trailer from `docs/attribution.md`)
 
 Step 4: Re-run review with updated HEAD
 Task(general-purpose):
@@ -276,6 +284,9 @@ $ HEAD_SHA=$(gh pr view 123 --json headRefOid -q .headRefOid)
 $ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"; trap 'rm -rf "$WORKDIR"' EXIT
 $ cat > "$WORKDIR/body.md" <<'BODY'
 Automated review — passes clean, no remaining issues.
+
+---
+🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
 BODY
 $ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
     '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"

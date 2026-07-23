@@ -127,14 +127,26 @@ function searchItems(criteria) {
 
 # 5. Create descriptive commit
 git add <files>
-git commit -m "Fix style, constant, line-length issues (25 total)
+git commit -F - <<'MSG'
+Fix style, constant, line-length issues (25 total)
 
 - Added punctuation to 5 function comments
 - Extracted 8 string constants
 - Broke 12 long lines
 
-All tests pass."
+All tests pass.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+MSG
 ```
+
+Every commit ends with a blank line then the `Co-authored-by` trailer from `docs/attribution.md`
+(display name = the model running at runtime). The message is passed via a single-quoted heredoc
+(`git commit -F - <<'MSG'`) rather than `git commit -m "…"` so nothing in the model-authored body is
+shell-expanded — the same shell-safety discipline `docs/attribution.md` prescribes for review bodies.
+Pick a delimiter (here `MSG`) that cannot appear at column 0 anywhere in the body, so the heredoc can't
+terminate early — the same caveat `code-review-flow`'s inline-review protocol documents for its `BODY`
+heredoc.
 
 ### 5. Commit Message Template
 
@@ -152,6 +164,8 @@ Changes:
 - Specific change 2
 
 All tests pass.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
 ```
 
 ## Decision Framework: Fix vs Suppress
