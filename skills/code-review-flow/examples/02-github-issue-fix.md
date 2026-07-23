@@ -113,20 +113,42 @@ a `file:line`, so it becomes an inline comment on that exact diff line (see
 # Resolve the head SHA (don't assume local HEAD matches the PR head)
 HEAD_SHA=$(gh pr view 456 --json headRefOid -q .headRefOid)
 
-# Build review.json with jq — the two file:line findings anchor inline; strengths + assessment
-# go in the summary body. event: COMMENT (code-review-flow never self-approves).
-jq -n --arg sha "$HEAD_SHA" \
-  --arg body $'Automated review — inline findings below.\n\n**Strengths:** clean parseDistanceTag(), good edge-case coverage, case-insensitive matching.\n\n**Ready to merge?** With fixes — address the inline validation finding first.' \
-  --arg b1 $'**[Important]** No handling for invalid distance formats. Tags like "distance:invalid" will cause parsing errors — add validation and return null for invalid formats.' \
-  --arg b2 '**[Minor]** Missing test for mixed unit types — add a test for "10m, 1km, 50m" to verify unit conversion.' \
-  '{commit_id: $sha, event: "COMMENT", body: $body,
+# Private temp dir; auto-cleaned. Never a fixed /tmp path.
+WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"
+trap 'rm -rf "$WORKDIR"' EXIT
+
+# Write each finding body with a SINGLE-QUOTED heredoc (<<'BODY') so backticks / $(...) / $var
+# in attacker-controlled diff text are written literally and never executed. Finding text must
+# never transit a double-quoted shell word.
+cat > "$WORKDIR/body.md" <<'BODY'
+Automated review — inline findings below.
+
+**Strengths:** clean parseDistanceTag(), good edge-case coverage, case-insensitive matching.
+
+**Ready to merge?** With fixes — address the inline validation finding first.
+BODY
+cat > "$WORKDIR/b1.md" <<'BODY'
+**[Important]** No handling for invalid distance formats. Tags like "distance:invalid" will cause parsing errors — add validation and return null for invalid formats.
+BODY
+cat > "$WORKDIR/b2.md" <<'BODY'
+**[Minor]** Missing test for mixed unit types — add a test for "10m, 1km, 50m" to verify unit conversion.
+BODY
+
+# Build review.json with jq — only the SHA is an --arg; all bodies come in raw via --rawfile.
+# The two file:line findings anchor inline; strengths + assessment go in the summary body.
+# event: COMMENT (code-review-flow never self-approves).
+jq -n --arg commit "$HEAD_SHA" \
+  --rawfile body "$WORKDIR/body.md" \
+  --rawfile b1 "$WORKDIR/b1.md" \
+  --rawfile b2 "$WORKDIR/b2.md" \
+  '{commit_id: $commit, event: "COMMENT", body: $body,
     comments: [
       {path: "src/utils/tags.ts", line: 23, side: "RIGHT", body: $b1},
       {path: "src/utils/tags.test.ts", line: 45, side: "RIGHT", body: $b2}
     ]}' \
-  > "${TMPDIR:-/tmp}/review.json"
+  > "$WORKDIR/review.json"
 
-gh api repos/{owner}/{repo}/pulls/456/reviews --method POST --input "${TMPDIR:-/tmp}/review.json"
+gh api repos/{owner}/{repo}/pulls/456/reviews --method POST --input "$WORKDIR/review.json"
 ```
 
 ✓ Review posted to [PR #456](https://github.com/user/repo/pull/456) — each finding anchored to its diff line

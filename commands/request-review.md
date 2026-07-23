@@ -215,10 +215,14 @@ gh pr list --head $(git branch --show-current) --json number,url
 **If PR exists:**
 1. **Post the review using `/code-review-flow`'s inline-review protocol.** Resolve the head SHA
    with `gh pr view <pr-number> --json headRefOid -q .headRefOid`, build `review.json` with `jq`
-   in `${TMPDIR:-/tmp}`, and POST once to `pulls/<pr-number>/reviews` with each `file:line`
-   finding (Critical/Important/Minor) as an inline anchored comment and any un-anchorable finding
-   plus the overall assessment in the summary `body`. Use `event: "COMMENT"` for this posting
-   step — the approve/no-approve decision below is applied separately as its own gate.
+   in a `mktemp -d` workdir (auto-cleaned via `trap`), and POST once to
+   `pulls/<pr-number>/reviews` with each `file:line` finding (Critical/Important/Minor) as an
+   inline anchored comment and any un-anchorable finding plus the overall assessment in the
+   summary `body`. Write finding bodies to files with a single-quoted heredoc and pull them into
+   `jq` via `--rawfile` — never place finding text in a double-quoted shell word, since bash would
+   expand `$(...)`/backticks/`$var` in attacker-controlled diff text before jq runs. Use
+   `event: "COMMENT"` for this posting step — the approve/no-approve decision below is applied
+   separately as its own gate.
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash
@@ -290,9 +294,10 @@ $ gh pr list --head fix-1065 --json number
 
 Step 6: Post review to PR as a single review (inline anchored comments + summary body)
 $ HEAD_SHA=$(gh pr view 123 --json headRefOid -q .headRefOid)
-$ jq -n --arg sha "$HEAD_SHA" --arg body "Automated review — Ready to merge? Yes." \
-    '{commit_id: $sha, event: "COMMENT", body: $body, comments: []}' > "${TMPDIR:-/tmp}/review.json"
-$ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "${TMPDIR:-/tmp}/review.json"
+$ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"; trap 'rm -rf "$WORKDIR"' EXIT
+$ jq -n --arg commit "$HEAD_SHA" --arg body "Automated review — Ready to merge? Yes." \
+    '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"
+$ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "$WORKDIR/review.json"
 ✓ Review posted to PR #123
 
 Step 7: Approve PR (review passed — request-review approves on a passing review)

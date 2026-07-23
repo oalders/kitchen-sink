@@ -48,7 +48,7 @@ The recipe replaces the current "Posting Review Results" block (lines ~85-88) an
      "comments": [
        { "path": "go/web/foo.go", "line": 42, "side": "RIGHT",
          "body": "**[Important]** This nil check can move above the loop." },
-       { "path": "go/web/bar.go", "start_line": 10, "line": 14, "side": "RIGHT",
+       { "path": "go/web/bar.go", "start_line": 10, "start_side": "RIGHT", "line": 14, "side": "RIGHT",
          "body": "**[Minor]** This block can be simplified." }
      ]
    }
@@ -77,8 +77,15 @@ The recipe replaces the current "Posting Review Results" block (lines ~85-88) an
 2. **SHA discipline.** Always resolve `headRefOid` via `gh pr view`; a stale/local SHA → `422`.
 3. **Batch, don't spray.** One `reviews` POST with a `comments[]` array — not a loop of single
    `pulls/{n}/comments` POSTs.
-4. **JSON quoting.** Build `review.json` with `jq` into a temp file; don't inline a heredoc.
-5. **Replies vs. new threads.** To follow up on an existing thread, use
+4. **Never place finding text in a double-quoted shell word.** Bash expands `$(...)`, backticks,
+   and `$var` inside double quotes before jq runs, so attacker-controlled diff text quoted into a
+   finding becomes command execution. Keep finding bodies out of the shell: write them to files
+   with a single-quoted heredoc (`<<'BODY'`) and pull them in with `jq --rawfile`, or author
+   `review.json` directly with your file-writing tool.
+5. **JSON assembly.** Build `review.json` with `jq` into a `mktemp -d` workdir (auto-cleaned via
+   `trap 'rm -rf "$WORKDIR"' EXIT`), pulling finding bodies in via `--rawfile`; don't inline a
+   heredoc into jq and don't use a fixed temp path.
+6. **Replies vs. new threads.** To follow up on an existing thread, use
    `POST .../pulls/{n}/comments/{comment_id}/replies` rather than opening a new one.
 
 ### `commands/code-review-intense-flow.md` (lines ~161-165)

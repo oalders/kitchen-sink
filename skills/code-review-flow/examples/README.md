@@ -152,17 +152,29 @@ canonical protocol lives in [../SKILL.md](../SKILL.md#inline-review-protocol)):
 # Resolve the head SHA (never assume local HEAD matches the PR head)
 HEAD_SHA=$(gh pr view <pr-number> --json headRefOid -q .headRefOid)
 
-# Build review.json with jq into a temp file — each file:line finding is an inline anchored
-# comment; un-anchorable findings + the overall assessment go in the summary body.
-jq -n --arg sha "$HEAD_SHA" \
+# Private temp dir; auto-cleaned. Never a fixed /tmp path.
+WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"
+trap 'rm -rf "$WORKDIR"' EXIT
+
+# Write each finding body with a SINGLE-QUOTED heredoc (<<'BODY') so backticks / $(...) / $var
+# in attacker-controlled diff text are written literally and never executed. Finding text must
+# never transit a double-quoted shell word.
+cat > "$WORKDIR/b1.md" <<'BODY'
+**[Important]** No handling for invalid distance formats.
+BODY
+
+# Build review.json with jq — only the SHA is an --arg; bodies come in raw via --rawfile. Each
+# file:line finding is an inline anchored comment; un-anchorable findings + the overall
+# assessment go in the summary body.
+jq -n --arg commit "$HEAD_SHA" \
   --arg body "Automated review — inline findings below." \
-  --arg b1 "**[Important]** No handling for invalid distance formats." \
-  '{commit_id: $sha, event: "COMMENT", body: $body,
+  --rawfile b1 "$WORKDIR/b1.md" \
+  '{commit_id: $commit, event: "COMMENT", body: $body,
     comments: [ {path: "src/utils/tags.ts", line: 23, side: "RIGHT", body: $b1} ]}' \
-  > "${TMPDIR:-/tmp}/review.json"
+  > "$WORKDIR/review.json"
 
 # POST once so the author gets a single notification
-gh api repos/{owner}/{repo}/pulls/<pr-number>/reviews --method POST --input "${TMPDIR:-/tmp}/review.json"
+gh api repos/{owner}/{repo}/pulls/<pr-number>/reviews --method POST --input "$WORKDIR/review.json"
 ```
 
 `code-review-flow` always uses `event: "COMMENT"` and **never self-approves** — solo-developer
