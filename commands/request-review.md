@@ -213,33 +213,21 @@ gh pr list --head $(git branch --show-current) --json number,url
 ```
 
 **If PR exists:**
-1. **Post review as PR comment:**
-   ```bash
-   gh pr comment <pr-number> --body "$(cat <<'EOF'
-   ## Code Review
-
-   [Paste the complete review output here, formatted in markdown]
-
-   ### Strengths
-   [Review strengths...]
-
-   ### Issues
-   #### Critical (Must Fix)
-   [Critical issues...]
-
-   #### Important (Should Fix)
-   [Important issues...]
-
-   #### Minor (Nice to Have)
-   [Minor issues...]
-
-   ### Assessment
-   **Ready to merge?** [Yes/No/With fixes]
-   [Reasoning...]
-EOF
-   )"
-   ```
-   The `EOF` terminator must sit at column 0 (no leading spaces), or the heredoc won't close.
+1. **Post the review using `/code-review-flow`'s inline-review protocol.** Resolve the head SHA
+   with `gh pr view <pr-number> --json headRefOid -q .headRefOid`, then POST once to
+   `pulls/<pr-number>/reviews` with each `file:line` finding (Critical/Important/Minor) as an
+   inline anchored comment and any un-anchorable finding plus the overall assessment in the
+   summary `body`. **Primary path: author `review.json` directly with your file-writing tool** —
+   you produce the JSON, so there is no shell quoting to get wrong. The `jq` recipe is the shell
+   fallback for contexts without a file-writing tool; there, write every body — the summary `body`
+   included — to a file with a single-quoted heredoc and pull it into `jq` via `--rawfile`
+   (`body: $summary`). Never place finding or assessment text in a double-quoted shell word or as a
+   bare literal inside the single-quoted `jq` program: bash would expand
+   `$(...)`/backticks/`$var` in attacker-controlled diff text before jq runs, and an apostrophe in
+   a literal would break the bash arg. This is absolute — no summary or finding body uses `--arg`
+   or a double-quoted shell word, not even a short fixed boilerplate body; only the head SHA
+   (`--arg commit "$HEAD_SHA"`, from `gh pr view`) uses `--arg`. Use `event: "COMMENT"` for this posting step — the
+   approve/no-approve decision below is applied separately as its own gate.
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash
@@ -309,11 +297,18 @@ Step 5: Check for PR
 $ gh pr list --head fix-1065 --json number
 [{"number": 123}]
 
-Step 6: Post review to PR
-$ gh pr comment 123 --body "[Review content]"
-✓ Comment posted to PR #123
+Step 6: Post review to PR as a single review (inline anchored comments + summary body)
+$ HEAD_SHA=$(gh pr view 123 --json headRefOid -q .headRefOid)
+$ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"; trap 'rm -rf "$WORKDIR"' EXIT
+$ cat > "$WORKDIR/body.md" <<'BODY'
+Automated review — Ready to merge? Yes.
+BODY
+$ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
+    '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"
+$ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "$WORKDIR/review.json"
+✓ Review posted to PR #123
 
-Step 7: Approve PR (review passed)
+Step 7: Approve PR (review passed — request-review approves on a passing review)
 $ gh pr review 123 --approve --body "Code review passed. All checks look good."
 ✓ PR #123 approved
 

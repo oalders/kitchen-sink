@@ -101,7 +101,7 @@ Every review should include:
 - [ ] **Base SHA** - Starting point
 - [ ] **Head SHA** - Ending point
 - [ ] **Review Focus** (optional) - Specific concerns
-- [ ] **After review** - Check for PR and post as comment if exists
+- [ ] **After review** - Check for PR and post findings as inline review comments if exists
 
 ### Common Patterns
 
@@ -146,31 +146,51 @@ This skill integrates well with:
 gh pr list --head $(git branch --show-current) --json number,url
 ```
 
-**If PR exists:**
+**If PR exists**, post findings as inline diff-line comments batched into a single review (the
+canonical protocol lives in [../SKILL.md](../SKILL.md#inline-review-protocol)). **The preferred
+path is to author `review.json` directly with your file-writing tool** — you produce the JSON, so
+there is no shell quoting to get wrong. The `jq` recipe below is the shell fallback:
 ```bash
-# Post the complete review as a comment
-gh pr comment <pr-number> --body "$(cat <<'EOF'
-## Code Review
+# Resolve the head SHA (never assume local HEAD matches the PR head)
+HEAD_SHA=$(gh pr view <pr-number> --json headRefOid -q .headRefOid)
 
-[Complete review content in markdown]
-EOF
-)"
+# Private temp dir; auto-cleaned. Never a fixed /tmp path.
+WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"
+trap 'rm -rf "$WORKDIR"' EXIT
 
-# If review passed (Ready to merge? Yes), approve the PR
-gh pr review <pr-number> --approve --body "Code review passed. All checks look good."
+# Write EVERY body — the summary AND each finding — with a SINGLE-QUOTED heredoc (<<'BODY') so
+# backticks / $(...) / $var / apostrophes are written literally and never executed or broken.
+# No body — summary included — may be a double-quoted shell word or a bare literal in the jq program.
+cat > "$WORKDIR/summary.md" <<'BODY'
+Automated review — inline findings below. Un-anchorable findings + the overall assessment go here.
+BODY
+cat > "$WORKDIR/b1.md" <<'BODY'
+**[Important]** No handling for invalid distance formats.
+BODY
+
+# Build review.json with jq — only the SHA is an --arg; the summary and every finding body come
+# in raw via --rawfile. Each file:line finding is an inline anchored comment; un-anchorable
+# findings + the overall assessment go in the summary body.
+jq -n --arg commit "$HEAD_SHA" \
+  --rawfile summary "$WORKDIR/summary.md" \
+  --rawfile b1 "$WORKDIR/b1.md" \
+  '{commit_id: $commit, event: "COMMENT", body: $summary,
+    comments: [ {path: "src/utils/tags.ts", line: 23, side: "RIGHT", body: $b1} ]}' \
+  > "$WORKDIR/review.json"
+
+# POST once so the author gets a single notification
+gh api repos/{owner}/{repo}/pulls/<pr-number>/reviews --method POST --input "$WORKDIR/review.json"
 ```
 
-**Approval Logic:**
-- **"Ready to merge? Yes"** → Approve the PR automatically
-- **"Ready to merge? With fixes"** → Don't approve, wait for fixes
-- **"Ready to merge? No"** → Don't approve, needs significant changes
+`code-review-flow` always uses `event: "COMMENT"` and **never self-approves** — solo-developer
+workflows don't allow it. A finding that can't be tied to a changed diff line goes into the
+summary `body` instead, so nothing is dropped.
 
 **Benefits:**
-- ✅ Keeps all review discussion in one place (GitHub)
-- ✅ Other reviewers can see the AI review
+- ✅ Each finding anchors to the exact diff line instead of a wall of text
+- ✅ Other reviewers can see the AI review right in the diff
 - ✅ Review is preserved with the PR history
-- ✅ User can respond to specific points on GitHub
-- ✅ Automatic approval when review passes
+- ✅ One review POST = one notification, not N
 
 **If no PR exists:**
 - Display review in conversation

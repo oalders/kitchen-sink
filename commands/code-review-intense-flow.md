@@ -159,8 +159,11 @@ Tag each finding with the specialist that surfaced it so the user knows which le
 ### 6. Posting and Fixing
 
 Same protocol as `/code-review-flow`:
-- If a PR exists: post the aggregated summary as a PR comment via `gh pr comment`
-- Never self-approve
+- If a PR exists: post findings using `/code-review-flow`'s inline-review protocol — batch them
+  into a single `pulls/{n}/reviews` POST (`event: "COMMENT"`) with each `file:line` finding as an
+  inline anchored comment and un-anchorable findings in the summary `body`. Specialist findings
+  already carry a lens tag and mostly a `file:line`, so they anchor naturally.
+- Never self-approve (`event: "COMMENT"`)
 - Fix Critical and Important issues automatically; for diffs > 500 lines, file GitHub issues for Minor
 - Re-run the orchestrator on the new HEAD until clean
 
