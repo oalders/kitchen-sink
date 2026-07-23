@@ -57,3 +57,9 @@ after which trailing content — backticks included — is shell-interpreted. In
 directly with a file-writing tool (no shell at all — the preferred path), or emit it through a
 single-quoted heredoc (`<<'BODY'`) + `--rawfile`/`--body-file`. See `code-review-flow`'s inline-review
 protocol for the full apostrophe/backtick threat model.
+
+The same discipline applies to the **commit trailer** and **PR-body line**, not just the footer: never
+place any attribution string in a double-quoted word that would expand `$`/backticks, and — because the
+model display name is resolved at runtime — any attribution string emitted inside a *single-quoted*
+`gh`/`git` argument must stay apostrophe-free, else use `--body-file`/`--rawfile`. (Today's fixed strings
+satisfy this; the caveat guards future edits and any runtime-resolved name that could contain a `'`.)
