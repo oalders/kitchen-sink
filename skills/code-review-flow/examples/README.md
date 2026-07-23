@@ -147,7 +147,9 @@ gh pr list --head $(git branch --show-current) --json number,url
 ```
 
 **If PR exists**, post findings as inline diff-line comments batched into a single review (the
-canonical protocol lives in [../SKILL.md](../SKILL.md#inline-review-protocol)):
+canonical protocol lives in [../SKILL.md](../SKILL.md#inline-review-protocol)). **The preferred
+path is to author `review.json` directly with your file-writing tool** — you produce the JSON, so
+there is no shell quoting to get wrong. The `jq` recipe below is the shell fallback:
 ```bash
 # Resolve the head SHA (never assume local HEAD matches the PR head)
 HEAD_SHA=$(gh pr view <pr-number> --json headRefOid -q .headRefOid)
@@ -156,20 +158,23 @@ HEAD_SHA=$(gh pr view <pr-number> --json headRefOid -q .headRefOid)
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
 
-# Write each finding body with a SINGLE-QUOTED heredoc (<<'BODY') so backticks / $(...) / $var
-# in attacker-controlled diff text are written literally and never executed. Finding text must
-# never transit a double-quoted shell word.
+# Write EVERY body — the summary AND each finding — with a SINGLE-QUOTED heredoc (<<'BODY') so
+# backticks / $(...) / $var / apostrophes are written literally and never executed or broken.
+# No body — summary included — may be a double-quoted shell word or a bare literal in the jq program.
+cat > "$WORKDIR/summary.md" <<'BODY'
+Automated review — inline findings below. Un-anchorable findings + the overall assessment go here.
+BODY
 cat > "$WORKDIR/b1.md" <<'BODY'
 **[Important]** No handling for invalid distance formats.
 BODY
 
-# Build review.json with jq — only the SHA is an --arg; bodies come in raw via --rawfile. Each
-# file:line finding is an inline anchored comment; un-anchorable findings + the overall
-# assessment go in the summary body.
+# Build review.json with jq — only the SHA is an --arg; the summary and every finding body come
+# in raw via --rawfile. Each file:line finding is an inline anchored comment; un-anchorable
+# findings + the overall assessment go in the summary body.
 jq -n --arg commit "$HEAD_SHA" \
-  --arg body "Automated review — inline findings below." \
+  --rawfile summary "$WORKDIR/summary.md" \
   --rawfile b1 "$WORKDIR/b1.md" \
-  '{commit_id: $commit, event: "COMMENT", body: $body,
+  '{commit_id: $commit, event: "COMMENT", body: $summary,
     comments: [ {path: "src/utils/tags.ts", line: 23, side: "RIGHT", body: $b1} ]}' \
   > "$WORKDIR/review.json"
 

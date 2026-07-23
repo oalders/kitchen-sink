@@ -107,7 +107,10 @@ gh pr list --head fix-1234 --json number,url
 
 **Post review to PR as inline anchored comments, batched into one review.** Each finding carries
 a `file:line`, so it becomes an inline comment on that exact diff line (see
-[../SKILL.md](../SKILL.md#inline-review-protocol)):
+[../SKILL.md](../SKILL.md#inline-review-protocol)). **The preferred path is to author
+`review.json` directly with your file-writing tool** — you produce the JSON, so there is no shell
+quoting to get wrong. The `jq` recipe below is the shell fallback (it already sources every body,
+the summary included, via `--rawfile` — never a literal):
 
 ```bash
 # Resolve the head SHA (don't assume local HEAD matches the PR head)

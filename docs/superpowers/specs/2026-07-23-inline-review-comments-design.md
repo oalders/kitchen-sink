@@ -77,14 +77,18 @@ The recipe replaces the current "Posting Review Results" block (lines ~85-88) an
 2. **SHA discipline.** Always resolve `headRefOid` via `gh pr view`; a stale/local SHA → `422`.
 3. **Batch, don't spray.** One `reviews` POST with a `comments[]` array — not a loop of single
    `pulls/{n}/comments` POSTs.
-4. **Never place finding text in a double-quoted shell word.** Bash expands `$(...)`, backticks,
-   and `$var` inside double quotes before jq runs, so attacker-controlled diff text quoted into a
-   finding becomes command execution. Keep finding bodies out of the shell: write them to files
-   with a single-quoted heredoc (`<<'BODY'`) and pull them in with `jq --rawfile`, or author
-   `review.json` directly with your file-writing tool.
-5. **JSON assembly.** Build `review.json` with `jq` into a `mktemp -d` workdir (auto-cleaned via
-   `trap 'rm -rf "$WORKDIR"' EXIT`), pulling finding bodies in via `--rawfile`; don't inline a
-   heredoc into jq and don't use a fixed temp path.
+4. **Never place finding text in a double-quoted shell word — and never as a bare literal inside
+   the `jq` program.** This rule covers the summary `body` field EXACTLY as much as each
+   `comments[].body`. Bash expands `$(...)`, backticks, and `$var` inside double quotes before jq
+   runs, so attacker-controlled diff text quoted into a finding becomes command execution; and an
+   apostrophe in a single-quoted-jq literal (e.g. an assessment saying "doesn't") breaks the bash
+   arg. Keep every body — summary included — out of the shell: author `review.json` directly with
+   your file-writing tool (primary), or in the shell fallback write each body to a file with a
+   single-quoted heredoc (`<<'BODY'`) and pull it in with `jq --rawfile` (`body: $summary`).
+5. **JSON assembly.** Prefer authoring `review.json` directly with your file-writing tool. In the
+   shell fallback, build it with `jq` into a `mktemp -d` workdir (auto-cleaned via
+   `trap 'rm -rf "$WORKDIR"' EXIT`), pulling the summary AND every finding body in via `--rawfile`
+   (never a literal for either); don't inline a heredoc into jq and don't use a fixed temp path.
 6. **Replies vs. new threads.** To follow up on an existing thread, use
    `POST .../pulls/{n}/comments/{comment_id}/replies` rather than opening a new one.
 

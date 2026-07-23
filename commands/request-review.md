@@ -214,15 +214,18 @@ gh pr list --head $(git branch --show-current) --json number,url
 
 **If PR exists:**
 1. **Post the review using `/code-review-flow`'s inline-review protocol.** Resolve the head SHA
-   with `gh pr view <pr-number> --json headRefOid -q .headRefOid`, build `review.json` with `jq`
-   in a `mktemp -d` workdir (auto-cleaned via `trap`), and POST once to
+   with `gh pr view <pr-number> --json headRefOid -q .headRefOid`, then POST once to
    `pulls/<pr-number>/reviews` with each `file:line` finding (Critical/Important/Minor) as an
    inline anchored comment and any un-anchorable finding plus the overall assessment in the
-   summary `body`. Write finding bodies to files with a single-quoted heredoc and pull them into
-   `jq` via `--rawfile` — never place finding text in a double-quoted shell word, since bash would
-   expand `$(...)`/backticks/`$var` in attacker-controlled diff text before jq runs. Use
-   `event: "COMMENT"` for this posting step — the approve/no-approve decision below is applied
-   separately as its own gate.
+   summary `body`. **Primary path: author `review.json` directly with your file-writing tool** —
+   you produce the JSON, so there is no shell quoting to get wrong. The `jq` recipe is the shell
+   fallback for contexts without a file-writing tool; there, write every body — the summary `body`
+   included — to a file with a single-quoted heredoc and pull it into `jq` via `--rawfile`
+   (`body: $summary`). Never place finding or assessment text in a double-quoted shell word or as a
+   bare literal inside the single-quoted `jq` program: bash would expand
+   `$(...)`/backticks/`$var` in attacker-controlled diff text before jq runs, and an apostrophe in
+   a literal would break the bash arg. Use `event: "COMMENT"` for this posting step — the
+   approve/no-approve decision below is applied separately as its own gate.
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash
