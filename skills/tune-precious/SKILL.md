@@ -600,6 +600,9 @@ Suggested commit subjects:
 | 5 | `ci: add precious lint job` |
 | 6 | `hooks: add scripts/pre-commit for precious lint` |
 
+Every commit ends with a blank line then the `Co-authored-by` trailer from `docs/attribution.md`
+(display name = the model running at runtime).
+
 ## Worked Example
 
 Repo: a `@Author::OALDERS`-shaped Perl distribution mid-migration.
@@ -647,7 +650,13 @@ select = .stopwords
 
 Six commits land:
 
-1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config). Because this is a dzil repo and the `[@Author::OALDERS]` bundle owns `[Git::GatherDir]`, the same commit also keeps `precious.toml` out of the dist by appending `filename = precious.toml` to a `[PruneFiles]` block — `exclude_filename` isn't reachable from `dist.ini` when the bundle owns the gather step (see `working-with-dist-zilla` §7).
+1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config). Because this is a dzil repo and the `[@Author::OALDERS]` bundle owns `[Git::GatherDir]`, the same commit also keeps `precious.toml` out of the dist by appending `filename = precious.toml` to a `[PruneFiles]` block — `exclude_filename` isn't reachable from `dist.ini` when the bundle owns the gather step (see `working-with-dist-zilla` §7). Its commit message ends with a blank line then the trailer from `docs/attribution.md`:
+
+   ```
+   precious: add canonical config
+
+   Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+   ```
 2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped, and kept out of the dist the same way — `filename = .perltidyrc` appended to the same `[PruneFiles]` block.
 3. `tidyall: delete config files and ignore entries` — `.tidyallrc` removed; `.gitignore` no longer mentions `.tidyall.d/`.
 4. `dist.ini: drop Code::TidyAll plugin and prereqs` — bundle line + `[RemovePrereqs]` + `[Prereqs / DevelopRequires]`:

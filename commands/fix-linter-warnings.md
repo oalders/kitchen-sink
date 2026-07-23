@@ -133,8 +133,13 @@ git commit -m "Fix style, constant, line-length issues (25 total)
 - Extracted 8 string constants
 - Broke 12 long lines
 
-All tests pass."
+All tests pass.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
+
+Every commit ends with a blank line then the `Co-authored-by` trailer from `docs/attribution.md`
+(display name = the model running at runtime).
 
 ### 5. Commit Message Template
 
@@ -152,6 +157,8 @@ Changes:
 - Specific change 2
 
 All tests pass.
+
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
 ```
 
 ## Decision Framework: Fix vs Suppress
