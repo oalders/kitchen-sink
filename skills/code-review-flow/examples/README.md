@@ -101,7 +101,7 @@ Every review should include:
 - [ ] **Base SHA** - Starting point
 - [ ] **Head SHA** - Ending point
 - [ ] **Review Focus** (optional) - Specific concerns
-- [ ] **After review** - Check for PR and post as comment if exists
+- [ ] **After review** - Check for PR and post findings as inline review comments if exists
 
 ### Common Patterns
 
@@ -146,31 +146,34 @@ This skill integrates well with:
 gh pr list --head $(git branch --show-current) --json number,url
 ```
 
-**If PR exists:**
+**If PR exists**, post findings as inline diff-line comments batched into a single review (the
+canonical protocol lives in [../SKILL.md](../SKILL.md#inline-review-protocol)):
 ```bash
-# Post the complete review as a comment
-gh pr comment <pr-number> --body "$(cat <<'EOF'
-## Code Review
+# Resolve the head SHA (never assume local HEAD matches the PR head)
+HEAD_SHA=$(gh pr view <pr-number> --json headRefOid -q .headRefOid)
 
-[Complete review content in markdown]
-EOF
-)"
+# Build review.json with jq into a temp file — each file:line finding is an inline anchored
+# comment; un-anchorable findings + the overall assessment go in the summary body.
+jq -n --arg sha "$HEAD_SHA" \
+  --arg body "Automated review — inline findings below." \
+  --arg b1 "**[Important]** No handling for invalid distance formats." \
+  '{commit_id: $sha, event: "COMMENT", body: $body,
+    comments: [ {path: "src/utils/tags.ts", line: 23, side: "RIGHT", body: $b1} ]}' \
+  > "${TMPDIR:-/tmp}/review.json"
 
-# If review passed (Ready to merge? Yes), approve the PR
-gh pr review <pr-number> --approve --body "Code review passed. All checks look good."
+# POST once so the author gets a single notification
+gh api repos/{owner}/{repo}/pulls/<pr-number>/reviews --method POST --input "${TMPDIR:-/tmp}/review.json"
 ```
 
-**Approval Logic:**
-- **"Ready to merge? Yes"** → Approve the PR automatically
-- **"Ready to merge? With fixes"** → Don't approve, wait for fixes
-- **"Ready to merge? No"** → Don't approve, needs significant changes
+`code-review-flow` always uses `event: "COMMENT"` and **never self-approves** — solo-developer
+workflows don't allow it. A finding that can't be tied to a changed diff line goes into the
+summary `body` instead, so nothing is dropped.
 
 **Benefits:**
-- ✅ Keeps all review discussion in one place (GitHub)
-- ✅ Other reviewers can see the AI review
+- ✅ Each finding anchors to the exact diff line instead of a wall of text
+- ✅ Other reviewers can see the AI review right in the diff
 - ✅ Review is preserved with the PR history
-- ✅ User can respond to specific points on GitHub
-- ✅ Automatic approval when review passes
+- ✅ One review POST = one notification, not N
 
 **If no PR exists:**
 - Display review in conversation

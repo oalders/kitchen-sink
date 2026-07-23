@@ -213,33 +213,12 @@ gh pr list --head $(git branch --show-current) --json number,url
 ```
 
 **If PR exists:**
-1. **Post review as PR comment:**
-   ```bash
-   gh pr comment <pr-number> --body "$(cat <<'EOF'
-   ## Code Review
-
-   [Paste the complete review output here, formatted in markdown]
-
-   ### Strengths
-   [Review strengths...]
-
-   ### Issues
-   #### Critical (Must Fix)
-   [Critical issues...]
-
-   #### Important (Should Fix)
-   [Important issues...]
-
-   #### Minor (Nice to Have)
-   [Minor issues...]
-
-   ### Assessment
-   **Ready to merge?** [Yes/No/With fixes]
-   [Reasoning...]
-EOF
-   )"
-   ```
-   The `EOF` terminator must sit at column 0 (no leading spaces), or the heredoc won't close.
+1. **Post the review using `/code-review-flow`'s inline-review protocol.** Resolve the head SHA
+   with `gh pr view <pr-number> --json headRefOid -q .headRefOid`, build `review.json` with `jq`
+   in `${TMPDIR:-/tmp}`, and POST once to `pulls/<pr-number>/reviews` with each `file:line`
+   finding (Critical/Important/Minor) as an inline anchored comment and any un-anchorable finding
+   plus the overall assessment in the summary `body`. Use `event: "COMMENT"` for this posting
+   step — the approve/no-approve decision below is applied separately as its own gate.
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash
@@ -309,11 +288,14 @@ Step 5: Check for PR
 $ gh pr list --head fix-1065 --json number
 [{"number": 123}]
 
-Step 6: Post review to PR
-$ gh pr comment 123 --body "[Review content]"
-✓ Comment posted to PR #123
+Step 6: Post review to PR as a single review (inline anchored comments + summary body)
+$ HEAD_SHA=$(gh pr view 123 --json headRefOid -q .headRefOid)
+$ jq -n --arg sha "$HEAD_SHA" --arg body "Automated review — Ready to merge? Yes." \
+    '{commit_id: $sha, event: "COMMENT", body: $body, comments: []}' > "${TMPDIR:-/tmp}/review.json"
+$ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "${TMPDIR:-/tmp}/review.json"
+✓ Review posted to PR #123
 
-Step 7: Approve PR (review passed)
+Step 7: Approve PR (review passed — request-review approves on a passing review)
 $ gh pr review 123 --approve --body "Code review passed. All checks look good."
 ✓ PR #123 approved
 

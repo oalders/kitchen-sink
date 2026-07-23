@@ -105,50 +105,31 @@ gh pr list --head fix-1234 --json number,url
 [{"number": 456, "url": "https://github.com/user/repo/pull/456"}]
 ```
 
-**Post review to PR:**
-```bash
-gh pr comment 456 --body "$(cat <<'EOF'
-## Code Review
-
-### Strengths
-- Clean parseDistanceTag() implementation
-- Good test coverage for edge cases
-- Handles case-insensitive matching well
-
-### Issues
-
-#### Important (Should Fix)
-- **File: src/utils/tags.ts:23** - No handling for invalid distance formats
-  - **Why:** Tags like "distance:invalid" will cause parsing errors
-  - **Fix:** Add validation and return null for invalid formats
-
-#### Minor (Nice to Have)
-- **File: src/utils/tags.test.ts:45** - Missing test for mixed unit types
-  - **Suggestion:** Add test for "10m, 1km, 50m" to verify unit conversion
-
-### Assessment
-**Ready to merge?** With fixes
-
-**Reasoning:** Implementation is solid but needs validation for invalid input. Add the validation fix and this is good to merge.
-EOF
-)"
-```
-
-✓ Review posted to [PR #456](https://github.com/user/repo/pull/456)
-
-**Review requires fixes - don't approve yet.**
-
-User should address the important issue, then request another review or merge after fixing.
-
----
-
-## Alternative: If Review Passes
-
-If the assessment was "Ready to merge? Yes":
+**Post review to PR as inline anchored comments, batched into one review.** Each finding carries
+a `file:line`, so it becomes an inline comment on that exact diff line (see
+[../SKILL.md](../SKILL.md#inline-review-protocol)):
 
 ```bash
-# Approve the PR
-gh pr review 456 --approve --body "Code review passed. All checks look good."
+# Resolve the head SHA (don't assume local HEAD matches the PR head)
+HEAD_SHA=$(gh pr view 456 --json headRefOid -q .headRefOid)
+
+# Build review.json with jq — the two file:line findings anchor inline; strengths + assessment
+# go in the summary body. event: COMMENT (code-review-flow never self-approves).
+jq -n --arg sha "$HEAD_SHA" \
+  --arg body $'Automated review — inline findings below.\n\n**Strengths:** clean parseDistanceTag(), good edge-case coverage, case-insensitive matching.\n\n**Ready to merge?** With fixes — address the inline validation finding first.' \
+  --arg b1 $'**[Important]** No handling for invalid distance formats. Tags like "distance:invalid" will cause parsing errors — add validation and return null for invalid formats.' \
+  --arg b2 '**[Minor]** Missing test for mixed unit types — add a test for "10m, 1km, 50m" to verify unit conversion.' \
+  '{commit_id: $sha, event: "COMMENT", body: $body,
+    comments: [
+      {path: "src/utils/tags.ts", line: 23, side: "RIGHT", body: $b1},
+      {path: "src/utils/tags.test.ts", line: 45, side: "RIGHT", body: $b2}
+    ]}' \
+  > "${TMPDIR:-/tmp}/review.json"
+
+gh api repos/{owner}/{repo}/pulls/456/reviews --method POST --input "${TMPDIR:-/tmp}/review.json"
 ```
 
-✓ PR #456 approved and ready to merge
+✓ Review posted to [PR #456](https://github.com/user/repo/pull/456) — each finding anchored to its diff line
+
+**Review requires fixes.** `code-review-flow` uses `event: "COMMENT"` and never self-approves;
+the user addresses the inline findings, then requests another review or merges after fixing.
