@@ -49,8 +49,8 @@ Every review body a skill posts to a PR ends with this footer (version = running
 🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
 ```
 
-**Shell safety:** never build the review body — this footer *or* the findings alongside it — with a
-double-quoted shell word or a bare literal inside a single-quoted `jq` program. The findings are derived
+**Shell safety:** never build the review body — the diff-derived findings *or* the attribution footer
+alongside them — with a double-quoted shell word or a bare literal inside a single-quoted `jq` program. The findings are derived
 from diff text, so they can carry backticks or `$(...)`/`$var` that a double-quoted word command-
 substitutes; in a single-quoted `jq` literal an apostrophe anywhere in the body (e.g. an assessment
 saying "doesn't") breaks the quoting, after which trailing content — backticks included — is
