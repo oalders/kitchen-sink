@@ -13,11 +13,11 @@ output — this doc's model strings are *examples*, and hardcoding one rots the 
 changes. If the running model's identity is genuinely unavailable, fall back to plain `Claude Code`
 (no version) rather than guessing a version.
 
-Use the **display name** in commit trailers and the **exact id** in review footers:
+Use the **display name** in commit trailers and the **version** in review footers:
 
-| Example running model | Display name (trailers) | Exact id (footers) |
-|-----------------------|-------------------------|--------------------|
-| Opus 4.8              | `Claude Opus 4.8`       | `claude-opus-4-8`  |
+| Example running model | Display name (trailers) | Version (footers) |
+|-----------------------|-------------------------|-------------------|
+| Opus 4.8              | `Claude Opus 4.8`       | `Opus 4.8`        |
 
 (Illustrative row only — always substitute the model actually running.)
 
@@ -41,22 +41,23 @@ Every PR body a skill creates ends with:
 
 ## Review footer
 
-Every review body a skill posts to a PR ends with this footer (exact id = running model). It goes on the
+Every review body a skill posts to a PR ends with this footer (version = running model). It goes on the
 **summary/review body**, not on each individual inline finding:
 
 ```
 ---
-🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
+🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
 ```
 
-**Shell safety:** never build the review body — this footer *or* the findings alongside it — with a
-double-quoted shell word or a bare literal inside a single-quoted `jq` program. In a double-quoted word
-bash command-substitutes the footer's backticks (and any `$(...)`/`$var`); in a single-quoted `jq`
-literal an apostrophe anywhere in the body (e.g. an assessment saying "doesn't") breaks the quoting,
-after which trailing content — backticks included — is shell-interpreted. Instead, author the JSON body
-directly with a file-writing tool (no shell at all — the preferred path), or emit it through a
-single-quoted heredoc (`<<'BODY'`) + `--rawfile`/`--body-file`. See `code-review-flow`'s inline-review
-protocol for the full apostrophe/backtick threat model.
+**Shell safety:** never build the review body — the diff-derived findings *or* the attribution footer
+alongside them — with a double-quoted shell word or a bare literal inside a single-quoted `jq` program.
+The findings are derived from diff text, so they can carry backticks or `$(...)`/`$var` that a
+double-quoted word command-
+substitutes; in a single-quoted `jq` literal an apostrophe anywhere in the body (e.g. an assessment
+saying "doesn't") breaks the quoting, after which trailing content — backticks included — is
+shell-interpreted. Instead, author the JSON body directly with a file-writing tool (no shell at all —
+the preferred path), or emit it through a single-quoted heredoc (`<<'BODY'`) + `--rawfile`/`--body-file`.
+See `code-review-flow`'s inline-review protocol for the full apostrophe/backtick threat model.
 
 The same discipline applies to the **commit trailer** and **PR-body line**, not just the footer: never
 place any attribution string in a double-quoted word that would expand `$`/backticks, and — because the

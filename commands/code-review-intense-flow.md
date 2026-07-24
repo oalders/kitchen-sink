@@ -163,11 +163,11 @@ Same protocol as `/code-review-flow`:
   into a single `pulls/{n}/reviews` POST (`event: "COMMENT"`) with each `file:line` finding as an
   inline anchored comment and un-anchorable findings in the summary `body`. Specialist findings
   already carry a lens tag and mostly a `file:line`, so they anchor naturally. Per that protocol
-  and `docs/attribution.md`, the summary `body` ends with the attribution footer (exact model id,
+  and `docs/attribution.md`, the summary `body` ends with the attribution footer (model version,
   resolved at runtime), e.g.:
   ```
   ---
-  🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
+  🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
   ```
 - Never self-approve (`event: "COMMENT"`)
 - Fix Critical and Important issues automatically; for diffs > 500 lines, file GitHub issues for Minor
