@@ -305,7 +305,7 @@ $ cat > "$WORKDIR/body.md" <<'BODY'
 Automated review — Ready to merge? Yes.
 
 ---
-🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
+🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
 BODY
 $ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
     '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"

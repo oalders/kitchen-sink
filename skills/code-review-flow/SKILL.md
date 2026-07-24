@@ -113,7 +113,7 @@ the attribution footer from `docs/attribution.md`, using the exact model id reso
    {
      "commit_id": "<head-sha>",
      "event": "COMMENT",
-     "body": "Automated review — inline findings below. <un-anchorable findings / overall assessment here>\n\n---\n🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`",
+     "body": "Automated review — inline findings below. <un-anchorable findings / overall assessment here>\n\n---\n🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8",
      "comments": [
        { "path": "go/web/foo.go", "line": 42, "side": "RIGHT",
          "body": "**[Important]** This nil check can move above the loop." },
@@ -151,7 +151,7 @@ the attribution footer from `docs/attribution.md`, using the exact model id reso
    Automated review — inline findings below. <un-anchorable findings / overall assessment here>
 
    ---
-   🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
+   🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
    BODY
    cat > "$WORKDIR/b1.md" <<'BODY'
    **[Important]** This nil check can move above the loop.
@@ -286,7 +286,7 @@ $ cat > "$WORKDIR/body.md" <<'BODY'
 Automated review — passes clean, no remaining issues.
 
 ---
-🤖 Review by [Claude Code](https://claude.com/claude-code) · model: `claude-opus-4-8`
+🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
 BODY
 $ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
     '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"
