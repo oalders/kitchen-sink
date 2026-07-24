@@ -163,7 +163,7 @@ Same protocol as `/code-review-flow`:
   into a single `pulls/{n}/reviews` POST (`event: "COMMENT"`) with each `file:line` finding as an
   inline anchored comment and un-anchorable findings in the summary `body`. Specialist findings
   already carry a lens tag and mostly a `file:line`, so they anchor naturally. Per that protocol
-  and `docs/attribution.md`, the summary `body` ends with the attribution footer (exact model id,
+  and `docs/attribution.md`, the summary `body` ends with the attribution footer (model version,
   resolved at runtime), e.g.:
   ```
   ---

@@ -94,7 +94,7 @@ it. `gh pr comment` / `gh pr review --body` can only post PR-level text — line
 are reachable only through the REST API via `gh api`.
 
 **Attribution:** the review **summary `body`** (not each individual inline finding) must end with
-the attribution footer from `docs/attribution.md`, using the exact model id resolved at runtime.
+the attribution footer from `docs/attribution.md`, using the model version resolved at runtime.
 
 ### Inline review protocol
 
