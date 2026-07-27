@@ -25,7 +25,7 @@ Steps:
    ```bash
    git push -u origin HEAD
    ```
-5. Create the draft PR. Write your own concise title and body and **single-quote both** so nothing in them is shell-interpreted — do not interpolate the raw issue title/body, which could contain `$(...)` or backticks. Keep your title/body free of literal single quotes (a `'` would close the quoting); use `--body-file <path>` if the body needs one. The body ends with the `🤖 Generated with [Claude Code](https://claude.com/claude-code)` line per `docs/attribution.md`.
+5. Create the draft PR. Write your own concise title and body and **single-quote both** so nothing in them is shell-interpreted — do not interpolate the raw issue title/body, which could contain `$(...)` or backticks. Keep your title/body free of literal single quotes (a `'` would close the quoting); use `--body-file <path>` if the body needs one. The body ends with the `🤖 Generated with [Claude Code](https://claude.com/claude-code) · <version>` line per `docs/attribution.md` (version = running model, resolved at runtime).
    ```bash
    gh pr create --draft \
                 --title 'Fix: <your own short summary of the fix>' \
@@ -37,6 +37,6 @@ Steps:
    ## Testing
    - [How changes were verified]
 
-   🤖 Generated with [Claude Code](https://claude.com/claude-code)'
+   🤖 Generated with [Claude Code](https://claude.com/claude-code) · Opus 4.8'
    ```
 6. Report the PR URL to the user

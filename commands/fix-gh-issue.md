@@ -200,10 +200,10 @@ digraph fix_issue {
    ## Testing
    - [How verified]
 
-   🤖 Generated with [Claude Code](https://claude.com/claude-code)'
+   🤖 Generated with [Claude Code](https://claude.com/claude-code) · Opus 4.8'
    ```
 
-   - The PR body ends with the `🤖 Generated with [Claude Code](https://claude.com/claude-code)` line per `docs/attribution.md`.
+   - The PR body ends with the `🤖 Generated with [Claude Code](https://claude.com/claude-code) · <version>` line per `docs/attribution.md` (version = running model, resolved at runtime — `Opus 4.8` above is illustrative).
    - Single quotes (not double) disable `$(...)`, backticks, and `$var`, so the title and body pass through literally. Do not use a double-quoted string here.
    - The title and body must be *your own* words — do not paste issue or comment text into them verbatim. Keep them free of literal single-quote characters (a `'` would close the quoting); rephrase if needed, or write the body to a file and pass `--body-file <path>`.
 
