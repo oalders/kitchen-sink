@@ -1,244 +1,392 @@
 ---
-description: GEO review for LLM-citation content structure, llms.txt, schema markup, and AI crawler policy
+description: GEO review for LLM-citation visibility — runs in diff mode (per-PR extraction checks) or site mode (cross-page entity consistency, claim contradictions, schema graph)
 ---
 
 # GEO Review
 
 ## Overview
 
-GEO (Generative Engine Optimization) review for changes affecting how LLMs and AI answer engines (ChatGPT, Claude, Perplexity, Google AI Overviews) discover, extract, and cite content. Spawns `general-purpose` subagent.
+GEO (Generative Engine Optimization) review for how LLMs and AI answer engines (ChatGPT, Claude, Perplexity, Google AI Overviews) discover, extract, and cite content.
 
-GEO complements SEO: SEO optimizes for ranked link results, GEO optimizes for being cited inside generated answers. Run `/seo-review` for traditional search visibility and `/geo-review` for LLM/answer-engine visibility.
+GEO operates on two distinct mechanisms, and they fail differently:
+
+| Layer | Question it answers | Unit of analysis | Fails via |
+|---|---|---|---|
+| **Extraction** | Can a model cleanly lift and cite *this page*? | The page / the diff | Buried answers, unstructured claims, missing schema |
+| **Entity** | Would a model recommend *this site* unprompted? | The whole site, over time | Contradictory claims across pages, weak or ambiguous brand identity |
+
+Most GEO tooling only checks extraction, because extraction is visible in a changeset. Entity defects are invisible to any diff — they emerge when one page grows and another doesn't. **This command therefore has two modes.** Run diff mode at PR time and site mode on a schedule.
+
+Run `/seo-review` alongside this for ranked-link visibility.
 
 ## When to Use
 
-Use when:
+**Diff mode** — use when:
 - Adding or modifying content pages, blog posts, docs, or marketing copy
-- Adding or updating `llms.txt` or `llms-full.txt`
-- Changing structured data (JSON-LD, especially `FAQPage`, `HowTo`, `Article`, `Organization`)
+- Changing structured data (JSON-LD)
 - Updating author bios, About pages, or other E-E-A-T surfaces
 - Modifying `robots.txt` rules for AI crawlers
-- Adding factual claims, statistics, or original research to a page
-- Restructuring content into Q&A, lists, or tables LLMs can extract
+- Adding factual claims, statistics, or original research
+- Restructuring content into Q&A, lists, or tables
+
+**Site mode** — use when:
+- On a schedule (monthly/quarterly), regardless of what changed
+- Before a rebrand, repositioning, or major scope expansion
+- After the product has outgrown its original description
+- Whenever the site's scale, geography, or offering has changed materially since the About page was written
+- An external GEO audit returned a finding you can't reproduce from a single page
 
 Don't use when:
 - Pure backend logic with no user-facing content
 - Internal admin pages explicitly excluded from LLM crawling
 
-## Steps
+---
 
-### 1. Get Git SHAs
+## Step 1: Determine Mode
+
+If the user specified a mode, use it. Otherwise infer: a git range or PR context in conversation implies diff mode; a bare URL or "audit the site" implies site mode. **If it's ambiguous, ask** — the two modes produce very different reports.
+
+If the user is running diff mode and the site hasn't had a site-mode pass in the last quarter, say so once at the end. Don't block on it.
+
+---
+
+## Step 2a: Diff Mode — Capture the Change
 
 Check conversation context first. If not available:
+
 ```bash
 git rev-parse origin/main
 git rev-parse HEAD
+git diff --stat BASE_SHA..HEAD_SHA
 ```
 
-### 2. Invoke GEO-Focused Code Reviewer
+---
+
+## Step 2b: Site Mode — Capture the Corpus
+
+Site mode needs *rendered output*, not source. Several high-impact defects (geo-personalized content, relative `og:image`, template syntax leaking as literal text, per-crawler divergence) exist only in what a bot actually receives.
+
+**Fetch a fixed key-page set.** At minimum: homepage, About, Contact, one representative content page, and any pricing/product page.
+
+```bash
+SITE="https://example.com"
+mkdir -p "${TMPDIR:-/tmp}/geo-corpus"
+CORPUS="${TMPDIR:-/tmp}/geo-corpus"
+
+for path in "/" "/about" "/contact" "/pricing"; do
+  slug=$(echo "$path" | tr '/' '_')
+  curl -sSL "$SITE$path" -o "$CORPUS/default$slug.html"
+done
+```
+
+**Fetch again as AI crawlers and diff.** Divergence between these is a finding, not a curiosity — it means each engine ingests a different version of the entity.
+
+```bash
+for ua in "GPTBot/1.2 (+https://openai.com/gptbot)" \
+          "ClaudeBot/1.0 (+claudebot@anthropic.com)" \
+          "PerplexityBot/1.0 (+https://perplexity.ai/perplexitybot)"; do
+  curl -sSL -A "$ua" "$SITE/" -o "$CORPUS/$(echo "$ua" | cut -d/ -f1).html"
+done
+
+diff "$CORPUS/default_.html" "$CORPUS/GPTBot.html" || true
+```
+
+**Extract the structured data separately**, since most HTML-to-text extractors silently drop `<script>` blocks:
+
+```bash
+for f in "$CORPUS"/*.html; do
+  echo "=== $f"
+  python3 -c "
+import sys, re, json
+html = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+for m in re.findall(r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', html, re.S|re.I):
+    try:
+        print(json.dumps(json.loads(m), indent=2)[:2000])
+    except json.JSONDecodeError as e:
+        print(f'INVALID JSON-LD: {e}')
+" "$f"
+done
+```
+
+**Flag if the site is geo-personalized.** If the homepage varies by requesting IP, crawler-facing content is non-deterministic across crawls. Note it explicitly — it undermines every other entity signal on the page.
+
+---
+
+## Step 3: Invoke the Reviewer
 
 ```
 Task(general-purpose):
-  description: GEO review of [feature]
+  description: GEO review of [feature or site]
   model: "sonnet"
 
   prompt:
-    # GEO Code Review Agent
+    # GEO Review Agent
 
-    You are a GEO (Generative Engine Optimization) expert reviewing code for how well LLMs and AI answer engines (ChatGPT, Claude, Perplexity, Google AI Overviews, etc.) can discover, extract, and cite this content.
+    You are reviewing how well LLMs and answer engines can discover, extract,
+    and cite this content. GEO is distinct from SEO: SEO optimizes for ranked
+    link results, GEO optimizes for being cited inside a generated answer.
 
-    GEO is distinct from SEO. SEO optimizes for ranked link results; GEO optimizes for being cited inside a generated answer. Do not duplicate the SEO checklist — focus on what LLMs specifically reward.
-
-    **Your task:**
-    1. Review code changes affecting LLM/answer-engine visibility
-    2. Apply systematic GEO checklist
-    3. Verify content is structured for LLM extraction and citation
-    4. Check llms.txt and schema markup useful for answer engines
-    5. Surface AI crawler policy as a deliberate decision
+    ## Mode
+    [diff | site]
 
     ## What to Review
+    [Brief summary]
 
-    [Brief summary - e.g., "New product comparison page with FAQ section"]
+    ## Inputs
+    [Git range for diff mode, or geo-corpus paths + extracted JSON-LD for site mode]
 
-    ## Requirements/Plan
-
-    [Issue details or requirements]
-
-    ## Git Range to Review
-
-    ```bash
-    git diff --stat BASE_SHA..HEAD_SHA
-    git diff BASE_SHA..HEAD_SHA
-    ```
-
-    ## GEO Review Checklist
-
-    **CRITICAL: Check EVERY category systematically. The field is shifting; flag anything ambiguous rather than guessing.**
-
-    ### llms.txt / llms-full.txt
-
-    - `llms.txt` present at site root?
-    - Format follows the proposed spec (H1 site name, blockquote summary, sectioned link lists)?
-    - Important pages (docs, key marketing, pricing) are listed?
-    - `llms-full.txt` provided for documentation-heavy sites?
-    - Links resolve and point to clean markdown or text where possible?
-    - Stale entries removed when pages move or 404?
-
-    ### Content Structure for LLM Extraction
-
-    **Direct answers up front:**
-    - Does the first paragraph (or first ~50 words) directly answer the page's implied question?
-    - Is the "TL;DR" / summary extractable without scrolling past hero imagery or marketing fluff?
-
-    **Atomic factual claims:**
-    - Are claims stated as discrete, self-contained sentences (vs. buried in long paragraphs)?
-    - Can each claim be quoted by an LLM without losing context?
-
-    **Q&A patterns:**
-    - Section headings phrased as questions a user would actually ask an LLM?
-    - Answers placed immediately under the question heading?
-
-    **Lists, tables, and comparisons:**
-    - Comparison content uses real tables, not prose?
-    - Steps use ordered lists?
-    - Specs/properties use definition lists or tables?
-
-    **Definitions and glossary terms:**
-    - Key terms defined inline on first use?
-    - Glossary or definition page exists for domain-specific terminology?
-
-    ### Citation-Worthiness
-
-    **Sources and evidence:**
-    - Factual claims, statistics, and numbers cite a source (with link or attribution)?
-    - Original research, surveys, or proprietary data clearly labeled as such (LLMs preferentially cite original sources)?
-    - Quotes attributed to named people with their role?
-
-    **Author and freshness signals:**
-    - Visible author byline with link to author bio?
-    - Visible publication date AND last-updated date?
-    - "Reviewed by" / "Fact-checked by" surfaces where appropriate?
-
-    ### Schema.org for LLMs
-
-    **High-leverage schema types:**
-    - `FAQPage` schema on pages with Q&A content?
-    - `HowTo` schema on step-by-step guides?
-    - `Article` (or `BlogPosting`/`NewsArticle`) with `author`, `datePublished`, `dateModified`, `headline`?
-    - `Organization` schema with `name`, `url`, `logo`, and `sameAs` linking to Wikipedia/Wikidata/social profiles for entity grounding?
-    - `Person` schema on author pages with `sameAs`?
-    - `BreadcrumbList` for hierarchical context?
-
-    **Schema quality:**
-    - JSON-LD validates as JSON?
-    - Schema content matches visible page content (no cloaking)?
-    - No conflicting schema types on the same page?
-
-    ### Entity and Brand Signals (E-E-A-T)
-
-    - Brand/product name used consistently (same spelling, capitalization, spacing) across pages?
-    - About page exists and clearly identifies the organization?
-    - Author bios establish Experience / Expertise (credentials, prior work, links)?
-    - External corroboration linked where it exists (Wikipedia, Wikidata, industry registries)?
-    - Contact and ownership info easy to find (LLMs use these as trust signals)?
-
-    ### AI Crawler Policy (robots.txt)
-
-    **Surface the policy as a deliberate decision — do not assume the user wants to allow or block. Flag misconfigurations and missing rules.**
-
-    Bots to check for (current as of late 2025 / early 2026 — verify before recommending):
-
-    | Bot | Operator | Purpose |
-    |---|---|---|
-    | `GPTBot` | OpenAI | Training |
-    | `OAI-SearchBot` | OpenAI | SearchGPT indexing |
-    | `ChatGPT-User` | OpenAI | On-demand fetches from ChatGPT |
-    | `ClaudeBot` | Anthropic | Training |
-    | `anthropic-ai` | Anthropic | Legacy / general |
-    | `Claude-Web` | Anthropic | On-demand fetches |
-    | `PerplexityBot` | Perplexity | Indexing |
-    | `Perplexity-User` | Perplexity | On-demand fetches |
-    | `Google-Extended` | Google | Gemini / AI Overviews training opt-out token |
-    | `Applebot-Extended` | Apple | Apple Intelligence opt-out token |
-    | `CCBot` | Common Crawl | Training data source for many LLMs |
-    | `Bytespider` | ByteDance | Training |
-    | `Amazonbot` | Amazon | Alexa / general |
-    | `Meta-ExternalAgent` | Meta | Training |
-
-    **Check:**
-    - `robots.txt` exists and is reachable?
-    - Each major bot is either explicitly Allow'd or Disallow'd (not silently default-allowed)?
-    - Policy is internally consistent (e.g., not blocking GPTBot but allowing CCBot, which feeds the same training pipeline — unless that's intentional)?
-    - On-demand user-fetch bots (`ChatGPT-User`, `Perplexity-User`, `Claude-Web`) treated separately from training bots if the site wants citations but not training use?
-    - Comments in `robots.txt` explain intent for future maintainers?
-
-    **Do NOT recommend allow or block.** Report the current policy, flag inconsistencies, and ask the user to confirm intent.
-
-    ### Page-Level Freshness and Canonical Signals
-
-    - Visible `Published` / `Updated` dates on time-sensitive content?
-    - `dateModified` in schema matches the visible "Updated" date?
-    - Canonical URL present and points to the version LLMs should cite?
-    - No duplicate content across URLs that would split citation signal?
-
-    ## Output Format
-
-    ### Strengths
-    [What's well done for LLM citation? Be specific with file:line references.]
-
-    ### Issues
-
-    #### Important (Should Fix)
-    [Missing llms.txt, no author/date signals, schema validation errors, content structure that buries answers, AI crawler policy inconsistencies]
-
-    #### Minor (Nice to Have)
-    [Additional schema types, more granular Q&A structure, glossary additions]
-
-    **For EACH issue, provide:**
-    1. **File:line reference**
-    2. **Issue type** (e.g., "Missing FAQPage schema", "First paragraph buries the answer")
-    3. **Impact**: How it affects LLM citation likelihood or answer-engine visibility
-    4. **Fix**: Specific code changes with before/after examples
-
-    ### Decisions to Confirm
-    [AI crawler policy questions, schema choices that depend on intent — surface for the user, do not decide for them]
-
-    ### Recommendations
-    [Additional improvements for LLM citation, entity grounding, or content extractability]
-
-    ### Assessment
-
-    **GEO readiness:** [Poor/Fair/Good/Excellent]
-
-    **Reasoning:** [1-2 sentence assessment]
-
-    ## Critical Rules
-
-    **DO:**
-    - Check whether the first paragraph answers the page's implied question
-    - Verify `llms.txt` if the project has one, and flag its absence on content-heavy sites
-    - Validate JSON-LD parses and that schema content matches visible content
-    - Check all listed AI bots are explicitly handled in `robots.txt`
-    - Treat citation-worthiness (sources, original data, named authors, dates) as first-class
-
-    **DON'T:**
-    - Duplicate the SEO checklist — focus on LLM-specific concerns
-    - Recommend allow or block for AI crawlers without the user's explicit intent
-    - Assume current bot user-agent strings are stable; flag uncertainty
-    - Treat keyword density as a GEO signal (it's an SEO concept, not a GEO one)
-    - Say "GEO looks good" without checking content structure and schema
+    ## Checklist
+    [Sections A–H below. Run ALL of them. In diff mode, section A is
+    best-effort — flag anything you cannot verify from the diff alone and
+    recommend a site-mode pass rather than guessing.]
 ```
 
-### 3. After Review
+---
 
-1. **Add/update `llms.txt`** - Ensure key pages are listed and links resolve
-2. **Restructure buried answers** - Move direct answers to the first paragraph
-3. **Add schema markup** - `FAQPage`, `HowTo`, `Article`, `Organization` with `sameAs`
-4. **Confirm AI crawler policy** - Decide allow/block per bot, document intent in `robots.txt` comments
-5. **Surface freshness signals** - Visible `Updated` dates and matching `dateModified` in schema
+# The Checklist
 
-## Related Commands
+**Run every section. The field is unsettled — flag ambiguity rather than guessing.**
 
-- **general-purpose** - The subagent this command invokes
-- **/seo-review** - Traditional SEO review (run alongside `/geo-review` for full coverage)
-- **/frontend-review** - Frontend review with accessibility focus
+## A. Entity Layer
+
+*Primary in site mode. In diff mode, check only what the changed files reveal, and say so.*
+
+### A1. Claim consistency matrix
+
+This is the highest-value check in the entire command, and it is the one a diff can never perform.
+
+Extract every assertion about **scope, scale, geography, ownership, offering, pricing, and stage** from each key page. Build a matrix and compare rows against each other:
+
+| Claim | Homepage | About | Footer | Meta description | Conflict? |
+|---|---|---|---|---|---|
+| Geographic scope | | | | | |
+| Scale (counts) | | | | | |
+| What it is | | | | | |
+| Who runs it | | | | | |
+| Commercial stage | | | | | |
+
+**Any contradiction is an Important finding.** A model deciding what an organization *is* leans hardest on the About page; if that page contradicts the homepage, the About page usually wins and the site is described wrongly.
+
+Watch specifically for **drift**: the homepage evolves as the product grows while the About page keeps the founding description. This is the single most common entity defect and it produces zero diff noise.
+
+### A2. Entity graph, not entity presence
+
+Do not check "is there `Organization` schema?" — that boolean passes on nested organizations that describe someone else entirely (an event's organizer, an article's publisher, a job's hiring company).
+
+Check instead:
+- Is there a **site-level publisher entity** with a stable `@id`?
+- Is it **distinct from** nested organization entities elsewhere in the graph?
+- Do content pages **reference** it (`"publisher": {"@id": "..."}`) rather than each asserting a fresh orphan entity?
+- Does `sameAs` **resolve**, and does it disambiguate the brand from unrelated meanings of the same words?
+
+`sameAs` matters most when the brand name collides in general search. If the name is a common phrase, `sameAs` is the primary disambiguation mechanism available, and its absence is Important rather than Minor.
+
+### A3. Distinctiveness
+
+Apply the removal test to every description, title, and meta description:
+
+> Delete the brand name. Is the sentence still identifiably about this site, or could a competitor paste it verbatim?
+
+If a competitor could paste it, it's generic, and a model has nothing ownable to say about you when asked "what are good sites for X?" This is a GEO failure even though it involves no markup.
+
+Also check: **is the strongest description on the site actually deployed where it counts?** Sites frequently bury their most distinctive sentence on the About page while shipping a generic meta description. See `talk-about-us` for the full framework.
+
+### A4. Naming and terminology consistency
+
+- Brand name spelling, capitalization, and spacing identical everywhere?
+- Primary content nouns consistent site-wide (not "organisations" on one page and "organizations" on another)?
+- Navigation and footer labels stable across pages, or do the same destinations get different names?
+- Page titles carry the brand where entity grounding matters? A title of literally `About` wastes the single most entity-relevant title on the site.
+
+---
+
+## B. Extraction Layer
+
+*Primary in diff mode.*
+
+**Direct answers up front:**
+- Does the first paragraph (or first ~50 words) directly answer the page's implied question?
+- Is the summary extractable without scrolling past hero imagery, interstitials, or ad slots?
+- **Check DOM order, not visual order.** Ads, banners, and consent interstitials placed above the logo mean the first content a model ingests is a third party's.
+
+**Atomic factual claims:**
+- Claims stated as discrete, self-contained sentences rather than buried mid-paragraph?
+- Can each claim be quoted without losing its context?
+
+**Q&A patterns:**
+- Headings phrased as questions a user would actually ask an LLM?
+- Answers placed immediately under the question heading?
+
+**Lists, tables, comparisons:**
+- Comparison content in real tables, not prose?
+- Steps in ordered lists? Specs in definition lists or tables?
+
+**Definitions:**
+- Key terms defined inline on first use? Glossary for domain-specific terminology?
+
+---
+
+## C. Citation-Worthiness
+
+- Statistics and numbers cite a source with link or attribution?
+- Original research or proprietary data clearly labelled as such? Models preferentially cite original sources.
+- Quotes attributed to named people with their role?
+- Visible author byline linking to an author bio?
+- Visible publication date **and** last-updated date?
+
+**Precise counts age badly.** A meta description containing an exact live figure will be stale within hours and models cache descriptions. Prefer a rounded figure in cached surfaces; keep the exact number in visible page content where it's evidently live.
+
+---
+
+## D. Schema Quality
+
+- `Article` / `BlogPosting` with `author`, `datePublished`, `dateModified`, `headline`?
+- `FAQPage` on genuine Q&A content; `HowTo` on step-by-step guides?
+- `Person` on author pages with `sameAs`?
+- `BreadcrumbList` for hierarchical context?
+- JSON-LD parses as valid JSON?
+- Schema content matches visible content (no cloaking)?
+- No conflicting or duplicate types on the same page?
+- Entity references connect across pages via `@id` (see A2)?
+
+---
+
+## E. Rendered Output
+
+*Site mode. These defects are invisible in source review.*
+
+- `og:image` and other social URLs **absolute**, not relative? Many scrapers won't resolve relative paths.
+- Templating or markdown syntax leaking as literal text (`</submit/event>`, unrendered `{{ }}`, raw autolinks)?
+- Content varying by requesting IP, session, or A/B bucket? Flag as non-deterministic entity signal.
+- Crawler-UA responses matching the default response (from Step 2b)?
+- Canonical present and pointing at the version you want cited?
+- No duplicate content across URLs splitting citation signal?
+
+---
+
+## F. AI Crawler Policy
+
+**Surface the policy as a deliberate decision. Do NOT recommend allow or block.** Report the current state, flag inconsistencies, and ask the user to confirm intent.
+
+| Bot | Operator | Purpose |
+|---|---|---|
+| `GPTBot` | OpenAI | Training |
+| `OAI-SearchBot` | OpenAI | SearchGPT indexing |
+| `ChatGPT-User` | OpenAI | On-demand fetches |
+| `ClaudeBot` | Anthropic | Training |
+| `anthropic-ai` | Anthropic | Legacy / general |
+| `Claude-Web` | Anthropic | On-demand fetches |
+| `PerplexityBot` | Perplexity | Indexing |
+| `Perplexity-User` | Perplexity | On-demand fetches |
+| `Google-Extended` | Google | Gemini / AI Overviews opt-out token |
+| `Applebot-Extended` | Apple | Apple Intelligence opt-out token |
+| `CCBot` | Common Crawl | Feeds many training pipelines |
+| `Bytespider` | ByteDance | Training |
+| `Amazonbot` | Amazon | General |
+| `Meta-ExternalAgent` | Meta | Training |
+
+**This table drifts. Verify current user-agent strings before recommending anything, and flag your uncertainty rather than asserting stale strings.**
+
+Check:
+- `robots.txt` exists and is reachable?
+- Each major bot explicitly allowed or disallowed, not silently default-allowed?
+- Policy internally consistent — e.g. blocking `GPTBot` while allowing `CCBot`, which feeds the same pipelines, unless that's intentional?
+- On-demand fetch bots treated separately from training bots, if the site wants citations without training use?
+- Comments explaining intent for future maintainers?
+
+---
+
+## G. Freshness and Canonical
+
+- Visible `Published` / `Updated` dates on time-sensitive content?
+- `dateModified` in schema matching the visible updated date?
+- Stale content that would be cited as current?
+
+---
+
+## H. Cheap Hygiene
+
+Low cost, low current impact. **Do not lead a report with these.** Adoption among answer engines is marginal, Google has stated on the record that it doesn't support `llms.txt`, and crawler fetches of it are a rounding error against total AI bot traffic. Ship one because it's an hour's work and a cheap forward bet — not because it moves citations today.
+
+- `llms.txt` present at site root, following the proposed spec (H1 name, blockquote summary, sectioned link lists)?
+- Links resolve; stale entries removed?
+- `llms-full.txt` for documentation-heavy sites?
+
+If `llms.txt` is the most significant finding in a report, the report has not looked hard enough at sections A–E.
+
+---
+
+# Output Format
+
+### Strengths
+What's well done, with `file:line` references (diff mode) or page + selector (site mode).
+
+### Issues
+
+#### Important (Should Fix)
+Cross-page claim contradictions, missing or orphaned publisher entity, generic descriptions failing the removal test, buried answers, non-deterministic crawler content, schema validation errors, crawler policy inconsistencies.
+
+#### Minor (Nice to Have)
+Additional schema types, finer Q&A structure, glossary additions, `llms.txt` gaps.
+
+**For each issue provide:**
+1. **Location** — `file:line`, or page URL + element
+2. **Issue type**
+3. **Impact** — how it affects citation likelihood or entity resolution
+4. **Fix** — specific before/after
+
+### Decisions to Confirm
+Crawler policy questions, positioning choices that depend on intent. Surface, don't decide.
+
+### Assessment
+
+Report **two independent scores**. They have different fixes and conflating them hides the diagnosis.
+
+**Extraction readiness:** [Poor/Fair/Good/Excellent] — can a model cleanly lift and cite these pages?
+
+**Entity strength:** [Poor/Fair/Good/Excellent] — would a model recommend this site unprompted, and does it describe the site correctly?
+
+**Reasoning:** 1–2 sentences each.
+
+A site can be Excellent on extraction and Poor on entity. That combination means individual pages get cited when someone already found you, but nothing recommends you to someone who hasn't.
+
+---
+
+# Critical Rules
+
+**DO:**
+- Ask which mode to run when it's ambiguous
+- Treat cross-page claim contradictions as the highest-severity finding class
+- Test the entity *graph*, not the presence of a schema type
+- Apply the brand-removal test to every description
+- Check rendered output, not just source
+- Verify JSON-LD parses and matches visible content
+- Treat citation-worthiness (sources, original data, named authors, dates) as first-class
+- Flag anything you cannot verify from the inputs you were given
+
+**DON'T:**
+- Report a diff-mode pass as a site-wide clean bill of health
+- Lead with `llms.txt`
+- Recommend allow or block for AI crawlers without explicit user intent
+- Assume current bot user-agent strings are stable
+- Treat keyword density as a GEO signal
+- Say "GEO looks good" without checking sections A through E
+- Enforce a hard SEO/GEO partition. Where a signal serves entity resolution — title quality, canonical, crawlability — check it here even if `/seo-review` also owns it. A defect falling between two commands is worse than a duplicated finding.
+
+---
+
+# After Review
+
+1. **Reconcile contradicted claims first.** Rewriting one About paragraph typically outweighs every markup change in the report.
+2. **Establish the publisher entity** with a stable `@id` and resolving `sameAs`, then reference it from content pages.
+3. **Rewrite descriptions that fail the removal test**, and promote the site's strongest existing sentence into its cached surfaces.
+4. **Fix rendered-output defects** — absolute social URLs, leaked template syntax, crawler-facing determinism.
+5. **Restructure buried answers** and add extraction-oriented schema.
+6. **Confirm crawler policy** and document intent in `robots.txt` comments.
+7. **Add or refresh `llms.txt`** last.
+
+# Related Commands
+
+- **`/seo-review`** — ranked-link visibility; run alongside this
+- **`talk-about-us`** — shareability and distinctiveness framework; feeds section A3
+- **`/frontend-review`** — frontend review with accessibility focus
