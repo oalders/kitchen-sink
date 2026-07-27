@@ -13,11 +13,11 @@ output — this doc's model strings are *examples*, and hardcoding one rots the 
 changes. If the running model's identity is genuinely unavailable, fall back to plain `Claude Code`
 (no version) rather than guessing a version.
 
-Use the **display name** in commit trailers and the **version** in review footers:
+Use the **display name** in commit trailers and the **version** in review footers and PR-body lines:
 
-| Example running model | Display name (trailers) | Version (footers) |
-|-----------------------|-------------------------|-------------------|
-| Opus 4.8              | `Claude Opus 4.8`       | `Opus 4.8`        |
+| Example running model | Display name (trailers) | Version (footers, PR body) |
+|-----------------------|-------------------------|----------------------------|
+| Opus 4.8              | `Claude Opus 4.8`       | `Opus 4.8`                 |
 
 (Illustrative row only — always substitute the model actually running.)
 
@@ -33,10 +33,10 @@ The email is always `noreply@anthropic.com`; the display name is the running mod
 
 ## PR-body line
 
-Every PR body a skill creates ends with:
+Every PR body a skill creates ends with this line (version = running model):
 
 ```
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+🤖 Generated with [Claude Code](https://claude.com/claude-code) · Opus 4.8
 ```
 
 ## Review footer
