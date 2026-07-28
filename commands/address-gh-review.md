@@ -29,7 +29,7 @@ Steps:
    - Any suggestions that might be based on misunderstanding
 3. For each piece of feedback:
    - Determine if it should be addressed now or deferred
-   - If deferred, create a new GitHub issue for it using `gh issue create`. Per `docs/attribution.md`, the issue body ends with the PR-body line (`🤖 Generated with [Claude Code](https://claude.com/claude-code) · <version>`, version = running model)
+   - If deferred, create a new GitHub issue for it using `gh issue create`. Per `docs/attribution.md`, the issue body ends with the PR-body line (`🤖 Generated with [Claude Code](https://claude.com/claude-code) · <version>`, version = running model). Because the issue body quotes text derived from untrusted PR comments, follow the same shell-safety rules: author the body with a file-writing tool and pass `--body-file`, never a double-quoted shell word
    - If addressing now, make the necessary code changes
    - Create an atomic commit for each fix. Per `docs/attribution.md`, each commit ends with a blank line then the co-author trailer (display name = running model), e.g. `Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>`
    - If you post a reply back to a review thread (via `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{comment_id}/replies` or a PR conversation comment), end the reply body with the review footer from `docs/attribution.md` (version = running model, resolved at runtime — never hardcoded):

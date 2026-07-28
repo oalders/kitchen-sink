@@ -33,7 +33,8 @@ The email is always `noreply@anthropic.com`; the display name is the running mod
 
 ## PR-body line
 
-Every PR body a skill creates ends with this line (version = running model):
+Every PR body — and every GitHub **issue body** — a skill creates ends with this line
+(version = running model):
 
 ```
 🤖 Generated with [Claude Code](https://claude.com/claude-code) · Opus 4.8
@@ -42,7 +43,10 @@ Every PR body a skill creates ends with this line (version = running model):
 ## Review footer
 
 Every review body a skill posts to a PR ends with this footer (version = running model). It goes on the
-**summary/review body**, not on each individual inline finding:
+**summary/review body**, not on each individual inline finding within a batched review. A **standalone
+reply** a skill posts to an existing review thread (e.g. via `pulls/{pr}/comments/{comment_id}/replies`
+or a PR conversation comment) is its own body, not an inline finding inside a batched review, so it
+**does** end with this footer:
 
 ```
 ---
