@@ -48,6 +48,7 @@ Record the list of changed files. You'll use it for routing.
 | **General-purpose reviewer** | Always |
 | **`/security-review`** | Default. **Skip only if doc-only** (every changed file matches `*.md`, `*.txt`, `docs/**`, `CHANGELOG*`, `LICENSE*`, `README*`, `.github/**/*.md` AND no code files were touched) |
 | **`/frontend-review`** | Diff touches `*.jsx`, `*.tsx`, `*.vue`, `*.svelte`, `*.html`, `*.css`, `*.scss`, or known frontend paths (`components/`, `pages/`, `app/`, `views/`, `templates/`) |
+| **`/design-handoff-review`** | Diff touches UI files (`*.css`, `*.scss`, `*.js`, `*.ts`, `*.jsx`, `*.tsx`, `*.html`, `*.vue`, `*.svelte`, or a `templates/` path) **AND** the repo contains a design-handoff bundle |
 | **`/seo-review`** | Diff touches page templates, route definitions, `<head>`/meta tags, `sitemap.*`, `robots.txt`, canonical URL config, Open Graph / Twitter Card tags |
 | **`/geo-review`** | Diff touches content pages, `llms.txt`, `llms-full.txt`, JSON-LD schema, AI-bot rules in `robots.txt`, author bios, About page |
 | **`/playwright-review`** | Test files touched (`*.spec.*`, `*.test.*` under `e2e/`, `tests/e2e/`, `playwright/`) **OR new route added without a corresponding test** (see route detection below) **OR new/changed client-side interactive behavior without an e2e test exercising it** — even when no new server route was added (see interaction detection below) |
@@ -77,6 +78,12 @@ If a new route is detected AND no Playwright/e2e test was added in the same diff
 This trigger exists because **reusing an existing server route still ships untested browser behavior** — a new button that POSTs to an already-defined endpoint, a confirm dialog, an AJAX call, or a client-side redirect is real user-facing logic the route-detection rule will miss. Backend-only tests (unit/handler tests, template-render assertions) do **not** cover the click → request → response → DOM/redirect path.
 
 If new client-side interaction is detected AND no Playwright/e2e test was added or updated in the same diff to exercise it, dispatch `/playwright-review` with an explicit "verify e2e coverage for new client-side interaction(s): <list>" instruction appended to its normal checklist, and flag missing coverage as **Important**.
+
+**Design-handoff-bundle detection** (heuristic — detect the bundle generically by path convention):
+- Dirs like `design_handoff_*/` or `*handoff*/`
+- Files like `*.card.html`, or a component reference export
+
+When a bundle is detected AND the diff touches UI files, dispatch `/design-handoff-review`, passing the detected design dir(s) as the source of truth (review against each if several exist). When no bundle is detected, **skip and note the skip** in the summary (per the existing skip convention).
 
 ### 4. Dispatch in Parallel
 
@@ -121,6 +128,7 @@ When all subagents return, produce a single consolidated report:
 - ✅ General code-reviewer
 - ✅ Security ([reason fired])
 - ⏭️ Frontend (skipped: no UI files changed)
+- ⏭️ Design-handoff (skipped: no handoff bundle detected)
 - ✅ SEO ([reason fired])
 - ...
 
@@ -192,5 +200,5 @@ Same protocol as `/code-review-flow`:
 ## Related Commands
 
 - **`/code-review-flow`** — Lightweight version: general reviewer only, no specialists
-- **`/security-review`**, **`/frontend-review`**, **`/seo-review`**, **`/geo-review`**, **`/playwright-review`** — The specialists this orchestrator dispatches
+- **`/security-review`**, **`/frontend-review`**, **`/design-handoff-review`**, **`/seo-review`**, **`/geo-review`**, **`/playwright-review`** — The specialists this orchestrator dispatches
 - **general-purpose** — The base agent specialists ultimately spawn; the reviewer persona comes from the prompt they pass, not the agent itself

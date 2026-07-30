@@ -31,6 +31,7 @@ The same handoffs fail the same ways, every time:
 - Approximating colors and spacing **by eye** instead of using the real tokens.
 - Restyling a **shared partial/component** that feeds more than one page, silently changing pages the handoff never mentioned.
 - Fighting the screenshot/preview tooling and giving up on visual verification.
+- Two defects that **pass functional tests and screenshots yet still miss the design**: character-level text drift (smart vs straight quotes, decorative wrapping glyphs, punctuation, casing, ellipsis) and orphaned input bindings (an input the form still collects but the redesign renders nowhere).
 - The costliest: **declaring it done before ever putting the rendered result beside the design.**
 
 ## Core Principles
@@ -97,6 +98,8 @@ Capture the rendered result, **read the images yourself**, and compare each one 
 - **Drive the interactive states a static screenshot can't show:** collapsed mobile menu, focus/focus-within ring, hover, open dropdown. **The menu-open state is the single most-skipped view — verify it explicitly.**
 - **Confirm _behaviour_, not just looks:** submit the form and assert the resulting URL so the redesign didn't sever the form contract.
 - **Walk an element-by-element checklist:** logo shape, wordmark weight/size/italic, horizontal + vertical centering, every nav link present at that width, inter-item gap, right edge not slammed. Report nothing "done" with a row unchecked.
+- **Char-level text check:** for each text element, diff the *exact characters* rendered against the reference source (quotes vs smart quotes, decorative wrapping glyphs, punctuation, casing, ellipsis `…` vs `...`, leading/trailing whitespace). A screenshot that "looks the same" is not enough — read both sources and diff. Call out any quote/punctuation/casing/ellipsis drift as a defect.
+- **Orphaned-binding check:** for every input the form still collects (labelled control, prefill, state binding, submit field), confirm the redesign renders/consumes it somewhere. A gathered-but-unrendered input is a defect to resolve — remove it end-to-end, or add the missing surface — not to leave dangling.
 - **If the tooling is down and you can't produce the side-by-side, say so explicitly** rather than implying you verified it.
 - **If repeated rounds stop converging on parity, stop and surface the remaining mismatch to the user** rather than looping indefinitely.
 
@@ -132,6 +135,8 @@ Sometimes the ask is upstream: write a GitHub issue that *points* an implementin
 | Restyling a shared partial without grepping consumers | Scope with a per-page flag + section-scoped CSS first |
 | Replacing a dynamic binding with the card's literal | Restyle around the binding; never freeze a loop |
 | Inventing data the template lacks | Flag it as a data-plumbing question |
+| Kept decorative quotes/punctuation the reference renders bare | Diff exact characters, not screenshots |
+| Left a form input bound but rendered nowhere after the redesign | Verify every collected input is rendered/consumed; remove end-to-end or add the surface |
 | Declaring done without the side-by-side | The visual-parity gate IS the verification |
 | Skipping the menu-open state | It's the most-skipped view — verify it explicitly |
 | Investigating inline in the caller | Delegate to a subagent that returns conclusions, not file dumps |
