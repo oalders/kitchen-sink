@@ -1,7 +1,7 @@
 ---
 name: implement-design-handoff
 description: Use when the user asks to "implement the design handoff", "build this design", "apply the design handoff", or otherwise wire a design-system / component-export spec (often a set of `*.card.html` cards plus component source) into an app's real templates and CSS. Also use when the user asks to write a GitHub issue that points an implementing agent at a design to build later.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Implement Design Handoff
