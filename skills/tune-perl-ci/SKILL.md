@@ -1,7 +1,7 @@
 ---
 name: tune-perl-ci
-description: Use when modernizing a Perl project's GitHub Actions CI — applies seven idempotent transforms (fail-fast flag, Perl 5.42 matrix, perl-tester image bump, default-branch push, concurrency cancel, setup-cpm + cpm install, drop pre-5.24 macOS/Windows cells) to Dist::Zilla-style workflows.
-version: 1.3.0
+description: Use when modernizing a Perl project's GitHub Actions CI — applies seven idempotent transforms (fail-fast flag, Perl 5.44 matrix, perl-tester image bump, default-branch push, concurrency cancel, setup-cpm + cpm install, drop pre-5.24 macOS/Windows cells) to Dist::Zilla-style workflows.
+version: 1.4.0
 ---
 
 # Tune Perl CI
@@ -11,8 +11,8 @@ version: 1.3.0
 **Seven transforms applied to Perl CI workflows under `.github/workflows/`:**
 
 1. `fail-fast: false` on every matrix job
-2. Extend Linux + macOS matrices through Perl 5.42
-3. Bump build + coverage jobs to `perldocker/perl-tester:5.42`
+2. Extend Linux + macOS matrices through Perl 5.44
+3. Bump build + coverage jobs to `perldocker/perl-tester:5.44`
 4. Restrict the `push:` trigger to the default branch
 5. Add a workflow-level `concurrency:` cancel-in-progress block
 6. Install deps with `setup-cpm` + a `cpm install` run step
@@ -86,18 +86,18 @@ test_linux:
       perl-version: ["5.34"]
 ```
 
-### 2. Extend Linux + macOS matrices through Perl 5.42
+### 2. Extend Linux + macOS matrices through Perl 5.44
 
 **What:** in jobs whose `matrix.perl-version` axis exists **and** the job is either
 
 - a Linux container (`container.image` starts with `perldocker/perl-tester`), or
 - macOS (`runs-on: macos-*` or matrix `os:` includes a `macos-*` entry),
 
-append any of `"5.36"`, `"5.38"`, `"5.40"`, `"5.42"` not already in the list. Preserve older entries. Match the file's quote style.
+append any of `"5.36"`, `"5.38"`, `"5.40"`, `"5.42"`, `"5.44"` not already in the list. Preserve older entries. Match the file's quote style.
 
 **Skip Windows.** Disabling or extending Windows is situational, not a general best practice.
 
-**Hard-coded target:** `5.42`. A future revision can teach the skill to discover the latest stable.
+**Hard-coded target:** `5.44`. A future revision can teach the skill to discover the latest stable.
 
 **Before:**
 
@@ -119,11 +119,12 @@ perl-version:
   - "5.38"
   - "5.40"
   - "5.42"
+  - "5.44"
 ```
 
-### 3. Bump build + coverage jobs to `perldocker/perl-tester:5.42`
+### 3. Bump build + coverage jobs to `perldocker/perl-tester:5.44`
 
-**What:** replace `container.image:` values matching `perldocker/perl-tester:<X.YY>` with `perldocker/perl-tester:5.42`, but **only when the tag is a literal version** — never touch an image whose tag contains `${{` (those use the matrix variable on purpose).
+**What:** replace `container.image:` values matching `perldocker/perl-tester:<X.YY>` with `perldocker/perl-tester:5.44`, but **only when the tag is a literal version** — never touch an image whose tag contains `${{` (those use the matrix variable on purpose).
 
 **Why:** the build job produces the release artifact and the coverage job produces the coverage report. Both should run on the latest stable image, not a stale pin.
 
@@ -140,7 +141,7 @@ build:
 ```yaml
 build:
   container:
-    image: perldocker/perl-tester:5.42
+    image: perldocker/perl-tester:5.44
 ```
 
 ### 4. Restrict `push:` to the default branch
@@ -331,8 +332,8 @@ Suggested commit subjects:
 | # | Commit subject |
 |---|---|
 | 1 | `workflow: disable fail-fast on matrix jobs` |
-| 2 | `workflow: extend Linux+macOS matrices through Perl 5.42` |
-| 3 | `workflow: bump build/coverage to perldocker/perl-tester:5.42` |
+| 2 | `workflow: extend Linux+macOS matrices through Perl 5.44` |
+| 3 | `workflow: bump build/coverage to perldocker/perl-tester:5.44` |
 | 4 | `workflow: restrict push trigger to default branch` |
 | 5 | `workflow: add concurrency block to cancel superseded runs` |
 | 6 | `workflow: install deps with setup-cpm + cpm install` |
@@ -453,7 +454,7 @@ jobs:
     name: Build distribution
     runs-on: ubuntu-24.04
     container:
-      image: perldocker/perl-tester:5.42
+      image: perldocker/perl-tester:5.44
     steps:
       - uses: actions/checkout@v6
       - name: Build Dist
@@ -463,7 +464,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     container:
-      image: perldocker/perl-tester:5.42
+      image: perldocker/perl-tester:5.44
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -482,6 +483,7 @@ jobs:
           - "5.38"
           - "5.40"
           - "5.42"
+          - "5.44"
     container:
       image: perldocker/perl-tester:${{ matrix.perl-version }}
     steps:
@@ -505,6 +507,7 @@ jobs:
           - "5.38"
           - "5.40"
           - "5.42"
+          - "5.44"
     needs: build
     steps:
       - uses: actions/checkout@v6
@@ -520,7 +523,7 @@ jobs:
 
 Things to notice in the after-state:
 
-- `build` and `coverage-job` containers bumped to `:5.42`. The `test_linux` container still uses `:${{ matrix.perl-version }}` — transform 3 skips any image tag containing `${{`.
+- `build` and `coverage-job` containers bumped to `:5.44`. The `test_linux` container still uses `:${{ matrix.perl-version }}` — transform 3 skips any image tag containing `${{`.
 - `pull_request.branches: ["*"]` is preserved — transform 4 only touches `on.push.branches`.
 - Quotes are preserved on existing list entries; new entries match (here, double quotes).
 - `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
@@ -538,8 +541,8 @@ After **each** transform's edit, before committing:
 | # | Assertion |
 |---|---|
 | 1 | every job whose `strategy:` contains a `matrix:` has `fail-fast: false` set |
-| 2 | each targeted job's `perl-version` list includes `5.36`, `5.38`, `5.40`, `5.42` |
-| 3 | every `container.image` whose tag contains no `${{` ends in `:5.42` |
+| 2 | each targeted job's `perl-version` list includes `5.36`, `5.38`, `5.40`, `5.42`, `5.44` |
+| 3 | every `container.image` whose tag contains no `${{` ends in `:5.44` |
 | 4 | `on.push.branches` is a single-item list with the resolved default branch |
 | 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
 | 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm@v1` step with `version: compat` (and the `v1` tag resolves via `gh api`); no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
@@ -551,8 +554,8 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 
 | Mistake | Why it's wrong | Fix |
 |---|---|---|
-| Extending Windows matrix to 5.42 | Scope is Linux + macOS; Windows often has dep/toolchain quirks worth a deliberate decision | Skip Windows in transform 2 |
-| Bumping every `perldocker/perl-tester:<X>` to `:5.42` | Test-matrix jobs use the matrix variable on purpose; only build/coverage are fixed | Only bump literal-tag images; never touch a tag containing `${{` |
+| Extending Windows matrix to 5.44 | Scope is Linux + macOS; Windows often has dep/toolchain quirks worth a deliberate decision | Skip Windows in transform 2 |
+| Bumping every `perldocker/perl-tester:<X>` to `:5.44` | Test-matrix jobs use the matrix variable on purpose; only build/coverage are fixed | Only bump literal-tag images; never touch a tag containing `${{` |
 | Adding `concurrency:` when the user already has one | Overwrites their grouping/cancellation choice | Skip transform 5 if any `concurrency:` exists at workflow level |
 | Stripping `pull_request.branches` | Spec says leave `pull_request:` alone | Only touch `on.push.branches`, never `pull_request` |
 | Hardcoding a single cpm `version:` on the `setup-cpm` step | Forces one cpm release across all Perls instead of per-Perl selection | Use `version: compat` so old Perls get cpm `0.998003` and newer Perls get the latest |
