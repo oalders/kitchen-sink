@@ -308,6 +308,18 @@ Wrapper around `superpowers:requesting-code-review` that eliminates permission p
 - Can leave the window while review runs
 - Uses information already in context when available
 
+#### implement-design-handoff
+
+Wires a design-system / component-export handoff into an app's real templates and CSS, ordered so the cheap mistakes die first:
+- Treats the rendered card as the source of truth for appearance (not the README); extracts exact tokens/px values rather than eyeballing
+- Reads the component *source*, not just the card, and reproduces the design's layout *mechanism* instead of reinventing one
+- Keeps content dynamic—maps the card's sample text/numbers/hrefs back to existing template bindings; flags design-implied data the template lacks rather than fabricating it
+- Scopes shared partials safely (grep consumers, per-page flag + section-scoped CSS) so restyling one page can't leak to others
+- Delegates the read-heavy investigation to a subagent that returns conclusions, not file dumps
+- Enforces a visual-parity gate: read the rendered screenshots yourself, property by property, at desktop and ~390px, across every state—including the most-skipped menu-open view
+- Catches char-level text drift and orphaned input bindings that pass functional tests and screenshots yet still miss the design
+- Second mode: write a GitHub issue that *points* a later implementing agent at a design (by path, not by copying files)
+
 #### over-engineer-no-more
 
 Prevents over-engineering by evaluating whether a task needs heavyweight processes:
@@ -316,6 +328,15 @@ Prevents over-engineering by evaluating whether a task needs heavyweight process
 - Routes to direct implementation or subagent workflow
 
 ### Perl & repo tuning
+
+#### perl-review
+
+Flag-only reviewer that applies the living standards in `STANDARDS.md` to changed Perl (`.pm`, `.pl`, `.t`) files:
+- Reads whatever rules are in `STANDARDS.md` at runtime—add or change a rule with no edit to the skill
+- Reviews the branch's committed changes against the base by default, or named paths when given
+- `clear` rules report as violations; `judgment` rules report as suggestions the author may have a reason for
+- Makes no edits and no commits—you apply the fixes; groups the report by rule with `file:line — detail` hits
+- Dispatches to a `general-purpose` subagent so the token-heavy read doesn't fill the caller's context
 
 #### tune-dependabot-config
 
