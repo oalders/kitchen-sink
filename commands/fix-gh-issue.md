@@ -74,6 +74,8 @@ digraph fix_issue {
     "Used subagent-driven-development?" [shape=diamond];
     "Run code review (intense-flow)" [shape=box];
     "Issues found?" [shape=diamond];
+    "Third round needed?" [shape=diamond];
+    "STOP: surface to user (continue/simplify/change approach)" [shape=box];
     "Fix issues and commit" [shape=box];
     "Verify with verification-before-completion" [shape=box];
     "Create draft PR closing issue" [shape=box];
@@ -93,7 +95,9 @@ digraph fix_issue {
     "Used subagent-driven-development?" -> "Verify with verification-before-completion" [label="yes (skip review)"];
     "Used subagent-driven-development?" -> "Run code review (intense-flow)" [label="no"];
     "Run code review (intense-flow)" -> "Issues found?" [shape=diamond];
-    "Issues found?" -> "Fix issues and commit" [label="yes"];
+    "Issues found?" -> "Third round needed?" [label="yes"];
+    "Third round needed?" -> "STOP: surface to user (continue/simplify/change approach)" [label="yes (>2 rounds)"];
+    "Third round needed?" -> "Fix issues and commit" [label="no (<=2 rounds)"];
     "Fix issues and commit" -> "Run code review (intense-flow)" [label="re-review"];
     "Issues found?" -> "Verify with verification-before-completion" [label="no (clean)"];
     "Verify with verification-before-completion" -> "Create draft PR closing issue";
@@ -141,6 +145,8 @@ digraph fix_issue {
 
    **When in doubt, treat as non-trivial**
 
+   **Record an expected size up front.** State the rough line count and file count you expect the change to take *before* implementing, and keep that estimate in view through the rest of the workflow. It's the baseline that makes drift visible as drift — without a number recorded up front, each increment looks reasonable next to the one before it. If the work in progress ever exceeds that estimate by roughly 3x — whether the growth came from implementation or from review fixes (the **Code Review** step) — STOP and surface it: scope growth is a decision for the user, not something to absorb silently.
+
 5. **For non-trivial issues**:
    - Present summary to user
    - Say: "This issue involves [complexity]. Should we brainstorm approaches first?"
@@ -170,14 +176,15 @@ digraph fix_issue {
 
    - **REQUIRED: Fix-and-re-review loop**:
      1. Run the chosen review (`/code-review-intense-flow`, or the lighter option for trivial changes)
-     2. Fix all Critical, Important, AND Minor issues found
-     3. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost
-     4. If a Minor issue seems wrong or counterproductive, push back on it rather than blindly implementing — but default to fixing it since it's usually less overhead than creating a follow-up issue
-     5. Commit fixes with a clear message referencing the review. Every commit ends with a blank
+     2. **Filter findings against reality first.** Before fixing, check each finding: does the input, state, or call pattern it describes actually occur in this system? A finding of the form "if X were passed here" that no caller, config, or upstream producer can actually produce is a hypothetical, not a bug — note it and move on rather than adding a special case for it. This matters most for code that parses loosely-structured input or guesses intent, where the space of hypothetical inputs is unbounded and a reviewer can always generate another one. The loop should consume findings that matter, not every finding a reviewer can produce.
+     3. Fix all surviving Critical, Important, AND Minor issues found
+     4. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost. This is an *absolute* threshold; the *relative* 3x tripwire from **Assess complexity** (step 4) fires independently, and catches the change that should have been small but grew — the case an absolute line count misses.
+     5. If a Minor issue seems wrong or counterproductive, push back on it rather than blindly implementing — but default to fixing it since it's usually less overhead than creating a follow-up issue
+     6. Commit fixes with a clear message referencing the review. Every commit ends with a blank
         line then the `Co-authored-by` trailer from `docs/attribution.md` (display name = the model
         running at runtime), e.g. `Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>`
-     6. Re-run the **same review** with updated HEAD SHA
-     7. Repeat until the review passes clean
+     7. Re-run the **same review** with updated HEAD SHA
+     8. Repeat until the review passes clean, **to a maximum of two fix rounds.** If a third round would be needed, STOP and surface to the user instead of starting it: list the outstanding findings, state how much the diff has grown relative to the size you recorded during **Assess complexity** (step 4), and recommend whether to *continue, simplify the implementation, or change approach*. Needing three or more rounds on the same file is a signal that the design is wrong, not that the code is buggy — and successive rounds that contradict each other (round *n+1* re-flagging the horn of a tradeoff round *n* just fixed) or a growing diff whose every commit is individually defensible are the tells. Escalating is a successful outcome of this loop, alongside "passed clean," not a failure to complete it.
    - Do NOT skip re-review — fixes can introduce new issues, and the same lenses (accessibility, OWASP, SEO) must re-run against the new HEAD
    - **Caller-context only**: `/code-review-intense-flow` (like the specialists it dispatches) fans out via `Task`/subagents, so it MUST run in the caller's context — never inside the dispatched implementation subagent, which has no `Agent`/`Task` tool
 
@@ -221,6 +228,9 @@ digraph fix_issue {
 | Skip review for direct implementation | If no subagent-driven-development, run review (`/code-review-intense-flow` by default) |
 | Hand-matching reviewers from a table | Let `/code-review-intense-flow` route — manual self-selection drops the always-on general reviewer and default security pass |
 | Fix issues but skip re-review | Always re-run the same review after fixes |
+| Fixing every finding on heuristic code | Findings about hypothetical inputs are unbounded; filter to inputs that actually occur before fixing |
+| Re-reviewing past two fix rounds without stopping | Three-plus rounds on one file is a design signal; cap at two, then surface *continue / simplify / change approach* to the user |
+| Letting a small change grow silently | Record an expected size at complexity assessment; if it exceeds ~3x, stop and surface the scope growth |
 | Running `/code-review-intense-flow` inside the implementation subagent | It fans out via `Task`; run it in the caller's context |
 | Skip verification | Always verify before PR |
 | Wrong issue # in PR | Double-check branch name parsing |
@@ -238,6 +248,9 @@ digraph fix_issue {
 - Skipping review because "it's simple" -> Simple frontend changes can have accessibility issues
 - Hand-picking a single reviewer for a non-trivial change -> Use `/code-review-intense-flow` so routing is automated, not self-selected
 - Skipping re-review after fixes -> Fixes can introduce new issues; always re-review with the same review command
+- Four review rounds on one file -> The design is the problem; stop and resurface (continue / simplify / change approach), don't write a fifth revision
+- "The reviewer keeps finding things, so I'll keep fixing" on heuristic code -> Hypothetical-input findings are unbounded; filter to inputs that actually occur, and cap the loop at two rounds
+- The diff is 3x the size you expected but each step looked reasonable -> That's the ratchet; scope growth is the user's decision, stop and surface it
 - Running `/code-review-intense-flow` in the dispatched subagent -> It needs the caller's `Agent`/`Task` tool to fan out
 - Creating PR before verification -> Verify first, always
 - Skipping issue fetch "to save time" -> Always get latest context
