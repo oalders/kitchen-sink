@@ -145,7 +145,7 @@ digraph fix_issue {
 
    **When in doubt, treat as non-trivial**
 
-   **Record an expected size up front.** State the rough line count and file count you expect the change to take *before* implementing, and keep that estimate in view through the rest of the workflow. It's the baseline that makes drift visible as drift — without a number recorded up front, each increment looks reasonable next to the one before it. If the work in progress ever exceeds that estimate by roughly 3x — whether the growth came from implementation or from review fixes (step 8) — STOP and surface it: scope growth is a decision for the user, not something to absorb silently.
+   **Record an expected size up front.** State the rough line count and file count you expect the change to take *before* implementing, and keep that estimate in view through the rest of the workflow. It's the baseline that makes drift visible as drift — without a number recorded up front, each increment looks reasonable next to the one before it. If the work in progress ever exceeds that estimate by roughly 3x — whether the growth came from implementation or from review fixes (the **Code Review** step) — STOP and surface it: scope growth is a decision for the user, not something to absorb silently.
 
 5. **For non-trivial issues**:
    - Present summary to user
@@ -178,7 +178,7 @@ digraph fix_issue {
      1. Run the chosen review (`/code-review-intense-flow`, or the lighter option for trivial changes)
      2. **Filter findings against reality first.** Before fixing, check each finding: does the input, state, or call pattern it describes actually occur in this system? A finding of the form "if X were passed here" that no caller, config, or upstream producer can actually produce is a hypothetical, not a bug — note it and move on rather than adding a special case for it. This matters most for code that parses loosely-structured input or guesses intent, where the space of hypothetical inputs is unbounded and a reviewer can always generate another one. The loop should consume findings that matter, not every finding a reviewer can produce.
      3. Fix all surviving Critical, Important, AND Minor issues found
-     4. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost
+     4. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost. This is an *absolute* threshold; the *relative* 3x tripwire from **Assess complexity** (step 4) fires independently, and catches the change that should have been small but grew — the case an absolute line count misses.
      5. If a Minor issue seems wrong or counterproductive, push back on it rather than blindly implementing — but default to fixing it since it's usually less overhead than creating a follow-up issue
      6. Commit fixes with a clear message referencing the review. Every commit ends with a blank
         line then the `Co-authored-by` trailer from `docs/attribution.md` (display name = the model
