@@ -92,7 +92,9 @@ def read_body_file(path, cwd):
 
     Rejects non-regular files (devices, FIFOs, directories) and oversized
     files WITHOUT a blocking open, so `--body-file /dev/urandom` or a FIFO
-    cannot hang or exhaust the hook.
+    cannot hang or exhaust the hook. The read is bounded independently of the
+    stat size, and the open is non-blocking, so a virtual regular file (e.g.
+    /proc/kmsg) that lies about its size cannot exceed the cap or hang either.
     """
     try:
         if cwd and not os.path.isabs(path):
@@ -107,8 +109,20 @@ def read_body_file(path, cwd):
             return None
         if st.st_size > MAX_BODY_FILE_BYTES:
             return None
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            return fh.read()
+        # Do not trust st.st_size as the read bound: virtual regular files
+        # (/proc/*) report a lying size (often 0) yet yield unbounded data or
+        # block on read. Open non-blocking so a /proc file like /proc/kmsg, or a
+        # FIFO that raced past the S_ISREG check (TOCTOU), raises instead of
+        # hanging; bound the read itself and reject anything over the cap.
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            return None
+        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as fh:
+            data = fh.read(MAX_BODY_FILE_BYTES + 1)
+        if len(data) > MAX_BODY_FILE_BYTES:
+            return None
+        return data
     except Exception:
         return None
 

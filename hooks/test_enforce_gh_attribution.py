@@ -174,6 +174,20 @@ class EnforceGhAttributionTest(unittest.TestCase):
             fh.write("x" * ((1 << 20) + 1))  # > 1 MiB, no footer
         self.assertFalse(run("gh issue comment 6 --body-file %s" % p))
 
+    def test_body_file_lying_size_virtual_file_no_hang(self):
+        # /proc/self/environ is a regular file that reports st_size 0 yet yields
+        # real bytes: it passes the S_ISREG and size gates, so the read runs. The
+        # read is bounded independently of the stat size and the open is
+        # non-blocking, so a lying-size or blocking /proc file cannot hang the
+        # hook. (The decision here is a correct block — environ resolves to a
+        # body with no footer — what this pins is that it returns promptly.)
+        if not os.path.exists("/proc/self/environ"):
+            self.skipTest("no /proc")
+        start = time.time()
+        run("gh issue comment 6 --body-file /proc/self/environ")
+        elapsed = time.time() - start
+        self.assertLess(elapsed, 5.0, "bounded non-blocking read must not hang")
+
     # --- I2: leading global flags before the subcommand ------------------
     def test_global_repo_flag_no_footer_blocks(self):
         self.assertTrue(run("gh --repo o/r issue comment 6 --body 'no footer'"))
