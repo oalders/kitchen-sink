@@ -56,7 +56,7 @@ Record the list of changed files. You'll use it for routing.
 
 **Doc-only detection:** the security skip is conservative. ALL changed files must match the doc allowlist AND no code files may be touched. If in doubt, run security.
 
-**Agent-instruction caveat:** agent-instruction files (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/**`, `.cursorrules`, `.github/copilot-instructions.md`, `.claude/**/*.md`) match the doc allowlist, so a diff touching only them counts as doc-only and skips `/security-review`. It must **still** trigger `/agent-instructions-review` — an instruction file is not "documentation" in the sense the security skip assumes; it steers agent behavior on every session. `/agent-instructions-review` fires alongside the general reviewer, never replaces it.
+**Agent-instruction caveat:** the `.md`-suffixed agent-instruction files (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`, `.claude/**/*.md`) match the doc allowlist, so a diff touching only them counts as doc-only and skips `/security-review`. Regardless of allowlist status, ANY agent-instruction change — including extensionless files like `.cursorrules` or paths under `.cursor/rules/**` that match no doc pattern — must **still** trigger `/agent-instructions-review`: an instruction file is not "documentation" in the sense the security skip assumes; it steers agent behavior on every session. `/agent-instructions-review` fires alongside the general reviewer, never replaces it.
 
 **New-route detection** (heuristic — scan the diff for added lines matching any of):
 - `app\.(get|post|put|delete|patch|all|use)\(` (Express/Koa)
