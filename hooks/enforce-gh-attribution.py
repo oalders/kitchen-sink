@@ -23,14 +23,38 @@ A body is "attributed" if it contains the version-independent substring
 `[Claude Code](https://claude.com/claude-code)` — common to both the
 `🤖 Generated with ...` footer and the `🤖 Review by ...` review-reply footer.
 The running model version is never hardcoded or matched.
+
+Known accepted gaps (fail-open by design)
+-----------------------------------------
+This hook is a deliberately narrow defense-in-depth backstop; the skills that
+build bodies remain the primary attribution guarantee. The following are
+knowingly out of scope and ALLOW:
+- Other body-posting subcommands: `gh api graphql` mutations, `gh gist create`,
+  `gh release create --notes`, `gh pr review --body`, etc. are not inspected.
+- Endpoint matching is a coarse substring test, not a real route parser.
+- There is a TOCTOU window between the hook reading a `--body-file`/`@file` and
+  gh actually sending it; the file could change in between.
+- The attribution anchor is a pasteable substring — a presence check, not proof
+  of genuine attribution.
+- Shell-operator detection only catches standalone tokens (a naive splitter),
+  not operators glued inside other tokens.
 """
 
 import json
 import os
+import re
 import shlex
+import stat
 import sys
 
 ANCHOR = "[Claude Code](https://claude.com/claude-code)"
+
+MAX_BODY_FILE_BYTES = 1 << 20  # 1 MiB; real gh bodies are tiny.
+
+# A shell variable reference we cannot resolve: `$(`, backtick, or `$`
+# immediately followed by `{`, a letter, or `_` (e.g. `$BODY`, `${BODY}`).
+# A bare `$` before a digit/space (e.g. `$5.00`) stays enforceable.
+_DYNAMIC_RE = re.compile(r"\$\(|`|\$[A-Za-z_{]")
 
 SHELL_OPERATORS = {"|", "||", "&&", ";", "&", "<", ">", ">>", "2>"}
 
@@ -60,14 +84,29 @@ def deny():
 
 def is_dynamic(value):
     """A body whose real content is shell-substituted is unknowable."""
-    return "$(" in value or "`" in value
+    return _DYNAMIC_RE.search(value) is not None
 
 
 def read_body_file(path, cwd):
-    """Return file contents, or None if unreadable (fail-open)."""
+    """Return file contents, or None if unreadable/unsafe (fail-open).
+
+    Rejects non-regular files (devices, FIFOs, directories) and oversized
+    files WITHOUT a blocking open, so `--body-file /dev/urandom` or a FIFO
+    cannot hang or exhaust the hook.
+    """
     try:
         if cwd and not os.path.isabs(path):
             path = os.path.join(cwd, path)
+        # stat() follows symlinks, so a symlink to a device resolves to the
+        # device and is rejected below.
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        if st.st_size > MAX_BODY_FILE_BYTES:
+            return None
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             return fh.read()
     except Exception:
@@ -141,11 +180,14 @@ def resolve_api_body(args, cwd):
     """
     method = None
     endpoint = None
-    body = None
-    body_found = False
+    bodies = []  # every resolved `body=` candidate (M2: check them all)
 
     endpoint_needles = ("/comments", "/issues", "/pulls", "/reviews",
                         "/replies")
+
+    def add_field(field, is_field):
+        if field.startswith("body="):
+            bodies.append(_resolve_api_field(field[len("body="):], is_field, cwd))
 
     i = 0
     while i < len(args):
@@ -159,22 +201,26 @@ def resolve_api_body(args, cwd):
             method = tok[len("--method="):]
             i += 1
             continue
+        elif tok.startswith("-X") and len(tok) > 2:
+            # Glued short flag: -XPOST / -XPATCH
+            method = tok[2:]
+            i += 1
+            continue
         elif tok in ("-f", "--raw-field", "-F", "--field"):
             is_field = tok in ("-F", "--field")
             if i + 1 < len(args):
-                field = args[i + 1]
+                add_field(args[i + 1], is_field)
                 i += 2
-                if field.startswith("body="):
-                    body_found = True
-                    body = _resolve_api_field(field[len("body="):], is_field, cwd)
                 continue
         elif tok.split("=", 1)[0] in ("--raw-field", "--field") and "=" in tok:
             # --field=body=... / --raw-field=body=... forms
             key, val = tok.split("=", 1)
-            is_field = key == "--field"
-            if val.startswith("body="):
-                body_found = True
-                body = _resolve_api_field(val[len("body="):], is_field, cwd)
+            add_field(val, key == "--field")
+            i += 1
+            continue
+        elif (tok.startswith("-f") or tok.startswith("-F")) and len(tok) > 2:
+            # Glued short flag: -fbody=... / -Fbody=... / -Fbody=@path
+            add_field(tok[2:], tok[1] == "F")
             i += 1
             continue
 
@@ -187,11 +233,18 @@ def resolve_api_body(args, cwd):
         return False, None
     if endpoint is None or not any(n in endpoint for n in endpoint_needles):
         return False, None
-    if not body_found:
+    if not bodies:
         return False, None
-    if body == UNRESOLVABLE or body is None:
+    if any(b == UNRESOLVABLE or b is None for b in bodies):
         return False, None
-    return True, body
+    if len(bodies) > 1:
+        # M2: with multiple body candidates, gh's precedence is ambiguous, so
+        # require the anchor in EVERY candidate. Signal via a sentinel body
+        # that the caller's ANCHOR check will reject unless all contain it.
+        if all(ANCHOR in b for b in bodies):
+            return True, ANCHOR
+        return True, ""  # anchor absent from at least one → caller denies
+    return True, bodies[0]
 
 
 def main():
@@ -230,8 +283,22 @@ def main():
     if not args:
         allow()
 
-    # Drop global flags before the subcommand is not needed here; gh's
-    # top-level command is the first positional token.
+    # gh accepts global flags before the subcommand (e.g.
+    # `gh --repo o/r issue comment ...`). Skip leading global flags to find the
+    # real subcommand: skip any `-`-prefixed token, and for a value-taking
+    # global flag given as a separate token without `=`, skip its value too.
+    # The first non-flag token is the subcommand; if none, fail-open.
+    value_globals = ("-R", "--repo", "--hostname")
+    idx = 0
+    while idx < len(args) and args[idx].startswith("-"):
+        tok = args[idx]
+        if tok in value_globals and "=" not in tok:
+            idx += 2
+        else:
+            idx += 1
+    if idx >= len(args):
+        allow()
+    args = args[idx:]
     sub = args[0]
 
     if sub == "api":

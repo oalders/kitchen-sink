@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -142,6 +143,65 @@ class EnforceGhAttributionTest(unittest.TestCase):
 
     def test_issue_edit_body_no_footer_blocks(self):
         self.assertTrue(run("gh issue edit 6 --body 'no footer'"))
+
+    # --- C1: shell variable expansion is unresolvable (fail-open) ---------
+    def test_body_shell_var_allows(self):
+        self.assertFalse(run('gh issue comment 6 --body "$BODY"'))
+
+    def test_body_shell_var_braced_allows(self):
+        self.assertFalse(run("gh issue comment 6 --body '${BODY}'"))
+
+    def test_body_bare_dollar_digit_still_enforced_blocks(self):
+        self.assertTrue(run("gh issue comment 6 --body 'price is $5.00 today'"))
+
+    # --- I1: body-file must be a small regular file (DoS guard) ----------
+    def test_body_file_dev_zero_allows_and_fast(self):
+        start = time.time()
+        result = run("gh issue comment 6 --body-file /dev/zero")
+        elapsed = time.time() - start
+        self.assertFalse(result)
+        self.assertLess(elapsed, 5.0, "stat-based reject must not hang")
+
+    def test_body_file_dev_urandom_allows(self):
+        self.assertFalse(run("gh issue comment 6 --body-file /dev/urandom"))
+
+    def test_body_file_directory_allows(self):
+        self.assertFalse(run("gh issue comment 6 --body-file %s" % self.tmp))
+
+    def test_body_file_oversized_allows(self):
+        p = os.path.join(self.tmp, "big.md")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("x" * ((1 << 20) + 1))  # > 1 MiB, no footer
+        self.assertFalse(run("gh issue comment 6 --body-file %s" % p))
+
+    # --- I2: leading global flags before the subcommand ------------------
+    def test_global_repo_flag_no_footer_blocks(self):
+        self.assertTrue(run("gh --repo o/r issue comment 6 --body 'no footer'"))
+
+    def test_global_R_flag_with_footer_allows(self):
+        self.assertFalse(run(
+            "gh -R o/r pr comment 3 --body 'has "
+            "[Claude Code](https://claude.com/claude-code) footer'"))
+
+    def test_absolute_path_binary_no_footer_blocks(self):
+        self.assertTrue(run("/usr/bin/gh issue comment 6 --body 'no footer'"))
+
+    # --- M1: glued short flags -------------------------------------------
+    def test_api_glued_method_and_field_no_footer_blocks(self):
+        self.assertTrue(run(
+            "gh api -XPOST repos/o/r/issues/6/comments -fbody='no footer'"))
+
+    # --- M2: multiple body fields require anchor in ALL ------------------
+    def test_api_multiple_bodies_one_missing_footer_blocks(self):
+        self.assertTrue(run(
+            "gh api -XPOST repos/o/r/issues/6/comments "
+            "-f body='with [Claude Code](https://claude.com/claude-code)' "
+            "-f body='no footer'"))
+
+    # --- M4: gh api graphql is an accepted gap (fail-open) ---------------
+    def test_api_graphql_no_footer_allows(self):
+        self.assertFalse(run(
+            "gh api graphql -f query='mutation {}' -f body='no footer'"))
 
 
 def json_quote(s):
