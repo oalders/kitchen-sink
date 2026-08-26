@@ -161,6 +161,7 @@ OWASP-based systematic security review:
 - Sensitive data exposure (PII logging, cleartext transmission)
 - Security misconfiguration (CSRF, CORS, security headers)
 - Business logic flaws (race conditions, timing attacks)
+- LLM/AI integration (prompt injection, insecure output handling, tool-call abuse) — gated to diffs that touch model calls
 - Uses Opus model for comprehensive security analysis
 - Spawns `general-purpose` with OWASP Top 10 checklist
 
