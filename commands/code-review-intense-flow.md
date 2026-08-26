@@ -1,12 +1,12 @@
 ---
-description: Heavy code review - fans out to all applicable specialized reviewers (security, frontend, seo, geo, playwright, design-handoff) based on diff content
+description: Heavy code review - fans out to all applicable specialized reviewers (security, frontend, seo, geo, playwright, design-handoff, agent-instructions) based on diff content
 ---
 
 # Code Review Intense Flow
 
 ## Overview
 
-Fan-out orchestrator that dispatches **all relevant specialized reviewers** in parallel for a single diff, then aggregates the findings. This is the heavyweight counterpart to `/code-review-flow` — use it when you want every applicable lens applied (security, frontend, SEO, GEO, Playwright, design-handoff) instead of only the general reviewer.
+Fan-out orchestrator that dispatches **all relevant specialized reviewers** in parallel for a single diff, then aggregates the findings. This is the heavyweight counterpart to `/code-review-flow` — use it when you want every applicable lens applied (security, frontend, SEO, GEO, Playwright, design-handoff, agent-instructions) instead of only the general reviewer.
 
 The general-purpose reviewer always runs. Specialists fire only when the diff touches their domain, with one exception: `/security-review` runs by default unless the diff is documentation-only.
 
@@ -52,8 +52,11 @@ Record the list of changed files. You'll use it for routing.
 | **`/seo-review`** | Diff touches page templates, route definitions, `<head>`/meta tags, `sitemap.*`, `robots.txt`, canonical URL config, Open Graph / Twitter Card tags |
 | **`/geo-review`** | Diff touches content pages, `llms.txt`, `llms-full.txt`, JSON-LD schema, AI-bot rules in `robots.txt`, author bios, About page |
 | **`/playwright-review`** | Test files touched (`*.spec.*`, `*.test.*` under `e2e/`, `tests/e2e/`, `playwright/`) **OR new route added without a corresponding test** (see route detection below) **OR new/changed client-side interactive behavior without an e2e test exercising it** — even when no new server route was added (see interaction detection below) |
+| **`/agent-instructions-review`** | Diff touches `CLAUDE.md`, `AGENTS.md`, `.cursor/rules/**`, `.cursorrules`, `.github/copilot-instructions.md`, or `.claude/**/*.md` |
 
 **Doc-only detection:** the security skip is conservative. ALL changed files must match the doc allowlist AND no code files may be touched. If in doubt, run security.
+
+**Agent-instruction caveat:** agent-instruction files (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/**`, `.cursorrules`, `.github/copilot-instructions.md`, `.claude/**/*.md`) match the doc allowlist, so a diff touching only them counts as doc-only and skips `/security-review`. It must **still** trigger `/agent-instructions-review` — an instruction file is not "documentation" in the sense the security skip assumes; it steers agent behavior on every session. `/agent-instructions-review` fires alongside the general reviewer, never replaces it.
 
 **New-route detection** (heuristic — scan the diff for added lines matching any of):
 - `app\.(get|post|put|delete|patch|all|use)\(` (Express/Koa)
@@ -97,7 +100,7 @@ Task(general-purpose):
   prompt: [standard code-reviewer prompt with BASE/HEAD SHAs]
 ```
 
-For each applicable specialist (security/frontend/seo/geo/playwright/design-handoff):
+For each applicable specialist (security/frontend/seo/geo/playwright/design-handoff/agent-instructions):
 ```
 Task(general-purpose):
   description: [Specialist] review of [feature]
@@ -131,6 +134,7 @@ When all subagents return, produce a single consolidated report:
 - ⏭️ Frontend (skipped: no UI files changed)
 - ⏭️ Design-handoff (skipped: no handoff bundle detected)
 - ✅ SEO ([reason fired])
+- ✅ Agent-instructions ([reason fired])
 - ...
 
 ## Critical Issues (X total)
@@ -191,6 +195,7 @@ Same protocol as `/code-review-flow`:
 - Note skipped reviewers in the summary with the routing reason
 - Pass the "new route, verify e2e coverage" instruction to `/playwright-review` when triggered by route detection (not test-file changes)
 - Fire `/playwright-review` for new client-side interaction (event handlers, `fetch`/AJAX, JS-wired buttons/forms) even when the diff reuses an existing route and adds no new one — a backend test does not cover the browser interaction
+- Fire `/agent-instructions-review` whenever the diff touches an agent-instruction file, even when the diff is otherwise doc-only and security is skipped
 
 **DON'T:**
 - Silently skip security on changes that touch any code file
@@ -201,5 +206,5 @@ Same protocol as `/code-review-flow`:
 ## Related Commands
 
 - **`/code-review-flow`** — Lightweight version: general reviewer only, no specialists
-- **`/security-review`**, **`/frontend-review`**, **`/design-handoff-review`**, **`/seo-review`**, **`/geo-review`**, **`/playwright-review`** — The specialists this orchestrator dispatches
+- **`/security-review`**, **`/frontend-review`**, **`/design-handoff-review`**, **`/seo-review`**, **`/geo-review`**, **`/playwright-review`**, **`/agent-instructions-review`** — The specialists this orchestrator dispatches
 - **general-purpose** — The base agent specialists ultimately spawn; the reviewer persona comes from the prompt they pass, not the agent itself
