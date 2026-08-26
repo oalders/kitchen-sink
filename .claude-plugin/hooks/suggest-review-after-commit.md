@@ -31,6 +31,12 @@ Suggest when commit contains:
 - **Files**: `.env.example`, `secrets.*`, `credentials.*`, `.htaccess`, `security.txt`
 - **Patterns**: API endpoint files, authentication modules, authorization logic
 
+### Agent-Instructions Review (`/agent-instructions-review`)
+Suggest when commit contains:
+- **Files**: `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.github/copilot-instructions.md`
+- **Directories**: `.cursor/rules/`, `.claude/` (commands, skills, hooks, agent configs — any `.md` under it)
+- **Patterns**: any file whose purpose is steering an AI agent's behavior
+
 ### Generic Review (`/request-review`)
 Always offer as a fallback option, especially when:
 - No specialized review patterns match
@@ -48,6 +54,7 @@ I notice you just committed [N] file(s). Based on the file types detected:
 🎨 Frontend files: [list if any]
 🎭 Playwright tests: [list if any]
 🔒 Security-sensitive files: [list if any]
+📐 Agent-instruction files: [list if any]
 📋 Other files: [list if any]
 ```
 
@@ -72,6 +79,10 @@ I notice you just committed [N] file(s). Based on the file types detected:
         "description": "OWASP vulnerabilities, authentication, authorization"
       },
       {
+        "label": "Agent-Instructions Review",
+        "description": "Accuracy, placement, cost, removability of agent-instruction files"
+      },
+      {
         "label": "Generic Review",
         "description": "Comprehensive code review of all changes"
       }
@@ -84,6 +95,7 @@ I notice you just committed [N] file(s). Based on the file types detected:
 - For "Frontend Review" → run `/frontend-review`
 - For "Playwright Review" → run `/playwright-review`
 - For "Security Review" → run `/security-review`
+- For "Agent-Instructions Review" → run `/agent-instructions-review`
 - For "Generic Review" → run `/request-review`
 
 4. **If user selects multiple**, run them sequentially and provide a summary after all complete.

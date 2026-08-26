@@ -33,7 +33,8 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 | Command | Description |
 |---------|-------------|
-| **/code-review-intense-flow** | Heavyweight fan-out that dispatches every applicable specialist reviewer (security, frontend, seo, geo, playwright, design-handoff) in parallel and aggregates the findings |
+| **/agent-instructions-review** | Reviews changes to agent-instruction files (CLAUDE.md, AGENTS.md, .cursor/rules, copilot-instructions, .claude/**) for accuracy, placement, duplication, cost, removability, and instruction quality |
+| **/code-review-intense-flow** | Heavyweight fan-out that dispatches every applicable specialist reviewer (security, frontend, seo, geo, playwright, design-handoff, agent-instructions) in parallel and aggregates the findings |
 | **/design-handoff-review** | Reviews a design-handoff implementation for character-level text drift and orphaned input bindings against the design source |
 | **/frontend-review** | Frontend expert review catching accessibility gaps, responsive design issues, and CSS anti-patterns |
 | **/geo-review** | Generative Engine Optimization review—two modes: per-PR extraction checks (diff) and cross-page entity consistency (site) for LLM-citation visibility |
@@ -87,17 +88,28 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 | Hook | Description |
 |------|-------------|
-| **suggest-review-after-commit** | Smart PostToolUse hook that analyzes committed files and suggests relevant review commands (`/frontend-review`, `/playwright-review`, `/security-review`, or `/request-review`) based on file types and patterns |
+| **suggest-review-after-commit** | Smart PostToolUse hook that analyzes committed files and suggests relevant review commands (`/frontend-review`, `/playwright-review`, `/security-review`, `/agent-instructions-review`, or `/request-review`) based on file types and patterns |
 
 ## Commands Overview
 
 ### Code review
 
+#### /agent-instructions-review
+
+Focused review for changes to agent-instruction files—the docs an AI agent loads into context on every session (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/**`, `.cursorrules`, `.github/copilot-instructions.md`, `.claude/**/*.md`):
+- Accuracy—verifies every factual claim (paths, flags, commands, behavior) against the code at HEAD rather than trusting the text
+- Placement—mechanism/rationale belong in code comments; instruction files hold the cross-cutting rule plus a pointer to detail
+- Duplication—recommends the pointer form over restating comments that already sit next to the code (no information leaves the repo)
+- Cost—weighs each addition against its per-session context tax on all unrelated work
+- Removability—proposes deletions of superseded or contradicted text, not just critiques of additions
+- Instruction quality—actionable and unambiguous over narrative; flags internal contradictions
+- Spawns `general-purpose` with a systematic six-dimension checklist
+
 #### /code-review-intense-flow
 
 Heavyweight fan-out orchestrator—dispatches every applicable specialist reviewer in parallel for a single diff, then aggregates:
 - General-purpose reviewer always runs; `/security-review` runs by default unless the diff is doc-only
-- Routes to `/frontend-review`, `/seo-review`, `/geo-review`, `/design-handoff-review`, and `/playwright-review` by diff content
+- Routes to `/frontend-review`, `/seo-review`, `/geo-review`, `/design-handoff-review`, `/playwright-review`, and `/agent-instructions-review` by diff content
 - New-route and new-interaction detection triggers a Playwright e2e-coverage check even when the diff reuses an existing route
 - Runs all reviewers concurrently (single message, multiple `Task` calls)
 - Consolidates findings by severity, tags each with the specialist that surfaced it, and retains full per-reviewer reports
@@ -161,6 +173,7 @@ OWASP-based systematic security review:
 - Sensitive data exposure (PII logging, cleartext transmission)
 - Security misconfiguration (CSRF, CORS, security headers)
 - Business logic flaws (race conditions, timing attacks)
+- LLM/AI integration (prompt injection, insecure output handling, tool-call abuse) — gated to diffs that touch model calls
 - Uses Opus model for comprehensive security analysis
 - Spawns `general-purpose` with OWASP Top 10 checklist
 
@@ -399,6 +412,10 @@ Automatically suggests the most relevant review command(s) after you commit chan
 **Security Review (`/security-review`)**
 - Triggered by: Files with `auth`, `login`, `password`, `token`, `session`, `api/` in path
 - Files: `.env.example`, authentication modules, API endpoints
+
+**Agent-Instructions Review (`/agent-instructions-review`)**
+- Triggered by: `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.github/copilot-instructions.md`
+- Directories: `.cursor/rules/`, `.claude/` (any `.md` under it)
 
 **Generic Review (`/request-review`)**
 - Always offered as a fallback option

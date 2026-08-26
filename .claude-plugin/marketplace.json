@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "A collection of useful Claude Code skills and commands for software development workflows",
-    "version": "2.19.0"
+    "version": "2.20.0"
   },
   "plugins": [
     {
       "name": "kitchen-sink",
       "source": "./",
       "description": "Development workflow skills and commands",
-      "version": "2.19.0",
+      "version": "2.20.0",
       "author": {
         "name": "Olaf Alders"
       },
