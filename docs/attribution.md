@@ -68,3 +68,18 @@ place any attribution string in a double-quoted word that would expand `$`/backt
 model display name is resolved at runtime — any attribution string emitted inside a *single-quoted*
 `gh`/`git` argument must stay apostrophe-free, else use `--body-file`/`--rawfile`. (Today's fixed strings
 satisfy this; the caveat guards future edits and any runtime-resolved name that could contain a `'`.)
+
+## Enforcement hook
+
+A `PreToolUse` Bash hook — `hooks/enforce-gh-attribution.py`, registered in `hooks/hooks.json` — hard-blocks
+mutating `gh` writes whose resolved body lacks the attribution footer: `gh issue`/`gh pr` `comment`,
+`create`, and `edit`-with-body, plus `gh api` `POST`/`PATCH` calls to comment/issue/pull/review/reply
+endpoints. When the resolved body is missing the footer, the hook denies the tool call and asks Claude to
+append it.
+
+This is a **defense-in-depth backstop**, not the primary mechanism: skills add the footer as they build
+each body, and this hook only catches the cases they miss. It **fails open** on any unresolvable or
+ambiguous input — heredocs, stdin pipes, dynamic `$(...)`/backtick bodies, unreadable body files,
+compound/redirected commands, unparseable quoting — allowing the command through rather than risk a false
+block. It matches the version-independent substring `[Claude Code](https://claude.com/claude-code)` (shared
+by both the `🤖 Generated with …` and `🤖 Review by …` footers) and **never** a hardcoded model version.
