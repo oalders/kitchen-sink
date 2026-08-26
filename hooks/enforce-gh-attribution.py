@@ -118,7 +118,12 @@ def read_body_file(path, cwd):
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         except OSError:
             return None
-        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as fh:
+        try:
+            fh = os.fdopen(fd, "r", encoding="utf-8", errors="replace")
+        except Exception:
+            os.close(fd)  # fdopen did not take ownership; close the raw fd
+            return None
+        with fh:
             data = fh.read(MAX_BODY_FILE_BYTES + 1)
         if len(data) > MAX_BODY_FILE_BYTES:
             return None
