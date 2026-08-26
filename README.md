@@ -86,9 +86,12 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 ### Hooks
 
+Hooks live in `hooks/hooks.json` at the plugin root.
+
 | Hook | Description |
 |------|-------------|
 | **suggest-review-after-commit** | Smart PostToolUse hook that analyzes committed files and suggests relevant review commands (`/frontend-review`, `/playwright-review`, `/security-review`, `/agent-instructions-review`, or `/request-review`) based on file types and patterns |
+| **enforce-gh-attribution** | PreToolUse Bash hook that blocks mutating `gh` writes (issue/PR comment/create/edit-with-body, and `gh api` POST/PATCH to comment/issue/pull/review/reply endpoints) whose resolved body lacks the attribution footer. A fail-open, defense-in-depth backstop to the skills that add attribution |
 
 ## Commands Overview
 
@@ -433,6 +436,17 @@ Which review(s) would you like to run?
 □ Playwright Review - Accessibility, UI issues, performance optimization
 □ Generic Review - Comprehensive code review of all changes
 ```
+
+### enforce-gh-attribution
+
+A `PreToolUse` Bash hook (`hooks/enforce-gh-attribution.py`) that hard-blocks mutating `gh` writes whose resolved body is missing the attribution footer:
+
+- `gh issue comment` / `gh pr comment`
+- `gh issue create` / `gh pr create` (when a body flag is present)
+- `gh issue edit` / `gh pr edit` (only when a `--body`/`--body-file` is present)
+- `gh api` `POST`/`PATCH` to comment/issue/pull/review/reply endpoints
+
+It is a **defense-in-depth backstop** — the skills adding attribution remain the primary mechanism — and it **fails open** on any unresolvable or ambiguous input (heredocs, stdin pipes, dynamic `$(...)` bodies, unreadable body files, compound/redirected commands, unparseable quoting). It matches the version-independent substring `[Claude Code](https://claude.com/claude-code)` and never a hardcoded model version. See [`docs/attribution.md`](docs/attribution.md) for the full attribution contract.
 
 Select multiple reviews with checkboxes, and they'll run sequentially with a combined summary at the end.
 
