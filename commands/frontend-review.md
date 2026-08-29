@@ -125,6 +125,13 @@ Task(general-purpose):
     - Forms use `<form>` element?
     - Buttons for actions, links for navigation?
 
+    **Form input types:**
+    - Inputs use the most specific HTML5 type for their data (`email` / `url` / `tel` / `number` / `date`), not a blanket `type="text"`?
+    - Search/filter boxes use `type="search"` for the native clear affordance?
+    - Numeric inputs use `type="number"` with sensible `min`/`max`/`step`?
+    - Constraints (`required`, `minlength`, `pattern`) expressed on the element rather than only in JS?
+    - Where an input's expected format changes based on another control, is the type/validation updated accordingly rather than left static?
+
     ### Responsive Design
 
     **Viewport Testing:**
