@@ -6,7 +6,7 @@ description: Fetches GitHub issue, implements fix with review, creates draft PR
 
 ## Overview
 
-Automates the workflow for fixing GitHub issues on branches named `fix-NNN`. Extracts issue number, fetches details with `gh`, assesses complexity, guides through resolution with appropriate skills, runs code review (`/code-review-intense-flow` for non-trivial direct implementations, unless using subagent-driven-development), and creates draft PR that closes the issue.
+Automates the workflow for fixing GitHub issues on branches named `fix-NNN`. Extracts issue number, fetches details with `gh`, assesses complexity, guides through resolution with appropriate skills, runs code review (`/code-review-intense-flow` for non-trivial direct implementations, unless using subagent-driven-development), and creates a draft PR that closes the issue. When the fix is complete and nothing is left that needs a human, it takes the PR out of draft and starts CI monitoring automatically (step 11).
 
 ## When to Use
 
@@ -35,7 +35,7 @@ What stays in the caller's context (interactive / decisional / delegating):
 - The choice of implementation approach (SDD vs `writing-plans` vs direct)
 - The review fan-out (step 8) — `/code-review-intense-flow` and the specialists it dispatches spawn `code-reviewer`, which needs the caller's `Agent` tool
 - The fix-and-re-review loop: read each review, dispatch the fixes down to a subagent, re-run the **same** reviewer(s) against the new HEAD SHA, repeat until clean
-- `superpowers:verification-before-completion` (step 9) and draft PR creation (step 10)
+- `superpowers:verification-before-completion` (step 9), draft PR creation (step 10), and the auto-ready + CI-monitoring decision (step 11)
 
 What the subagent runs:
 - Implementation edits (step 7)
@@ -79,6 +79,10 @@ digraph fix_issue {
     "Fix issues and commit" [shape=box];
     "Verify with verification-before-completion" [shape=box];
     "Create draft PR closing issue" [shape=box];
+    "Anything still need a human?" [shape=diamond];
+    "STOP: leave draft, surface what's outstanding" [shape=box];
+    "Mark PR ready (gh pr ready)" [shape=box];
+    "Monitor CI (/monitor-ci, else /poll-ci)" [shape=box];
 
     "Extract issue # from branch" -> "git fetch origin";
     "git fetch origin" -> "Fetch issue with gh";
@@ -101,6 +105,10 @@ digraph fix_issue {
     "Fix issues and commit" -> "Run code review (intense-flow)" [label="re-review"];
     "Issues found?" -> "Verify with verification-before-completion" [label="no (clean)"];
     "Verify with verification-before-completion" -> "Create draft PR closing issue";
+    "Create draft PR closing issue" -> "Anything still need a human?";
+    "Anything still need a human?" -> "STOP: leave draft, surface what's outstanding" [label="yes / unsure"];
+    "Anything still need a human?" -> "Mark PR ready (gh pr ready)" [label="no (all clear)"];
+    "Mark PR ready (gh pr ready)" -> "Monitor CI (/monitor-ci, else /poll-ci)";
 }
 ```
 
@@ -214,7 +222,32 @@ digraph fix_issue {
    - Single quotes (not double) disable `$(...)`, backticks, and `$var`, so the title and body pass through literally. Do not use a double-quoted string here.
    - The title and body must be *your own* words — do not paste issue or comment text into them verbatim. Keep them free of literal single-quote characters (a `'` would close the quoting); rephrase if needed, or write the body to a file and pass `--body-file <path>`.
 
-   **Note**: Creates a draft PR so you can review before marking ready.
+   **Note**: Creates a *draft* PR. Draft is the branch's starting dev state — "still being worked on, not yet ready for CI" — not a human approval gate. Step 11 decides whether to leave it in draft or take it out automatically.
+
+11. **Mark ready and start CI monitoring (auto, gated on a human-review check)**:
+
+   The draft state from step 10 is where the branch *starts*, not where a human has to sign off. So once the fix is genuinely complete and nothing is left that needs a person, take the PR out of draft and start CI monitoring — no separate opt-in required. The gate is a conservative "does anything still need a human?" check, and **ambiguity resolves to leaving the PR in draft.**
+
+   **Leave it in draft (do NOT mark ready) — STOP and tell the user what's outstanding — if any of these is true:**
+   - The workflow surfaced a decision that is still unresolved: a design/approach choice that was surfaced rather than resolved, an ambiguous requirement, or an open "should we file a follow-up issue?" question.
+   - The fix-and-re-review loop escalated to the user — it hit the two-round cap (step 8), or the ~3x scope tripwire (step 4) fired — and that hasn't been resolved.
+   - `superpowers:verification-before-completion` (step 9) did not fully pass.
+   - The >500-line exception in step 8 deferred Minor findings to follow-up GitHub issues that have not actually been filed yet.
+   - You are not sure. Any doubt → stay in draft and say why.
+
+   **Otherwise (fix complete, verification passed, nothing left for a human): mark the PR ready, then monitor CI.**
+
+   ```bash
+   gh pr ready
+   ```
+
+   Flipping a draft PR to ready fires a fresh `pull_request` event, which reliably (re)triggers CI — so monitoring always has a run to watch.
+
+   Then monitor CI:
+   - **Prefer a project-specific `/monitor-ci`** command if one exists in the environment — it's purpose-built for the project.
+   - **Otherwise fall back to `/poll-ci`** (the generic `gh`-based poller).
+
+   This mirrors the "prefer `/monitor-ci`, else `/poll-ci`" guidance that `/poll-ci` already documents. Report the final CI result to the user; if CI fails, surface the failing jobs rather than silently marking the task done.
 
 ## Common Mistakes
 
@@ -233,6 +266,9 @@ digraph fix_issue {
 | Letting a small change grow silently | Record an expected size at complexity assessment; if it exceeds ~3x, stop and surface the scope growth |
 | Running `/code-review-intense-flow` inside the implementation subagent | It fans out via `Task`; run it in the caller's context |
 | Skip verification | Always verify before PR |
+| Marking the PR ready while something still needs a human | Step 11 gate: unresolved decision, escalation, failed verification, or unfiled deferred issues → leave it in draft and surface why |
+| Leaving a finished PR stuck in draft | Draft is the starting dev state, not a human gate; when the fix is complete and nothing needs a human, `gh pr ready` + monitor CI automatically |
+| Marking ready but not monitoring CI | `gh pr ready` retriggers CI; follow with `/monitor-ci` (else `/poll-ci`) and report the result |
 | Wrong issue # in PR | Double-check branch name parsing |
 | "I'll just fix it quickly" for big changes | Use proper workflow |
 | Skipping tests | Every non-cosmetic fix needs tests that fail without it |
@@ -255,7 +291,9 @@ digraph fix_issue {
 - Creating PR before verification -> Verify first, always
 - Skipping issue fetch "to save time" -> Always get latest context
 - "It's obvious" for multi-file changes -> Use brainstorming
-- Creating ready-for-review PR -> Use draft PR, mark ready after review
+- Marking the PR ready while a decision is still open, verification didn't pass, or the loop escalated -> Draft is the safe default; step 11's gate errs toward draft when anything still needs a human
+- "The fix is done, I'll leave it in draft for a human to flip" -> Draft is the starting dev state, not an approval gate; if nothing needs a human, mark it ready and monitor CI (step 11)
+- Marking the PR ready and walking away without watching CI -> `gh pr ready` retriggers CI; monitor it (`/monitor-ci`, else `/poll-ci`) and report pass/fail
 - "No tests needed" for a code change -> If it changes behavior, it needs tests
 
 ## Related Skills & Commands
@@ -277,3 +315,7 @@ The specialists below are what `/code-review-intense-flow` dispatches — invoke
 - `/geo-review` - generative-engine/LLM discoverability
 - `/playwright-review` - E2E tests/ARIA verification/performance optimization
 - `/request-review` - General code review for other changes
+
+**CI monitoring (step 11, after auto-marking the PR ready):**
+- `/monitor-ci` - Project-specific CI monitor; prefer it when present in the environment
+- `/poll-ci` - Generic `gh`-based fallback that polls the branch's CI run and reports pass/fail
