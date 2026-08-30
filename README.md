@@ -400,7 +400,7 @@ Triggers when the repo contains a `dist.ini` file or the user mentions `dzil`, `
 
 ### suggest-review-after-commit
 
-Automatically suggests the most relevant review command(s) after you commit changes, with **interactive multi-select** to choose one or more reviews to run immediately:
+Automatically suggests the most relevant review command(s) after you commit changes, with **interactive multi-select** to choose one or more reviews to run immediately. It is a deterministic `command` hook that stays completely silent on every Bash call except a *successful* `git commit`, so it never interrupts unrelated commands or in-flight workflows:
 
 **Frontend Review (`/frontend-review`)**
 - Triggered by: `.tsx`, `.jsx`, `.vue`, `.css`, `.scss`, `.html`
