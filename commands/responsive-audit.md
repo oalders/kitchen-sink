@@ -61,7 +61,7 @@ inline code spans and truncate pathologically long strings. This is the standard
 - **Scope guardrail (SSRF):** only point this at URLs the user controls or explicitly expects —
   normally a local dev server. **Refuse** non-`http(s)` schemes and any link-local / cloud-metadata
   address (`169.254.0.0/16`, `[fd00:ec2::254]`, `metadata.google.internal`, etc.); for any host that
-  isn't `localhost`/`127.0.0.1`, confirm with the user that it's the intended target before
+  isn't `localhost`/`127.0.0.1`/`[::1]`, confirm with the user that it's the intended target before
   navigating. A headless browser will happily fetch internal-network pages and render metadata
   credentials into a screenshot — don't let it.
 - **Sensitive pages:** a `fullPage` screenshot and the DOM text captured below may contain PII,
@@ -117,7 +117,7 @@ control is covered and effectively unclickable — report it with the covering e
   viewport coordinates and returns `null` for any point outside the current viewport — and the height
   is pinned at ~800px, so most controls sit below the fold. Before hit-testing, either scroll the
   control into view (`el.scrollIntoView()`, then recompute its center) or skip controls whose
-  rectangle falls outside `[0, innerHeight] × [0, innerWidth]`. Treat a `null` result as "not
+  rectangle falls outside `[0, innerWidth] × [0, innerHeight]`. Treat a `null` result as "not
   measurable here," **never** as "occluded" — otherwise every below-fold control becomes a false
   positive, defeating this check's whole point.
 - Do **not** flag generic `boundingBox()` / `getBoundingClientRect()` intersection. Overlapping
