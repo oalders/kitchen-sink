@@ -40,6 +40,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/geo-review** | Generative Engine Optimization review—two modes: per-PR extraction checks (diff) and cross-page entity consistency (site) for LLM-citation visibility |
 | **/playwright-review** | Playwright test review enforcing ARIA labels, detecting UI layout issues, and optimizing performance |
 | **/request-review** | Get code review feedback without permission prompts stalling the workflow |
+| **/responsive-audit** | Drives Playwright MCP to load live URLs at 320/375/768/1280 and report responsive breakage (overflow, occluded controls, tiny touch targets/text) static review can't see |
 | **/security-review** | OWASP-based security review catching session fixation, PII logging, and timing attacks |
 | **/seo-review** | SEO review for meta tags, structured data, Open Graph, headings, and crawlability |
 
@@ -166,6 +167,17 @@ Request code review during development (before creating PR):
 - Invokes `general-purpose` with structured template
 - Returns categorized feedback (Critical/Important/Minor)
 - Allows unattended execution - can leave window while review runs
+
+#### /responsive-audit
+
+Live-discovery responsive audit that drives the Playwright MCP against already-serving URLs:
+- Sweeps each URL at four viewport widths (320px, 375px, 768px, 1280px)
+- Detects horizontal overflow (`scrollWidth > clientWidth`) and names the offending selectors
+- Flags interactive controls that are occluded (via `elementFromPoint`, not raw box overlap)
+- Flags sub-44×44px standalone touch targets and sub-12px text at mobile widths
+- Captures a full-page screenshot per viewport for what measurements can't express
+- Discovery/reporting only — no dev server, no test files, no source edits; requires a working Playwright MCP
+- Drives Playwright MCP tools directly rather than spawning `general-purpose` (deliberate departure)
 
 #### /security-review
 
