@@ -24,6 +24,7 @@ Append a row to the appropriate table below. No other file needs touching.
 | build URLs with URI | Use the `URI` module to build URLs rather than string concatenation. | judgment |
 | don't quote bareword hash keys | Don't quote hash keys that don't require it. | clear |
 | prefer Try::Tiny over eval | Prefer `Try::Tiny` over `eval` for exception handling. Modern Perl also has native `try/catch`, and not every `eval` is exception handling (e.g. `eval { require Foo }`), so suggest rather than assert. | judgment |
+| alpha-sort use statements | Alpha-sort `use` statements in newly written code. Don't reorder existing `use` statements without asking first. | judgment |
 
 ## Tests
 
@@ -36,3 +37,4 @@ Append a row to the appropriate table below. No other file needs touching.
 | no use_ok | Don't use `use_ok()` to assert a module can be loaded / is present. | clear |
 | no isa_ok on new() | Don't use `isa_ok()` to assert what `new()` returns. | clear |
 | Test::Fatal for exceptions | Prefer `Test::Fatal` for testing exceptions. | clear |
+| Test::Needs for optional modules | Replace a `require`-in-`eval` availability guard like `eval { require IO::Socket::INET; 1 }` with `Test::Needs` (e.g. `use Test::Needs 'IO::Socket::INET';`) to skip the test when the module is absent. | clear |
