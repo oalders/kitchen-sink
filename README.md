@@ -376,13 +376,14 @@ Groups Dependabot minor/patch updates per ecosystem (majors stay individual) and
 
 #### tune-perl-ci
 
-Six idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions workflows under `.github/workflows/`:
+Seven idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions workflows under `.github/workflows/`:
 - `fail-fast: false` on every matrix job
-- Extends Linux + macOS matrices through Perl 5.42
-- Bumps build + coverage jobs to `perldocker/perl-tester:5.42`
+- Extends Linux + macOS matrices through Perl 5.44
+- Bumps build + coverage jobs to `perldocker/perl-tester:5.44`
 - Restricts the `push:` trigger to the default branch
 - Adds a workflow-level `concurrency:` cancel-in-progress block
-- Pins App::cpm for Perls ≤ 5.22 (via conditional `version:` expression on `install-with-cpm@v2`)
+- Replaces each `install-with-cpm`/`install-with-cpanm` step with `setup-cpm@v1` + an explicit `cpm install` run step (`version: compat` pins cpm for Perls ≤ 5.22)
+- Drops pre-5.24 macOS/Windows matrix cells
 - Each transform lands as its own commit; re-running is a no-op
 
 #### tune-precious

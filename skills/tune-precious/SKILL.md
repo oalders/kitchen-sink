@@ -384,12 +384,9 @@ jobs:
             houseabsolute/precious
             houseabsolute/omegasort
             crate-ci/typos
-      - uses: perl-actions/install-with-cpm@v2
-        with:
-          install: |
-            App::perlvars
-            Perl::Tidy
-          sudo: false
+      - uses: perl-actions/setup-cpm@v1
+      - name: install CPAN tools
+        run: cpm install -g App::perlvars Perl::Tidy
       - name: precious lint
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -406,7 +403,7 @@ jobs:
 **Conditional lines:**
 
 - Add the `crate-ci/typos` line to `projects:` **only when T1 wired the `[commands.typos]` block.** Otherwise omit it so the install step doesn't pull a tool the lint run won't use.
-- Skip the `shogo82148/actions-setup-perl` and `perl-actions/install-with-cpm` steps entirely in typos-only mode (no Perl files in the repo means there are no CPAN tools to install).
+- Skip the `shogo82148/actions-setup-perl`, `perl-actions/setup-cpm`, and `cpm install` steps entirely in typos-only mode (no Perl files in the repo means there are no CPAN tools to install).
 
 **Why the lint command is gated on `github.event_name`:**
 
@@ -423,7 +420,7 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 
 - `precious` is the single entry point — no per-tool step.
 - `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort + typos are Rust/Go); skips compile time. The input is `projects:` (newline-delimited list of `owner/repo` slugs passed to `ubi --project`). Always pass `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` under `with:` — ubi pulls binaries through the GitHub releases API, and without an authenticated token the unauthenticated rate limit fails the install step intermittently.
-- `install-with-cpm@v2` installs the two CPAN tools precious shells out to.
+- `setup-cpm@v1` installs `cpm`, and the explicit `cpm install -g` run step installs the two CPAN tools precious shells out to.
 - Perl 5.42 (the current matrix max) is enough for the lint job; nothing in this job exercises older Perls.
 - `branches: [<default>]` + workflow-level `concurrency:` block — same conventions as `tune-perl-ci`. Resolve the default branch with the `git symbolic-ref` command shown above and substitute before writing the file.
 
@@ -768,7 +765,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 ## Related
 
 - `kitchen-sink:working-with-dist-zilla` — `dzil` patterns this skill leans on (PluginRemover vs RemovePrereqs, `CopyFilesFromBuild` rule, `dzil test --release --author`, and §7's tooling-config exclusion — the canonical `exclude_filename` vs `[PruneFiles]` list this skill defers to for `precious.toml` / `.perltidyrc` / `scripts/pre-commit`).
-- `kitchen-sink:tune-perl-ci` — sister skill for the test workflow; the lint job in T5 follows its conventions (concurrency, default-branch push, `install-with-cpm@v2`). The lint job pins Perl 5.42, so the App::cpm `version:` conditional from `tune-perl-ci` transform 6 (for Perls ≤ 5.22) is intentionally omitted here.
+- `kitchen-sink:tune-perl-ci` — sister skill for the test workflow; the lint job in T5 follows its conventions (concurrency, default-branch push, `setup-cpm@v1` + an explicit `cpm install` run step). The lint job pins Perl 5.42, so the `version: compat` selector from `tune-perl-ci` transform 6 (which pins cpm `0.998003` for Perls ≤ 5.22) is intentionally omitted here — on 5.42 `setup-cpm` installs the latest cpm anyway.
 - [precious on GitHub](https://github.com/houseabsolute/precious) — tool homepage.
 - [omegasort on GitHub](https://github.com/houseabsolute/omegasort) — sorter used by `omegasort-gitignore` / `omegasort-stopwords`.
 - [App::perlvars on metacpan](https://metacpan.org/pod/App::perlvars) — lint-time replacement for `Test::Vars`.
