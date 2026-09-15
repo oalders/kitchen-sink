@@ -52,6 +52,17 @@ Task(general-purpose):
 
     ### 1. Token Efficiency
 
+    **40K Character Limit (HARD LIMIT — check first):**
+    - Claude Code warns and degrades when a single CLAUDE.md exceeds 40,000 characters (~40K), so every file MUST stay under it.
+    - **REQUIRED**: Measure each file's character count. For each file run:
+      ```bash
+      wc -m CLAUDE.md
+      ```
+    - Flag any file at or above 40,000 characters as a **CRITICAL** issue that must be fixed.
+    - Warn on files above 32,000 characters (80% of the limit) as approaching the ceiling.
+    - For any file over the limit, the fix is mandatory, not optional: move detail into referenced docs, split into subdirectory CLAUDE.md files, or cut duplication/verbosity until it is comfortably under 40K.
+    - Report: each file's character count, whether it is over/approaching the limit, and how many characters must be removed to get under it.
+
     **Duplication Between Files:**
     - Multiple CLAUDE.md files with overlapping content
     - Same instructions repeated in different files
@@ -79,6 +90,7 @@ Task(general-purpose):
     **Metrics to Report:**
     ```
     Token Efficiency:
+    - Characters per file: X chars (LIMIT: 40,000 — OVER/APPROACHING/OK)
     - Total words: X words across Y files
     - Duplication: ~Z words (N% of total)
     - Verbose sections: M sections, ~P words that could be Q words
@@ -298,6 +310,8 @@ Task(general-purpose):
     2. [Issue] - [Impact] - [Location]
     3. [Issue] - [Impact] - [Location]
 
+    **40K Limit:** [PASS/FAIL] — list any file at or above 40,000 characters (CRITICAL) and any above 32,000 (warning).
+
     **Token Efficiency:** Current X words → Recommended Y words (Z% reduction)
 
     ### Critical Issues (Must Fix)
@@ -329,6 +343,9 @@ Task(general-purpose):
     ├─ Files Found: X
     ├─ Total Words: Y
     ├─ Total Lines: Z
+    ├─ Characters per file (LIMIT 40,000):
+    │  ├─ path/to/CLAUDE.md: N chars (OVER/APPROACHING/OK)
+    │  └─ ...
     │
     ├─ Token Efficiency:
     │  ├─ Duplication: ~N words (M%)
@@ -415,6 +432,7 @@ Task(general-purpose):
     ## Critical Rules for Auditor
 
     **DO:**
+    - Measure EVERY file's character count with `wc -m` and enforce the 40,000-character limit
     - Verify EVERY file reference against actual filesystem
     - Test EVERY command path for existence
     - Compare EVERY environment variable with codebase usage
