@@ -91,8 +91,9 @@ Hooks live in `hooks/hooks.json` at the plugin root.
 
 | Hook | Description |
 |------|-------------|
-| **suggest-review-after-commit** | Smart PostToolUse hook that analyzes committed files and suggests relevant review commands (`/frontend-review`, `/playwright-review`, `/security-review`, `/agent-instructions-review`, or `/request-review`) based on file types and patterns |
+| **suggest-review-after-commit** | Smart PostToolUse hook that runs after a successful `git commit`. On `fix-NNN` branches it points only at `/code-review-intense-flow` (required by fix-gh-issue before the PR); elsewhere it offers `/code-review-intense-flow` first as the default, plus the relevant specialists (`/frontend-review`, `/playwright-review`, `/security-review`, `/agent-instructions-review`, or `/request-review`) based on file types and patterns |
 | **enforce-gh-attribution** | PreToolUse Bash hook that blocks mutating `gh` writes (issue/PR comment/create/edit-with-body, and `gh api` POST/PATCH to comment/issue/pull/review/reply endpoints) whose resolved body lacks the attribution footer. A fail-open, defense-in-depth backstop to the skills that add attribution |
+| **require-review-before-pr** | On `fix-NNN` branches, denies `gh pr create` / `gh pr ready` until `/code-review-intense-flow` has been invoked on the current HEAD SHA (recorded via PostToolUse `Skill` and UserPromptSubmit). Fail-open; user-only bypass via `KITCHEN_SINK_ALLOW_UNREVIEWED_PR=1` |
 
 ## Commands Overview
 
@@ -413,7 +414,9 @@ Triggers when the repo contains a `dist.ini` file or the user mentions `dzil`, `
 
 ### suggest-review-after-commit
 
-Automatically suggests the most relevant review command(s) after you commit changes, with **interactive multi-select** to choose one or more reviews to run immediately. It is a deterministic `command` hook that stays completely silent on every Bash call except a *successful* `git commit`, so it never interrupts unrelated commands or in-flight workflows:
+Automatically suggests the most relevant review command(s) after you commit changes, with **interactive multi-select** to choose one or more reviews to run immediately. It is a deterministic `command` hook that stays completely silent on every Bash call except a *successful* `git commit`, so it never interrupts unrelated commands or in-flight workflows.
+
+On `fix-NNN` branches (the `/fix-gh-issue` workflow) it skips the menu and points only at `/code-review-intense-flow`, which that workflow requires before the PR (see [require-review-before-pr](#require-review-before-pr)). Elsewhere the menu lists **Intense-flow (`/code-review-intense-flow`)** first as the default — it routes to the general reviewer, security, and the path-matched specialists below automatically — followed by the specialists whose files are present:
 
 **Frontend Review (`/frontend-review`)**
 - Triggered by: `.tsx`, `.jsx`, `.vue`, `.css`, `.scss`, `.html`
@@ -445,10 +448,13 @@ I notice you just committed 3 file(s):
 🎭 Playwright: header.spec.ts
 
 Which review(s) would you like to run?
+□ Intense-flow Review (default) - General + security + path-matched specialists, routed automatically
 □ Frontend Review - Images, accessibility, responsive design, CSS patterns
 □ Playwright Review - Accessibility, UI issues, performance optimization
 □ Generic Review - Comprehensive code review of all changes
 ```
+
+Select multiple reviews with checkboxes, and they'll run sequentially with a combined summary at the end.
 
 ### enforce-gh-attribution
 
@@ -461,7 +467,15 @@ A `PreToolUse` Bash hook (`hooks/enforce-gh-attribution.py`) that hard-blocks mu
 
 It is a **defense-in-depth backstop** — the skills adding attribution remain the primary mechanism — and it **fails open** on any unresolvable or ambiguous input (heredocs, stdin pipes, dynamic `$(...)` bodies, unreadable body files, compound/redirected commands, unparseable quoting). It matches the version-independent substring `[Claude Code](https://claude.com/claude-code)` and never a hardcoded model version. See [`docs/attribution.md`](docs/attribution.md) for the full attribution contract.
 
-Select multiple reviews with checkboxes, and they'll run sequentially with a combined summary at the end.
+### require-review-before-pr
+
+A multi-event hook (`hooks/require-review-before-pr.py`) that mechanically enforces the `/fix-gh-issue` rule "run `/code-review-intense-flow` before opening the PR":
+
+- **Record** — `PostToolUse` on `Skill` (`code-review-intense-flow` or `kitchen-sink:code-review-intense-flow`) and `UserPromptSubmit` (a prompt starting with `/code-review-intense-flow`) write a marker for the current HEAD SHA at `$(git rev-parse --git-common-dir)/kitchen-sink/reviewed/<sha>`, shared across worktrees.
+- **Gate** — `PreToolUse` on `Bash`: on branches matching `fix-NNN`, `gh pr create` and `gh pr ready` (not `gh pr ready --undo`) are denied unless a marker exists for the current HEAD. Any new commit moves HEAD, so review-fix commits need a re-review. A single command that both runs `git commit` and `gh pr create`/`ready` is always denied, because HEAD at PreToolUse time is the pre-commit SHA.
+- **Bypass** — only via `KITCHEN_SINK_ALLOW_UNREVIEWED_PR=1` in the environment Claude Code was launched from; an inline `VAR=1 gh pr create` prefix in the command does not bypass.
+
+It **fails open** (allows silently) on bad input, non-git directories, git errors/timeouts, detached HEAD, and other branches. Known gaps: the marker records that intense-flow was *invoked*, not that it passed clean; aliases, wrapper scripts, `gh` invoked by path, or `gh api` can evade the regex detection; the marker is a plain file, so this is a drift guardrail, not a security boundary.
 
 ## License
 

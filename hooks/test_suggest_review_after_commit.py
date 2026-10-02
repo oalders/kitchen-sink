@@ -8,6 +8,9 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 
@@ -104,6 +107,51 @@ class MainOutput(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data["hookSpecificOutput"]["hookEventName"], "PostToolUse")
         self.assertIn("AskUserQuestion", data["hookSpecificOutput"]["additionalContext"])
+
+    def test_generic_menu_lists_intense_flow_first(self):
+        rc, out = self._run(
+            {"tool_input": {"command": 'git commit -m "x"'}, "tool_response": ok()}
+        )
+        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("/code-review-intense-flow", ctx)
+        self.assertLess(ctx.index("/code-review-intense-flow"), ctx.index("/frontend-review"))
+
+    def _repo_on(self, branch):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for args in (
+            ["init", "-q", "-b", "main"],
+            ["config", "user.name", "Test"],
+            ["config", "user.email", "test@example.com"],
+            ["config", "commit.gpgsign", "false"],
+            ["commit", "-q", "--allow-empty", "-m", "one"],
+            ["checkout", "-q", "-B", branch],
+        ):
+            subprocess.run(["git", "-C", tmp, *args], check=True, capture_output=True)
+        return tmp
+
+    def _ctx_in(self, cwd):
+        rc, out = self._run(
+            {"tool_input": {"command": 'git commit -m "x"'}, "tool_response": ok(), "cwd": cwd}
+        )
+        self.assertEqual(rc, 0)
+        return json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+    def test_fix_branch_points_only_at_intense_flow(self):
+        ctx = self._ctx_in(self._repo_on("fix-123"))
+        self.assertIn("/code-review-intense-flow", ctx)
+        self.assertIn("require-review-before-pr", ctx)
+        self.assertNotIn("AskUserQuestion", ctx)
+        self.assertNotIn("/frontend-review", ctx)
+
+    def test_non_fix_branch_gets_menu(self):
+        for branch in ("main", "fix-123-extra"):
+            ctx = self._ctx_in(self._repo_on(branch))
+            self.assertIn("AskUserQuestion", ctx, branch)
+
+    def test_unknown_branch_falls_back_to_menu(self):
+        ctx = self._ctx_in("/nonexistent/dir")
+        self.assertIn("AskUserQuestion", ctx)
 
     def test_bad_json_fails_silent(self):
         sr.sys.stdin = io.StringIO("not json{")

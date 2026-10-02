@@ -11,15 +11,24 @@ The gate is now deterministic and cheap: this script reads the PostToolUse
 payload on stdin and, for anything that is not a *successful* ``git commit``,
 exits silently with no output (zero interruption). Only on a real commit does it
 emit ``additionalContext`` asking the model to categorize the changed files and
-offer the relevant ``/*-review`` commands via AskUserQuestion.
+offer the relevant ``/*-review`` commands via AskUserQuestion, with
+``/code-review-intense-flow`` listed first as the default. On ``fix-NNN``
+branches (the fix-gh-issue workflow) it instead points only at
+``/code-review-intense-flow``, which that workflow requires before a PR and the
+require-review-before-pr hook enforces. If the branch cannot be determined it
+falls back to the generic menu.
 
 Bias: when in doubt, stay silent. A missed suggestion is harmless; a false
 positive re-introduces the interruption this hook exists to remove.
 """
 
 import json
+import os
 import re
+import subprocess
 import sys
+
+FIX_BRANCH_RE = re.compile(r"^fix-\d+$")
 
 # A `git commit` invocation: `git` (with optional global flags like -C path,
 # -c key=val, --git-dir=...) followed by the `commit` subcommand. Anchored so it
@@ -78,11 +87,36 @@ SUGGESTION = """A git commit just succeeded. Suggest relevant reviews before mov
    - playwright/e2e: `.spec.`/`.test.` files or `e2e/`/`playwright/`/`__tests__/e2e/` dirs;
    - agent-instructions: `CLAUDE.md`/`AGENTS.md`/`.cursorrules`/`.github/copilot-instructions.md`, or under `.cursor/rules/`/`.claude/` (any `.md`);
    - other: everything else.
-3. Use the AskUserQuestion tool (multiSelect: true) offering ONLY the review types whose files are present, plus Generic as a fallback: Frontend `/frontend-review`, Playwright `/playwright-review`, Security `/security-review`, Agent-Instructions `/agent-instructions-review`, Generic `/request-review`.
+3. Use the AskUserQuestion tool (multiSelect: true). List Intense-flow `/code-review-intense-flow` FIRST as the default option (it routes to the general reviewer, security, and the path-matched specialists automatically), then ONLY the specialist review types whose files are present, plus Generic as a fallback: Frontend `/frontend-review`, Playwright `/playwright-review`, Security `/security-review`, Agent-Instructions `/agent-instructions-review`, Generic `/request-review`.
 4. Run each selected review sequentially and summarize the findings afterward.
 5. List file categories, not every file. If the user declines, drop it and continue — do not nag.
 
 If you are in the middle of another workflow (e.g. fix-gh-issue) that has its own review step, defer to that workflow instead of interrupting it here."""
+
+
+FIX_BRANCH_SUGGESTION = """A git commit just succeeded on a fix-NNN branch (the fix-gh-issue workflow).
+
+That workflow requires `/code-review-intense-flow` (run it via the Skill tool) against the current HEAD before `gh pr create` / `gh pr ready`, and the require-review-before-pr hook enforces it: the PR command is denied until intense-flow has been run on this exact HEAD SHA. Any later review-fix commit moves HEAD and needs a re-review. Do not substitute a single specialist review (e.g. `/security-review`) or offer a menu of reviewers — intense-flow already routes to them.
+
+If you are mid-way through the workflow's own review step, continue it; otherwise run `/code-review-intense-flow` before opening or readying the PR."""
+
+
+def on_fix_branch(cwd) -> bool:
+    """True only when git positively reports a fix-<digits> branch in cwd."""
+    if not isinstance(cwd, str) or not os.path.isdir(cwd):
+        return False
+    try:
+        proc = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    return bool(FIX_BRANCH_RE.match(proc.stdout.strip()))
 
 
 def main() -> int:
@@ -101,7 +135,11 @@ def main() -> int:
         {
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "additionalContext": SUGGESTION,
+                "additionalContext": (
+                    FIX_BRANCH_SUGGESTION
+                    if on_fix_branch(payload.get("cwd"))
+                    else SUGGESTION
+                ),
             }
         },
         sys.stdout,
