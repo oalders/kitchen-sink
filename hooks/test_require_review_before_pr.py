@@ -177,8 +177,12 @@ class Gate(RepoCase):
         for cmd in ("git status", "gh pr view 3", "gh pr list",
                     "gh issue create --title t", "gh pr checks",
                     "gh pr created", 'echo "gh pr create"',
-                    "git commit -m x"):
+                    "echo 'gh pr create'", "git commit -m x"):
             self.assertFalse(is_deny(self.bash(cmd)), cmd)
+
+    def test_unquoted_mention_false_positive_denied(self):
+        # Documented accepted gap: unquoted mentions look like a real call.
+        self.assertTrue(is_deny(self.bash("echo gh pr create")))
 
     def test_chained_commit_and_pr_denied_even_with_marker(self):
         self.skill("code-review-intense-flow")

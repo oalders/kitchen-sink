@@ -475,7 +475,7 @@ A multi-event hook (`hooks/require-review-before-pr.py`) that mechanically enfor
 - **Gate** — `PreToolUse` on `Bash`: on branches matching `fix-NNN`, `gh pr create` and `gh pr ready` (not `gh pr ready --undo`) are denied unless a marker exists for the current HEAD. Any new commit moves HEAD, so review-fix commits need a re-review. A single command that both runs `git commit` and `gh pr create`/`ready` is always denied, because HEAD at PreToolUse time is the pre-commit SHA.
 - **Bypass** — only via `KITCHEN_SINK_ALLOW_UNREVIEWED_PR=1` in the environment Claude Code was launched from; an inline `VAR=1 gh pr create` prefix in the command does not bypass.
 
-It **fails open** (allows silently) on bad input, non-git directories, git errors/timeouts, detached HEAD, and other branches. Known gaps: the marker records that intense-flow was *invoked*, not that it passed clean; aliases, wrapper scripts, or `gh api` can evade the regex detection.
+It **fails open** (allows silently) on bad input, non-git directories, git errors/timeouts, detached HEAD, and other branches. Known gaps: the marker records that intense-flow was *invoked*, not that it passed clean; aliases, wrapper scripts, `gh` invoked by path, or `gh api` can evade the regex detection; the marker is a plain file, so this is a drift guardrail, not a security boundary.
 
 ## License
 

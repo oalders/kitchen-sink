@@ -43,8 +43,14 @@ Known accepted gaps (fail-open by design)
   passed clean. The fix-and-re-review loop is still the workflow's job.
 - Detection is a simple regex over the command string; shell aliases, wrapper
   scripts, ``eval``, ``gh api`` calls that create PRs, or a ``cd`` to another
-  repo earlier in the chain evade or confuse it. A quoted mention such as
-  ``echo 'gh pr create'`` can false-positive (deny), which is harmless.
+  repo earlier in the chain evade or confuse it. ``gh`` invoked by path
+  (``/usr/bin/gh``, ``./gh``) or via an alias/wrapper is not detected.
+- Quoted mentions such as ``echo 'gh pr create'`` are allowed (the quote, not
+  whitespace, precedes ``gh``). An unquoted mention such as
+  ``echo gh pr create`` false-positives (deny), which is harmless.
+- The marker is a plain file: anything that creates
+  ``<git-common-dir>/kitchen-sink/reviewed/<sha>`` satisfies the gate. This is
+  a drift guardrail against skipped reviews, not a security boundary.
 - Only ``fix-<digits>`` branches are gated; the repo checked is the payload
   ``cwd``, regardless of ``gh -R`` / ``git -C`` targets in the command.
 """
@@ -57,7 +63,11 @@ import subprocess
 import sys
 
 ENV_BYPASS = "KITCHEN_SINK_ALLOW_UNREVIEWED_PR"
-GIT_TIMEOUT = 5  # seconds
+# Invariant: (max git calls on any path) x GIT_TIMEOUT must stay well below
+# every hooks.json timeout for this script (10s). PreToolUse makes up to 3
+# sequential calls (3 x 2 = 6s); if the harness kills the hook, it silently
+# allows the command.
+GIT_TIMEOUT = 2  # seconds
 
 REVIEW_SKILLS = {"code-review-intense-flow", "kitchen-sink:code-review-intense-flow"}
 

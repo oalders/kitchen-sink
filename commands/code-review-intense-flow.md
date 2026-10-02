@@ -22,6 +22,8 @@ Don't use when:
 - Quick sanity check during local iteration — use `/code-review-flow` instead
 - Diff is doc-only AND you want zero ceremony — use `/code-review-flow` or skip review
 
+Caveat: on a fix-gh-issue `fix-NNN` branch, `/code-review-intense-flow` is always required before the PR, regardless of diff size (see `commands/fix-gh-issue.md` step 8; enforced by the require-review-before-pr hook).
+
 ## Steps
 
 ### 1. Get Git SHAs

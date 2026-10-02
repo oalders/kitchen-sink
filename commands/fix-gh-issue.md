@@ -172,9 +172,9 @@ digraph fix_issue {
    - Run the test suite to confirm all tests pass (both new and existing)
 
 8. **Code Review (required)**:
-   - **If direct implementation**: Run **`/code-review-intense-flow`** (via the Skill tool) — always, whatever the change size. It fans out to a general-purpose reviewer (always) + `/security-review` (default unless doc-only) + frontend/seo/geo/playwright by path, plus new-route → e2e-coverage detection. Do NOT substitute `/code-review-flow`, a single specialist, or a hand-matched reviewer from a table; that routing lives inside `/code-review-intense-flow` as the single source of truth, and self-selection is exactly what loses the always-on general reviewer and the default security pass.
+   - **If direct implementation**: Run **`/code-review-intense-flow`** (via the Skill tool) — always, whatever the change size. Do NOT substitute `/code-review-flow`, a single specialist, or a hand-matched reviewer from a table. Intense-flow is the single source of truth for routing: it fans out to a general-purpose reviewer (always) + `/security-review` (default unless doc-only) + frontend/seo/geo/playwright by path, plus new-route → e2e-coverage detection. Self-selecting reviewers loses the always-on general reviewer and the default security pass.
    - **If you used `subagent-driven-development`**: tasks were already reviewed between steps, but still run `/code-review-intense-flow` once against the final HEAD — the gate below requires it.
-   - **Enforced by the `require-review-before-pr` hook**: on `fix-NNN` branches, `gh pr create` and `gh pr ready` are denied unless `/code-review-intense-flow` was invoked on the *current* HEAD SHA (it records a marker per SHA). Every review-fix commit moves HEAD, so the final re-review is what unlocks the PR. Never chain `git commit` (or commit + push) with `gh pr create` / `gh pr ready` in one Bash call — the hook sees the pre-commit HEAD and denies it; commit in its own call, review, then open the PR. Only the user can bypass the gate (`KITCHEN_SINK_ALLOW_UNREVIEWED_PR=1` in the environment Claude Code was launched from).
+   - **Enforced mechanically by the `require-review-before-pr` hook** (see README): `gh pr create`/`gh pr ready` are denied on a `fix-NNN` branch until `/code-review-intense-flow` has run on the current HEAD, so every review-fix commit needs a re-review. Never chain `git commit` with `gh pr create`/`ready` in one Bash call.
 
    - **REQUIRED: Fix-and-re-review loop**:
      1. Run `/code-review-intense-flow`
@@ -305,7 +305,7 @@ digraph fix_issue {
 **Superpowers plugin:**
 - **REQUIRED**: `superpowers:verification-before-completion` before PR
 - **Recommended for non-trivial**: `superpowers:brainstorming`
-- **Recommended for multi-task**: `superpowers:subagent-driven-development` (includes built-in review)
+- **Recommended for multi-task**: `superpowers:subagent-driven-development` (includes built-in per-task review; step 8 still requires one `/code-review-intense-flow` pass on the final HEAD before the PR)
 - **Recommended for complex**: `superpowers:writing-plans`
 
 **Kitchen-sink code review (required before every PR):**
