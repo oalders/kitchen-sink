@@ -49,6 +49,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Command | Description |
 |---------|-------------|
 | **/address-gh-review** | A robot that does the urgent repairs now and books appointments for the rest |
+| **/codex-review** | Shows or switches this repo's Codex review mode (`on` = local loop plus a mandatory `@codex review` bot gate, `local`, `off`, `default`) via `git config kitchen-sink.codexReview` |
 | **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
 | **/draft-pr** | Creates a draft PR that closes the GitHub issue inferred from your branch name |
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
@@ -71,6 +72,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Skill | Description |
 |-------|-------------|
 | **adversarial-review** | Two subagents compete under a scoped incentive to find real, reproducible defects—enforces scope discipline so findings count doesn't inflate across rounds |
+| **codex-review-loop** | Runs OpenAI Codex locally on the branch and loops fix → re-review until P0–P2 are gone, then (in `github` mode) gates readiness on the Codex GitHub bot and resolves its threads |
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **implement-design-handoff** | Wires a design-system / component-export handoff into an app's real templates and CSS faithfully, forcing a property-by-property visual-parity check and protecting untouched surfaces |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
@@ -216,6 +218,13 @@ Addresses PR code review feedback:
 - Creates GitHub issues for deferred items
 - Runs tests and pushes when done
 
+#### /codex-review
+
+Shows or switches the per-clone Codex review mode used by the `codex-review-loop` skill:
+- `on` / `github`: local Codex loop, plus a mandatory `@codex review` gate from the GitHub bot before the PR is marked ready
+- `local`: local loop only; `off`: skip Codex; `default`: unset (local when `codex` is installed)
+- Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
+
 #### /break-into-gh-issues
 
 Breaks down work into manageable GitHub issues:
@@ -324,6 +333,15 @@ Two subagents review the same work in parallel, competing under an incentive tha
 - Pastes a verbatim reviewer brief with anti-splitting and test-falsification rules
 - Mandatory triage step classifies findings in-scope / out-of-scope / wontfix before anything reaches you
 - Presents actionable findings, hypotheses checked clean, rejected out-of-scope items, and tests flagged as theatre
+
+#### codex-review-loop
+
+Catches what Claude's self-review misses, without spending CI minutes on it:
+- Runs `codex exec review --base origin/<default>` locally and classifies findings; P0–P2 block, P3 is advisory
+- Triage → fix → self-review → re-run, capped at two rounds; declined findings need evidence and the user's confirmation
+- In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD (a timeout is never treated as a pass), then replies on and resolves the threads it fixed
+- `codex_loop.py` helper (`mode`, `local-review`, `gh-wait`, `gh-threads`, `gh-resolve`), unit-tested in `test_codex_loop.py`
+- Called by `/fix-gh-issue` (step 8.5 and the step 10 bot gate)
 
 #### code-review-flow
 
