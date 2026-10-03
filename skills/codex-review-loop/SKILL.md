@@ -17,6 +17,7 @@ The helper is `codex_loop.py`, in this skill's base directory. Below it is calle
 
 ```bash
 python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_version": ..., "outer_sandbox": {"enabled": ..., "source": ...}}
+                      # codex_version is omitted when mode is off or codex can't run
 ```
 
 `codex_version` proves the reported `codex` actually runs here; if it can't, `mode` exits `2`.
@@ -35,9 +36,11 @@ Codex's own sandbox (bubblewrap) can't start inside an outer sandbox such as non
 
 - Under nono it is on by default (`source: nono`).
 - `git config --local kitchen-sink.codexOuterSandbox false` turns it off; `true` turns it on under another outer sandbox (e.g. a container). It must only be `true` when an outer sandbox really confines the process.
+- The key is read from local repo config only (`--local`); global, system, or included config is ignored.
 - **Never set this key yourself.** That is the user's decision.
+- When `outer_sandbox.enabled` is true, say so in your report to the user and in the PR body: Codex ran with its own sandbox bypassed (give the `source`).
 
-If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap error), `local-review` exits `2`. That is a tool error: STOP and report it. It is never a pass.
+If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap error), `local-review` exits `2`. That is a tool error: STOP and report it. It is never a pass. If the error suggests enabling the bypass, relay that to the user; never run the `git config` command yourself.
 
 ## Phase 1: Local loop (before pushing)
 
@@ -112,5 +115,5 @@ Only the user can override the gate, and only in their own words. A deadline, a 
 | "Resolve threads as soon as I push the fix" | Resolve only after the bot's clean review of HEAD. |
 | "I'll quietly resolve the thread I disagree with" | Declined threads stay open for the user. |
 | "`-f body=\"Fixed in ...\"` is fine" | Missing footer, and a shell-injection risk. Use `--body-file` / `-F body=@file`. |
-| "Codex said review blocked but the JSON was clean" | A review that never read the diff is not a pass. Exit `2`: STOP. |
+| "Codex's summary says it couldn't inspect the changes, but the JSON says clean" | A review that never read the diff is not a pass. STOP and report it, even if `local-review` didn't catch it. |
 | "Codex isn't installed; I'll skip it" | In `github` or `local` mode that's an error to report, not a skip. |

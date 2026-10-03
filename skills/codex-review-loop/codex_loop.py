@@ -17,8 +17,7 @@ Posting comments (`@codex review`, thread replies) is deliberately NOT done
 here: those go through plain `gh` calls in the skill so the attribution hook
 can see them.
 
-Under an outer sandbox (nono by default, or git config
-kitchen-sink.codexOuterSandbox=true), Codex's inner sandbox is bypassed.
+Outer-sandbox bypass policy: see SKILL.md.
 
 Exit codes: 0 = clean / success, 1 = blocking findings (or timeout for
 gh-wait), 2 = usage or tool error.
@@ -82,10 +81,14 @@ def resolve_outer_sandbox(configured, nono_cap_file):
 
 
 def outer_sandbox():
-    proc = run(["git", "config", "--type=bool", "--get", OUTER_SANDBOX_KEY], check=False)
+    # --local only: global, system, or included config must not enable the bypass.
+    proc = run(["git", "config", "--local", "--type=bool", "--get", OUTER_SANDBOX_KEY], check=False)
     if proc.returncode not in (0, 1):
         raise ToolError(f"{OUTER_SANDBOX_KEY} is not a boolean: {proc.stderr.strip()}")
-    enabled, source = resolve_outer_sandbox(proc.stdout.strip(), os.environ.get("NONO_CAP_FILE"))
+    # nono sets NONO_CAP_FILE for sandboxed processes; `nono why --self` uses it
+    # to decide whether it is running inside a sandbox.
+    nono_cap_file = os.environ.get("NONO_CAP_FILE")
+    enabled, source = resolve_outer_sandbox(proc.stdout.strip(), nono_cap_file)
     return {"enabled": enabled, "source": source}
 
 
@@ -176,8 +179,16 @@ def cmd_local_review(args):
     reason = blind_review_reason(text, proc.stderr, result)
     if reason:
         msg = f"codex review could not inspect the diff: {reason} (raw output: {out_path})"
-        if not sandbox["enabled"]:
-            msg += f"; under an outer sandbox enable the bypass with git config --local {OUTER_SANDBOX_KEY} true"
+        if sandbox["enabled"]:
+            msg += (
+                f"; the outer-sandbox bypass was already on (source: {sandbox['source']}),"
+                " so this needs investigation"
+            )
+        else:
+            msg += (
+                "; if an outer sandbox confines this process, ask the user to run:"
+                f" git config --local {OUTER_SANDBOX_KEY} true (do not run it yourself)"
+            )
         raise ToolError(msg)
     result["outer_sandbox"] = sandbox
     result["raw_output"] = out_path

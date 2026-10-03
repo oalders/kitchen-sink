@@ -4,9 +4,16 @@
 Run: python3 skills/codex-review-loop/test_codex_loop.py
 """
 
+import contextlib
 import importlib.util
+import io
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
+from unittest import mock
 
 _MOD_PATH = os.path.join(os.path.dirname(__file__), "codex_loop.py")
 _spec = importlib.util.spec_from_file_location("codex_loop", _MOD_PATH)
@@ -126,6 +133,82 @@ class OuterSandbox(unittest.TestCase):
         cmd = cl.review_command("/usr/bin/codex", "origin/main", "/o.txt", None, False)
         self.assertNotIn(cl.BYPASS_FLAG, cmd)
         self.assertNotIn("--title", cmd)
+
+    def test_config_read_is_local_only(self):
+        calls = []
+
+        def fake_run(cmd, check=True, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+
+        with mock.patch.object(cl, "run", fake_run), mock.patch.dict(os.environ, {"NONO_CAP_FILE": ""}):
+            self.assertEqual(cl.outer_sandbox(), {"enabled": False, "source": "default"})
+        self.assertEqual(calls[0][:3], ["git", "config", "--local"])
+        self.assertIn(cl.OUTER_SANDBOX_KEY, calls[0])
+
+
+FAKE_CODEX = """#!{python}
+import json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "argv.json"), "w") as fh:
+    json.dump(sys.argv[1:], fh)
+with open(os.path.join(here, "summary.txt")) as fh:
+    summary = fh.read()
+args = sys.argv[1:]
+with open(args[args.index("-o") + 1], "w") as fh:
+    fh.write(summary)
+"""
+
+
+class LocalReviewIntegration(unittest.TestCase):
+    """Run `local-review` end to end against a fake `codex` on PATH."""
+
+    def setUp(self):
+        key = subprocess.run(
+            ["git", "config", "--local", "--get", cl.OUTER_SANDBOX_KEY], capture_output=True, text=True
+        )
+        if key.returncode == 0:
+            self.skipTest(f"{cl.OUTER_SANDBOX_KEY} is set in this repo's local config")
+        self.tmp = tempfile.TemporaryDirectory(prefix="fake-codex-")
+        self.addCleanup(self.tmp.cleanup)
+        codex = os.path.join(self.tmp.name, "codex")
+        with open(codex, "w") as fh:
+            fh.write(FAKE_CODEX.format(python=sys.executable))
+        os.chmod(codex, 0o755)
+
+    def run_review(self, summary, nono_cap_file):
+        with open(os.path.join(self.tmp.name, "summary.txt"), "w") as fh:
+            fh.write(summary)
+        env = {"PATH": self.tmp.name + os.pathsep + os.environ.get("PATH", ""), "TMPDIR": self.tmp.name}
+        env["NONO_CAP_FILE"] = nono_cap_file
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out):
+            rc = cl.main(["local-review", "--base", "HEAD"])
+        with open(os.path.join(self.tmp.name, "argv.json")) as fh:
+            argv = json.load(fh)
+        return rc, json.loads(out.getvalue()), argv
+
+    def test_blocked_review_is_tool_error(self):
+        rc, out, argv = self.run_review(BLOCKED_OUTPUT, "")
+        self.assertEqual(rc, 2)
+        self.assertIn("could not inspect the diff", out["error"])
+        self.assertIn("ask the user to run", out["error"])
+        self.assertNotIn(cl.BYPASS_FLAG, argv)
+
+    def test_blocked_review_with_bypass_needs_investigation(self):
+        rc, out, argv = self.run_review(BLOCKED_OUTPUT, "/x/cap")
+        self.assertEqual(rc, 2)
+        self.assertIn("could not inspect the diff", out["error"])
+        self.assertIn("already on (source: nono)", out["error"])
+        self.assertIn(cl.BYPASS_FLAG, argv)
+
+    def test_clean_review_under_nono_passes_bypass(self):
+        rc, out, argv = self.run_review(CLEAN_OUTPUT, "/x/cap")
+        self.assertEqual(rc, 0)
+        self.assertTrue(out["clean"])
+        self.assertEqual(out["outer_sandbox"], {"enabled": True, "source": "nono"})
+        self.assertEqual(argv[:2], ["exec", "review"])
+        self.assertIn(cl.BYPASS_FLAG, argv)
 
 
 def review(login=BOT, commit=SHA, rid=1):
