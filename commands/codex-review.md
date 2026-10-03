@@ -30,5 +30,6 @@ Steps:
    git config --get kitchen-sink.codexReview   # empty: default
    command -v codex
    ```
+   Also report the outer-sandbox state (`kitchen-sink.codexOuterSandbox`; `python3 <codex-review-loop skill dir>/codex_loop.py mode` shows its effective `outer_sandbox` and the `codex_version` that actually runs). Never change that key yourself.
    When unset, the effective mode is `local` if `codex` is found, otherwise `off`. Say whether the mode came from config or from the default. If the mode is `github` or `local` but `codex` is missing, warn the user that every `codex-review-loop` run in this repo will stop with an error until they install `codex` or change the mode.
 4. When the mode is `github`, remind the user that the repo needs the Codex GitHub integration set up to review PRs. Without it, `@codex review` gets no answer and the gate times out.

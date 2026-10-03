@@ -82,6 +82,53 @@ class ResolveMode(unittest.TestCase):
         self.assertEqual(cl.resolve_mode("", False), ("off", "default"))
 
 
+BLOCKED_OUTPUT = (
+    'Review blocked: attempts to run the requested git diff failed with "error building '
+    'bubblewrap command: Permission denied". The verdict is not a confirmed defect '
+    "assessment; I could not inspect the changes or verify correctness.\n"
+)
+
+
+class BlindReview(unittest.TestCase):
+    def reason(self, text, stderr=""):
+        return cl.blind_review_reason(text, stderr, cl.parse_local_review(text))
+
+    def test_review_blocked_summary_is_blind(self):
+        self.assertIsNotNone(self.reason(BLOCKED_OUTPUT))
+        self.assertIsNotNone(self.reason("\nreview BLOCKED: no access\n"))
+
+    def test_bubblewrap_in_stderr_is_blind(self):
+        stderr = "exec failed: error building bubblewrap command: Permission denied"
+        self.assertIsNotNone(self.reason(CLEAN_OUTPUT, stderr))
+
+    def test_clean_review_is_not_blind(self):
+        self.assertIsNone(self.reason(CLEAN_OUTPUT, "WARNING: something"))
+
+    def test_findings_mentioning_bubblewrap_not_blind(self):
+        text = FINDINGS_OUTPUT + "Mentions error building bubblewrap command in a string.\n"
+        self.assertIsNone(self.reason(text, "error building bubblewrap command"))
+
+
+class OuterSandbox(unittest.TestCase):
+    def test_config_overrides_nono(self):
+        self.assertEqual(cl.resolve_outer_sandbox("false", "/x/cap"), (False, "git-config"))
+        self.assertEqual(cl.resolve_outer_sandbox("true", ""), (True, "git-config"))
+
+    def test_unset_follows_nono_env(self):
+        self.assertEqual(cl.resolve_outer_sandbox("", "/x/cap"), (True, "nono"))
+        self.assertEqual(cl.resolve_outer_sandbox("", None), (False, "default"))
+        self.assertEqual(cl.resolve_outer_sandbox("", ""), (False, "default"))
+
+    def test_review_command_bypass_flag(self):
+        cmd = cl.review_command("/usr/bin/codex", "origin/main", "/o.txt", "T", True)
+        self.assertEqual(cmd[0], "/usr/bin/codex")
+        self.assertEqual(cmd[-1], cl.BYPASS_FLAG)
+        self.assertIn("--title", cmd)
+        cmd = cl.review_command("/usr/bin/codex", "origin/main", "/o.txt", None, False)
+        self.assertNotIn(cl.BYPASS_FLAG, cmd)
+        self.assertNotIn("--title", cmd)
+
+
 def review(login=BOT, commit=SHA, rid=1):
     return {"id": rid, "user": {"login": login}, "commit_id": commit}
 

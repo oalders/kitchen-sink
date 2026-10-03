@@ -3,8 +3,11 @@
 
 Subcommands (all print JSON on stdout):
 
-  mode                      Effective Codex review mode for this repo.
+  mode                      Effective Codex review mode for this repo, plus
+                            the codex version and outer-sandbox state.
   local-review --base REF   Run `codex exec review` and classify its findings.
+                            A review that could not read the diff (Codex's
+                            own sandbox failed) is a tool error, not a pass.
   gh-wait --sha SHA         Wait for the Codex GitHub bot to review SHA
                             (--trigger-comment ID to count its +1 reaction).
   gh-threads                List unresolved review threads opened by the bot.
@@ -13,6 +16,9 @@ Subcommands (all print JSON on stdout):
 Posting comments (`@codex review`, thread replies) is deliberately NOT done
 here: those go through plain `gh` calls in the skill so the attribution hook
 can see them.
+
+Under an outer sandbox (nono by default, or git config
+kitchen-sink.codexOuterSandbox=true), Codex's inner sandbox is bypassed.
 
 Exit codes: 0 = clean / success, 1 = blocking findings (or timeout for
 gh-wait), 2 = usage or tool error.
@@ -29,6 +35,9 @@ import tempfile
 import time
 
 CONFIG_KEY = "kitchen-sink.codexReview"
+OUTER_SANDBOX_KEY = "kitchen-sink.codexOuterSandbox"
+BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox"
+BWRAP_MARKER = "error building bubblewrap command"
 MODES = ("off", "local", "github")
 BOT_LOGIN = "chatgpt-codex-connector[bot]"
 BLOCKING = {"P0", "P1", "P2"}
@@ -65,18 +74,37 @@ def resolve_mode(configured, codex_on_path):
     return ("local" if codex_on_path else "off"), "default"
 
 
+def resolve_outer_sandbox(configured, nono_cap_file):
+    """Return (enabled, source). Config wins; unset means on under nono."""
+    if configured in ("true", "false"):
+        return configured == "true", "git-config"
+    return (True, "nono") if nono_cap_file else (False, "default")
+
+
+def outer_sandbox():
+    proc = run(["git", "config", "--type=bool", "--get", OUTER_SANDBOX_KEY], check=False)
+    if proc.returncode not in (0, 1):
+        raise ToolError(f"{OUTER_SANDBOX_KEY} is not a boolean: {proc.stderr.strip()}")
+    enabled, source = resolve_outer_sandbox(proc.stdout.strip(), os.environ.get("NONO_CAP_FILE"))
+    return {"enabled": enabled, "source": source}
+
+
 def cmd_mode(_args):
     proc = run(["git", "config", "--get", CONFIG_KEY], check=False)
     configured = proc.stdout.strip() if proc.returncode == 0 else ""
     codex = shutil.which("codex")
     mode, source = resolve_mode(configured, bool(codex))
-    out = {"mode": mode, "source": source, "codex": codex}
+    out = {"mode": mode, "source": source, "codex": codex, "outer_sandbox": outer_sandbox()}
     if mode != "off" and not codex:
         out["error"] = f"mode is {mode} but the codex CLI is not on PATH"
-        print(json.dumps(out))
-        return 2
+    elif mode != "off":
+        try:
+            ver = run([codex, "--version"], timeout=30)
+            out["codex_version"] = ([l.strip() for l in ver.stdout.splitlines() if l.strip()] or [""])[-1]
+        except (ToolError, OSError, subprocess.TimeoutExpired) as exc:
+            out["error"] = f"{codex} is on PATH but cannot be executed here: {str(exc)[-500:]}"
     print(json.dumps(out))
-    return 0
+    return 2 if "error" in out else 0
 
 
 # --- local review -----------------------------------------------------------
@@ -108,17 +136,36 @@ def parse_local_review(text):
     return {"clean": not blocking, "blocking": blocking, "advisory": advisory}
 
 
+def blind_review_reason(text, stderr, result):
+    """Return why a findings-free review never actually saw the diff, else None."""
+    if result["blocking"] or result["advisory"]:
+        return None
+    if BWRAP_MARKER in f"{text}\n{stderr}".lower():
+        return f"Codex's sandbox failed to start ({BWRAP_MARKER})"
+    first = next((l.strip() for l in text.splitlines() if l.strip()), "")
+    if first.lower().startswith("review blocked"):
+        return f"Codex reported: {first}"
+    return None
+
+
+def review_command(codex, base, out_path, title, bypass):
+    cmd = [codex, "exec", "review", "--base", base, "--ephemeral", "-o", out_path]
+    if title:
+        cmd += ["--title", title]
+    return cmd + [BYPASS_FLAG] if bypass else cmd
+
+
 def cmd_local_review(args):
-    if not shutil.which("codex"):
+    codex = shutil.which("codex")
+    if not codex:
         raise ToolError("codex CLI is not on PATH")
+    sandbox = outer_sandbox()
     out_dir = os.environ.get("TMPDIR") or tempfile.gettempdir()
     fd, out_path = tempfile.mkstemp(prefix="codex-review-", suffix=".txt", dir=out_dir)
     os.close(fd)
-    cmd = ["codex", "exec", "review", "--base", args.base, "--ephemeral", "-o", out_path]
-    if args.title:
-        cmd += ["--title", args.title]
+    cmd = review_command(codex, args.base, out_path, args.title, sandbox["enabled"])
     try:
-        run(cmd, timeout=args.timeout)
+        proc = run(cmd, timeout=args.timeout)
     except subprocess.TimeoutExpired as exc:
         raise ToolError(f"codex review timed out after {args.timeout}s") from exc
     with open(out_path, encoding="utf-8") as fh:
@@ -126,6 +173,13 @@ def cmd_local_review(args):
     if not text.strip():
         raise ToolError(f"codex review produced no output ({out_path})")
     result = parse_local_review(text)
+    reason = blind_review_reason(text, proc.stderr, result)
+    if reason:
+        msg = f"codex review could not inspect the diff: {reason} (raw output: {out_path})"
+        if not sandbox["enabled"]:
+            msg += f"; under an outer sandbox enable the bypass with git config --local {OUTER_SANDBOX_KEY} true"
+        raise ToolError(msg)
+    result["outer_sandbox"] = sandbox
     result["raw_output"] = out_path
     result["summary"] = text.strip().splitlines()[0]
     print(json.dumps(result, indent=2))
