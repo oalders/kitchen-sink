@@ -71,15 +71,14 @@ class ParseLocalReview(unittest.TestCase):
 class ResolveMode(unittest.TestCase):
     def test_configured_values(self):
         for value in ("off", "local", "github", "GitHub "):
-            self.assertEqual(cl.resolve_mode(value, True), (value.strip().lower(), "git-config"))
+            self.assertEqual(cl.resolve_mode(value), (value.strip().lower(), "git-config"))
 
     def test_invalid_value_errors(self):
         with self.assertRaises(cl.ToolError):
-            cl.resolve_mode("true", True)
+            cl.resolve_mode("true")
 
-    def test_unset_defaults_on_codex_presence(self):
-        self.assertEqual(cl.resolve_mode("", True), ("local", "default"))
-        self.assertEqual(cl.resolve_mode("", False), ("off", "default"))
+    def test_unset_defaults_to_off(self):
+        self.assertEqual(cl.resolve_mode(""), ("off", "default"))
 
 
 BLOCKED_OUTPUT = (

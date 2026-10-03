@@ -222,7 +222,7 @@ Addresses PR code review feedback:
 
 Shows or switches the per-clone Codex review mode used by the `codex-review-loop` skill:
 - `on` / `github`: local Codex loop, plus a mandatory `@codex review` gate from the GitHub bot before the PR is marked ready
-- `local`: local loop only; `off`: skip Codex; `default`: unset (local when `codex` is installed)
+- `local`: local loop only; `off`: skip Codex; `default`: unset (`off`)
 - Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
 
 #### /break-into-gh-issues

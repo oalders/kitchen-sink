@@ -1,6 +1,6 @@
 ---
 name: codex-review-loop
-description: Use when a branch's own Claude review has passed and the OpenAI codex CLI is installed, or when a repo sets git config kitchen-sink.codexReview, before pushing for review, marking a PR ready, or requesting an @codex review from the Codex GitHub bot
+description: Use when a branch's own Claude review has passed and the repo has opted in by setting git config kitchen-sink.codexReview to local or github, before pushing for review, marking a PR ready, or requesting an @codex review from the Codex GitHub bot
 ---
 
 # Codex Review Loop
@@ -23,8 +23,8 @@ python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_versio
 
 | Mode | Meaning |
 |------|---------|
-| `off` | Skip this skill. |
-| `local` (default when `codex` is on PATH) | Local loop only. |
+| `off` (default when unset) | Skip this skill. |
+| `local` (opt in with `/codex-review local`) | Local loop only. |
 | `github` | Local loop, then the GitHub bot gate. **Mandatory.** |
 
 The mode comes from `git config kitchen-sink.codexReview`; `/codex-review on|off|local|status` changes it. If the command exits with `2` (for example, mode is `github` but `codex` is missing), STOP and report it. Never fall back to a lower mode on your own.
@@ -113,4 +113,4 @@ Only the user can override the gate, and only in their own words. A deadline, a 
 | "I'll quietly resolve the thread I disagree with" | Declined threads stay open for the user. |
 | "`-f body=\"Fixed in ...\"` is fine" | Missing footer, and a shell-injection risk. Use `--body-file` / `-F body=@file`. |
 | "Codex said review blocked but the JSON was clean" | A review that never read the diff is not a pass. Exit `2`: STOP. |
-| "Codex isn't installed; I'll skip it" | In `github` (or explicit `local`) mode that's an error to report, not a skip. |
+| "Codex isn't installed; I'll skip it" | In `github` or `local` mode that's an error to report, not a skip. |

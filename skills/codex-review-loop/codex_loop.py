@@ -64,14 +64,14 @@ def run(cmd, check=True, **kw):
 # --- mode -------------------------------------------------------------------
 
 
-def resolve_mode(configured, codex_on_path):
-    """Return (mode, source). Unset falls back to local when codex exists."""
+def resolve_mode(configured):
+    """Return (mode, source). Unset means off: Codex runs only when opted in."""
     if configured:
         value = configured.strip().lower()
         if value not in MODES:
             raise ToolError(f"{CONFIG_KEY}={configured!r} is not one of {', '.join(MODES)}")
         return value, "git-config"
-    return ("local" if codex_on_path else "off"), "default"
+    return "off", "default"
 
 
 def resolve_outer_sandbox(configured, nono_cap_file):
@@ -93,7 +93,7 @@ def cmd_mode(_args):
     proc = run(["git", "config", "--get", CONFIG_KEY], check=False)
     configured = proc.stdout.strip() if proc.returncode == 0 else ""
     codex = shutil.which("codex")
-    mode, source = resolve_mode(configured, bool(codex))
+    mode, source = resolve_mode(configured)
     out = {"mode": mode, "source": source, "codex": codex, "outer_sandbox": outer_sandbox()}
     if mode != "off" and not codex:
         out["error"] = f"mode is {mode} but the codex CLI is not on PATH"
