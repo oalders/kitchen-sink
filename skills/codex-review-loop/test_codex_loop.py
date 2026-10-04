@@ -4,9 +4,16 @@
 Run: python3 skills/codex-review-loop/test_codex_loop.py
 """
 
+import contextlib
 import importlib.util
+import io
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
+from unittest import mock
 
 _MOD_PATH = os.path.join(os.path.dirname(__file__), "codex_loop.py")
 _spec = importlib.util.spec_from_file_location("codex_loop", _MOD_PATH)
@@ -71,15 +78,201 @@ class ParseLocalReview(unittest.TestCase):
 class ResolveMode(unittest.TestCase):
     def test_configured_values(self):
         for value in ("off", "local", "github", "GitHub "):
-            self.assertEqual(cl.resolve_mode(value, True), (value.strip().lower(), "git-config"))
+            self.assertEqual(cl.resolve_mode(value), (value.strip().lower(), "git-config"))
 
     def test_invalid_value_errors(self):
         with self.assertRaises(cl.ToolError):
-            cl.resolve_mode("true", True)
+            cl.resolve_mode("true")
 
-    def test_unset_defaults_on_codex_presence(self):
-        self.assertEqual(cl.resolve_mode("", True), ("local", "default"))
-        self.assertEqual(cl.resolve_mode("", False), ("off", "default"))
+    def test_unset_defaults_to_off(self):
+        self.assertEqual(cl.resolve_mode(""), ("off", "default"))
+
+
+BLOCKED_OUTPUT = (
+    'Review blocked: attempts to run the requested git diff failed with "error building '
+    'bubblewrap command: Permission denied". The verdict is not a confirmed defect '
+    "assessment; I could not inspect the changes or verify correctness.\n"
+)
+
+
+class BlindReview(unittest.TestCase):
+    def reason(self, text, stderr=""):
+        return cl.blind_review_reason(text, stderr, cl.parse_local_review(text))
+
+    def test_review_blocked_summary_is_blind(self):
+        self.assertIsNotNone(self.reason(BLOCKED_OUTPUT))
+        self.assertIsNotNone(self.reason("\nreview BLOCKED: no access\n"))
+
+    def test_bubblewrap_in_stderr_is_blind(self):
+        stderr = "exec failed: error building bubblewrap command: Permission denied"
+        self.assertIsNotNone(self.reason(CLEAN_OUTPUT, stderr))
+
+    def test_clean_review_is_not_blind(self):
+        self.assertIsNone(self.reason(CLEAN_OUTPUT, "WARNING: something"))
+
+    def test_findings_mentioning_bubblewrap_not_blind(self):
+        text = FINDINGS_OUTPUT + "Mentions error building bubblewrap command in a string.\n"
+        self.assertIsNone(self.reason(text, "error building bubblewrap command"))
+
+
+class OuterSandbox(unittest.TestCase):
+    def test_config_overrides_nono(self):
+        self.assertEqual(cl.resolve_outer_sandbox("false", True), (False, "git-config"))
+        self.assertEqual(cl.resolve_outer_sandbox("true", False), (True, "git-config"))
+
+    def test_unset_follows_nono_detection(self):
+        self.assertEqual(cl.resolve_outer_sandbox("", True), (True, "nono"))
+        self.assertEqual(cl.resolve_outer_sandbox("", False), (False, "default"))
+
+    def test_review_command_bypass_flag(self):
+        cmd = cl.review_command("/usr/bin/codex", "origin/main", "/o.txt", "T", True)
+        self.assertEqual(cmd[0], "/usr/bin/codex")
+        self.assertEqual(cmd[-1], cl.BYPASS_FLAG)
+        self.assertIn("--title", cmd)
+        cmd = cl.review_command("/usr/bin/codex", "origin/main", "/o.txt", None, False)
+        self.assertNotIn(cl.BYPASS_FLAG, cmd)
+        self.assertNotIn("--title", cmd)
+
+    def test_config_read_is_local_only(self):
+        calls = []
+
+        def fake_run(cmd, check=True, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+
+        with mock.patch.object(cl, "run", fake_run), mock.patch.dict(os.environ, {"NONO_CAP_FILE": ""}):
+            self.assertEqual(cl.outer_sandbox(), {"enabled": False, "source": "default"})
+        self.assertEqual(calls[0][:3], ["git", "config", "--local"])
+        self.assertIn(cl.OUTER_SANDBOX_KEY, calls[0])
+
+    def test_mode_read_is_local_only(self):
+        calls = []
+
+        def fake_run(cmd, check=True, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+
+        with mock.patch.object(cl, "run", fake_run), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cl.cmd_mode(None), 0)
+        self.assertEqual(calls[0], ["git", "config", "--local", "--get", cl.CONFIG_KEY])
+
+
+NNP_ON = "Name:\tpython3\nNoNewPrivs:\t1\nSeccomp:\t2\n"
+NNP_OFF = "Name:\tpython3\nNoNewPrivs:\t0\nSeccomp:\t0\n"
+
+
+def write_cap_file(dirname, content='{"fs": [], "net_blocked": false}'):
+    path = os.path.join(dirname, "nono-cap.json")
+    with open(path, "w") as fh:
+        fh.write(content)
+    return path
+
+
+class NonoDetected(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="nono-cap-")
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_real_cap_file_and_no_new_privs(self):
+        self.assertTrue(cl.nono_detected(write_cap_file(self.tmp.name), NNP_ON))
+
+    def test_unset_or_empty_env(self):
+        self.assertFalse(cl.nono_detected(None, NNP_ON))
+        self.assertFalse(cl.nono_detected("", NNP_ON))
+
+    def test_bare_env_value_without_file(self):
+        self.assertFalse(cl.nono_detected("x", NNP_ON))
+        self.assertFalse(cl.nono_detected(os.path.join(self.tmp.name, "missing.json"), NNP_ON))
+
+    def test_cap_file_must_be_json_with_fs_list(self):
+        for content in ("not json", "[]", "{}", '{"fs": "nope"}'):
+            with self.subTest(content=content):
+                self.assertFalse(cl.nono_detected(write_cap_file(self.tmp.name, content), NNP_ON))
+
+    def test_no_new_privs_required_on_linux(self):
+        cap = write_cap_file(self.tmp.name)
+        self.assertFalse(cl.nono_detected(cap, NNP_OFF))
+        self.assertFalse(cl.nono_detected(cap, ""))
+
+    def test_no_proc_status_skips_no_new_privs(self):
+        # macOS has no /proc; the cap file check still applies.
+        self.assertTrue(cl.nono_detected(write_cap_file(self.tmp.name), None))
+        self.assertFalse(cl.nono_detected("x", None))
+
+    def test_outer_sandbox_ignores_bare_env_value(self):
+        def fake_run(cmd, check=True, **kw):
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+
+        with mock.patch.object(cl, "run", fake_run), mock.patch.object(
+            cl, "read_proc_status", lambda: NNP_ON
+        ), mock.patch.dict(os.environ, {"NONO_CAP_FILE": "x"}):
+            self.assertEqual(cl.outer_sandbox(), {"enabled": False, "source": "default"})
+
+
+FAKE_CODEX = """#!{python}
+import json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "argv.json"), "w") as fh:
+    json.dump(sys.argv[1:], fh)
+with open(os.path.join(here, "summary.txt")) as fh:
+    summary = fh.read()
+args = sys.argv[1:]
+with open(args[args.index("-o") + 1], "w") as fh:
+    fh.write(summary)
+"""
+
+
+class LocalReviewIntegration(unittest.TestCase):
+    """Run `local-review` end to end against a fake `codex` on PATH."""
+
+    def setUp(self):
+        key = subprocess.run(
+            ["git", "config", "--local", "--get", cl.OUTER_SANDBOX_KEY], capture_output=True, text=True
+        )
+        if key.returncode == 0:
+            self.skipTest(f"{cl.OUTER_SANDBOX_KEY} is set in this repo's local config")
+        self.tmp = tempfile.TemporaryDirectory(prefix="fake-codex-")
+        self.addCleanup(self.tmp.cleanup)
+        codex = os.path.join(self.tmp.name, "codex")
+        with open(codex, "w") as fh:
+            fh.write(FAKE_CODEX.format(python=sys.executable))
+        os.chmod(codex, 0o755)
+
+    def run_review(self, summary, under_nono):
+        with open(os.path.join(self.tmp.name, "summary.txt"), "w") as fh:
+            fh.write(summary)
+        env = {"PATH": self.tmp.name + os.pathsep + os.environ.get("PATH", ""), "TMPDIR": self.tmp.name}
+        env["NONO_CAP_FILE"] = write_cap_file(self.tmp.name) if under_nono else ""
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            cl, "read_proc_status", lambda: NNP_ON
+        ), contextlib.redirect_stdout(out):
+            rc = cl.main(["local-review", "--base", "HEAD"])
+        with open(os.path.join(self.tmp.name, "argv.json")) as fh:
+            argv = json.load(fh)
+        return rc, json.loads(out.getvalue()), argv
+
+    def test_blocked_review_is_tool_error(self):
+        rc, out, argv = self.run_review(BLOCKED_OUTPUT, False)
+        self.assertEqual(rc, 2)
+        self.assertIn("could not inspect the diff", out["error"])
+        self.assertIn("ask the user to run", out["error"])
+        self.assertNotIn(cl.BYPASS_FLAG, argv)
+
+    def test_blocked_review_with_bypass_needs_investigation(self):
+        rc, out, argv = self.run_review(BLOCKED_OUTPUT, True)
+        self.assertEqual(rc, 2)
+        self.assertIn("could not inspect the diff", out["error"])
+        self.assertIn("already on (source: nono)", out["error"])
+        self.assertIn(cl.BYPASS_FLAG, argv)
+
+    def test_clean_review_under_nono_passes_bypass(self):
+        rc, out, argv = self.run_review(CLEAN_OUTPUT, True)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out["clean"])
+        self.assertEqual(out["outer_sandbox"], {"enabled": True, "source": "nono"})
+        self.assertEqual(argv[:2], ["exec", "review"])
+        self.assertIn(cl.BYPASS_FLAG, argv)
 
 
 def review(login=BOT, commit=SHA, rid=1):
