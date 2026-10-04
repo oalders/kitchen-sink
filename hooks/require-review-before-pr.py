@@ -25,11 +25,14 @@ Markers live at ``<git-common-dir>/kitchen-sink/reviewed/<full-sha>``, so they
 are shared across worktrees of the same repository and never tracked by git.
 A new commit moves HEAD, so any review-fix commit requires a re-review.
 
-Rebases: recording also writes ``reviewed/patch/<patch-id>``, where the
+Rebases: on a ``fix-NNN`` branch, recording also writes
+``reviewed/patch/<branch>/<patch-id>``, where the
 patch-id is ``git patch-id --stable`` of the branch's cumulative diff against
 its merge-base with the default branch (``origin/HEAD``, then ``origin/main``,
 ``origin/master``, ``main``, ``master``). When no marker exists for HEAD, the
-gate allows the command if the current diff has a recorded patch-id. A clean
+gate allows the command if the current diff has a patch-id recorded for the
+same branch, so another branch with an identical diff does not inherit the
+review. A clean
 rebase (or a squash/reword) leaves the diff unchanged and passes; resolving a
 conflict changes the diff and requires a re-review. ``patch-id`` ignores line
 numbers and whitespace but not context lines, so a rebase where upstream edited
@@ -68,7 +71,8 @@ Known accepted gaps (fail-open by design)
   without a textual conflict (a renamed callee, say) is not caught. That is
   CI's job. The patch-id fallback is skipped (no patch marker written, no
   match, so the gate denies) when no default-branch ref resolves, the branch
-  diff is empty, or a git call in it fails; it allows only if the shared
+  diff is empty, or a git call in it fails (including a diff that is not
+  valid in the locale encoding); it allows only if the shared
   TIME_BUDGET runs out.
 """
 
@@ -163,7 +167,7 @@ def git(cwd, *args, stdin=None):
             text=True,
             timeout=timeout,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, UnicodeError):
         return None
     if proc.returncode != 0:
         return None
@@ -204,7 +208,7 @@ def branch_patch_id(cwd):
     mb = git(cwd, "merge-base", base, "HEAD")
     if not mb:
         return None
-    diff = git(cwd, "diff", "--no-color", "--no-ext-diff", mb, "HEAD")
+    diff = git(cwd, "diff", "--no-color", "--no-ext-diff", "--no-textconv", mb, "HEAD")
     if not diff:
         return None
     out = git(cwd, "patch-id", "--stable", stdin=diff + "\n")
@@ -223,10 +227,13 @@ def record(cwd, source):
     stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
     with open(os.path.join(mdir, sha), "w", encoding="utf-8") as fh:
         fh.write(f"{stamp} {source}\n")
+    branch = git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    if not branch or not FIX_BRANCH_RE.match(branch):
+        return
     pid = branch_patch_id(cwd)
     if not pid:
         return
-    pdir = os.path.join(mdir, "patch")
+    pdir = os.path.join(mdir, "patch", branch)
     os.makedirs(pdir, exist_ok=True)
     with open(os.path.join(pdir, pid), "w", encoding="utf-8") as fh:
         fh.write(f"{stamp} {source} {sha}\n")
@@ -293,7 +300,7 @@ def handle_bash(payload, cwd):
     pid = branch_patch_id(cwd)
     if pid is None and _deadline is not None and time.monotonic() >= _deadline:
         return  # out of time budget: fail open rather than deny unverified
-    if pid and os.path.isfile(os.path.join(mdir, "patch", pid)):
+    if pid and os.path.isfile(os.path.join(mdir, "patch", branch, pid)):
         return
     deny(UNREVIEWED_REASON.format(sha=sha))
 

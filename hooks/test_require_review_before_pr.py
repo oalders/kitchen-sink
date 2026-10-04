@@ -238,8 +238,21 @@ class Rebase(RepoCase):
         self.git("checkout", "-q", "fix-123")
 
     def test_records_patch_marker(self):
-        pdir = os.path.join(self.repo, ".git", "kitchen-sink", "reviewed", "patch")
+        pdir = os.path.join(self.repo, ".git", "kitchen-sink", "reviewed",
+                            "patch", "fix-123")
         self.assertEqual(len(os.listdir(pdir)), 1)
+
+    def test_identical_diff_on_other_branch_denied(self):
+        self.git("checkout", "-q", "-b", "fix-456", "main")
+        self.change("feature.txt", "feature\n", "same change, other issue")
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+    def test_non_fix_branch_records_no_patch_marker(self):
+        self.git("checkout", "-q", "-b", "feature", "main")
+        self.change("other.txt", "x\n", "feature work")
+        self.skill("code-review-intense-flow")
+        pdir = os.path.join(self.repo, ".git", "kitchen-sink", "reviewed", "patch")
+        self.assertEqual(os.listdir(pdir), ["fix-123"])
 
     def test_clean_rebase_allowed(self):
         reviewed = self.head()
