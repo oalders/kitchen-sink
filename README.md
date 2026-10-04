@@ -49,7 +49,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Command | Description |
 |---------|-------------|
 | **/address-gh-review** | A robot that does the urgent repairs now and books appointments for the rest |
-| **/codex-review** | Shows or switches this repo's Codex review mode (`on` = local loop plus a mandatory `@codex review` bot gate, `local`, `off`, `default`) via `git config kitchen-sink.codexReview` |
+| **/codex-review** | Shows or switches this repo's Codex review mode (`on` = local loop plus a mandatory `@codex review` bot gate, `local`, `off`, `default`) via `git config --local kitchen-sink.codexReview` |
 | **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
 | **/draft-pr** | Creates a draft PR that closes the GitHub issue inferred from your branch name |
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
