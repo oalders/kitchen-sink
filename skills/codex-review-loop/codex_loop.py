@@ -93,7 +93,7 @@ def outer_sandbox():
 
 
 def cmd_mode(_args):
-    proc = run(["git", "config", "--get", CONFIG_KEY], check=False)
+    proc = run(["git", "config", "--local", "--get", CONFIG_KEY], check=False)
     configured = proc.stdout.strip() if proc.returncode == 0 else ""
     codex = shutil.which("codex")
     mode, source = resolve_mode(configured)

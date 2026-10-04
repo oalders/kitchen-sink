@@ -28,7 +28,7 @@ python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_versio
 | `local` (opt in with `/codex-review local`) | Local loop only. |
 | `github` | Local loop, then the GitHub bot gate. **Mandatory.** |
 
-The mode comes from `git config kitchen-sink.codexReview`; `/codex-review on|off|local|status` changes it. If the command exits with `2` (for example, mode is `github` but `codex` is missing), STOP and report it. Never fall back to a lower mode on your own.
+The mode comes from this clone's local `git config --local kitchen-sink.codexReview` (global config is ignored); `/codex-review on|off|local|status` changes it. If the command exits with `2` (for example, mode is `github` but `codex` is missing), STOP and report it. Never fall back to a lower mode on your own.
 
 ### Outer sandbox
 

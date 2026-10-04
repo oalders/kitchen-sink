@@ -146,6 +146,17 @@ class OuterSandbox(unittest.TestCase):
         self.assertEqual(calls[0][:3], ["git", "config", "--local"])
         self.assertIn(cl.OUTER_SANDBOX_KEY, calls[0])
 
+    def test_mode_read_is_local_only(self):
+        calls = []
+
+        def fake_run(cmd, check=True, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+
+        with mock.patch.object(cl, "run", fake_run), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cl.cmd_mode(None), 0)
+        self.assertEqual(calls[0], ["git", "config", "--local", "--get", cl.CONFIG_KEY])
+
 
 FAKE_CODEX = """#!{python}
 import json, os, sys
