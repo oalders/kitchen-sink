@@ -29,5 +29,5 @@ Steps:
 
    Say whether the mode came from config or from the default (unset means `off`). When the mode isn't `off` and `codex` runs, `codex_version` shows the version that actually runs. Otherwise, for `github` or `local`, the command exits 2 with an `error` field (`codex` missing or unable to run): warn the user that every `codex-review-loop` run in this repo will stop with an error until they install or fix `codex` or change the mode. For `off` there is no version check.
 
-   Also report the outer-sandbox state: `outer_sandbox.enabled` shows whether Codex's own sandbox is bypassed, and `outer_sandbox.source` says why: `git-config` (set via `kitchen-sink.codexOuterSandbox`), `nono` (on by default under nono), or `default` (off; no outer sandbox detected). Never change `kitchen-sink.codexOuterSandbox` yourself.
+   Also report the outer-sandbox state: `outer_sandbox.enabled` shows whether Codex's own sandbox is bypassed, and `outer_sandbox.source` says why: `git-config` (set via `kitchen-sink.codexOuterSandbox`), `nono` (on by default under nono), or `default` (off; no outer sandbox detected). Never change `kitchen-sink.codexOuterSandbox` or `NONO_CAP_FILE` yourself.
 4. When the mode is `github`, remind the user that the repo needs the Codex GitHub integration set up to review PRs. Without it, `@codex review` gets no answer and the gate times out.

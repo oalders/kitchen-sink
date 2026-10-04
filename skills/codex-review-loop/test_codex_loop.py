@@ -117,13 +117,12 @@ class BlindReview(unittest.TestCase):
 
 class OuterSandbox(unittest.TestCase):
     def test_config_overrides_nono(self):
-        self.assertEqual(cl.resolve_outer_sandbox("false", "/x/cap"), (False, "git-config"))
-        self.assertEqual(cl.resolve_outer_sandbox("true", ""), (True, "git-config"))
+        self.assertEqual(cl.resolve_outer_sandbox("false", True), (False, "git-config"))
+        self.assertEqual(cl.resolve_outer_sandbox("true", False), (True, "git-config"))
 
-    def test_unset_follows_nono_env(self):
-        self.assertEqual(cl.resolve_outer_sandbox("", "/x/cap"), (True, "nono"))
-        self.assertEqual(cl.resolve_outer_sandbox("", None), (False, "default"))
-        self.assertEqual(cl.resolve_outer_sandbox("", ""), (False, "default"))
+    def test_unset_follows_nono_detection(self):
+        self.assertEqual(cl.resolve_outer_sandbox("", True), (True, "nono"))
+        self.assertEqual(cl.resolve_outer_sandbox("", False), (False, "default"))
 
     def test_review_command_bypass_flag(self):
         cmd = cl.review_command("/usr/bin/codex", "origin/main", "/o.txt", "T", True)
@@ -158,6 +157,58 @@ class OuterSandbox(unittest.TestCase):
         self.assertEqual(calls[0], ["git", "config", "--local", "--get", cl.CONFIG_KEY])
 
 
+NNP_ON = "Name:\tpython3\nNoNewPrivs:\t1\nSeccomp:\t2\n"
+NNP_OFF = "Name:\tpython3\nNoNewPrivs:\t0\nSeccomp:\t0\n"
+
+
+def write_cap_file(dirname, content='{"fs": [], "net_blocked": false}'):
+    path = os.path.join(dirname, "nono-cap.json")
+    with open(path, "w") as fh:
+        fh.write(content)
+    return path
+
+
+class NonoDetected(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="nono-cap-")
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_real_cap_file_and_no_new_privs(self):
+        self.assertTrue(cl.nono_detected(write_cap_file(self.tmp.name), NNP_ON))
+
+    def test_unset_or_empty_env(self):
+        self.assertFalse(cl.nono_detected(None, NNP_ON))
+        self.assertFalse(cl.nono_detected("", NNP_ON))
+
+    def test_bare_env_value_without_file(self):
+        self.assertFalse(cl.nono_detected("x", NNP_ON))
+        self.assertFalse(cl.nono_detected(os.path.join(self.tmp.name, "missing.json"), NNP_ON))
+
+    def test_cap_file_must_be_json_with_fs_list(self):
+        for content in ("not json", "[]", "{}", '{"fs": "nope"}'):
+            with self.subTest(content=content):
+                self.assertFalse(cl.nono_detected(write_cap_file(self.tmp.name, content), NNP_ON))
+
+    def test_no_new_privs_required_on_linux(self):
+        cap = write_cap_file(self.tmp.name)
+        self.assertFalse(cl.nono_detected(cap, NNP_OFF))
+        self.assertFalse(cl.nono_detected(cap, ""))
+
+    def test_no_proc_status_skips_no_new_privs(self):
+        # macOS has no /proc; the cap file check still applies.
+        self.assertTrue(cl.nono_detected(write_cap_file(self.tmp.name), None))
+        self.assertFalse(cl.nono_detected("x", None))
+
+    def test_outer_sandbox_ignores_bare_env_value(self):
+        def fake_run(cmd, check=True, **kw):
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+
+        with mock.patch.object(cl, "run", fake_run), mock.patch.object(
+            cl, "read_proc_status", lambda: NNP_ON
+        ), mock.patch.dict(os.environ, {"NONO_CAP_FILE": "x"}):
+            self.assertEqual(cl.outer_sandbox(), {"enabled": False, "source": "default"})
+
+
 FAKE_CODEX = """#!{python}
 import json, os, sys
 here = os.path.dirname(os.path.abspath(__file__))
@@ -187,34 +238,36 @@ class LocalReviewIntegration(unittest.TestCase):
             fh.write(FAKE_CODEX.format(python=sys.executable))
         os.chmod(codex, 0o755)
 
-    def run_review(self, summary, nono_cap_file):
+    def run_review(self, summary, under_nono):
         with open(os.path.join(self.tmp.name, "summary.txt"), "w") as fh:
             fh.write(summary)
         env = {"PATH": self.tmp.name + os.pathsep + os.environ.get("PATH", ""), "TMPDIR": self.tmp.name}
-        env["NONO_CAP_FILE"] = nono_cap_file
+        env["NONO_CAP_FILE"] = write_cap_file(self.tmp.name) if under_nono else ""
         out = io.StringIO()
-        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out):
+        with mock.patch.dict(os.environ, env), mock.patch.object(
+            cl, "read_proc_status", lambda: NNP_ON
+        ), contextlib.redirect_stdout(out):
             rc = cl.main(["local-review", "--base", "HEAD"])
         with open(os.path.join(self.tmp.name, "argv.json")) as fh:
             argv = json.load(fh)
         return rc, json.loads(out.getvalue()), argv
 
     def test_blocked_review_is_tool_error(self):
-        rc, out, argv = self.run_review(BLOCKED_OUTPUT, "")
+        rc, out, argv = self.run_review(BLOCKED_OUTPUT, False)
         self.assertEqual(rc, 2)
         self.assertIn("could not inspect the diff", out["error"])
         self.assertIn("ask the user to run", out["error"])
         self.assertNotIn(cl.BYPASS_FLAG, argv)
 
     def test_blocked_review_with_bypass_needs_investigation(self):
-        rc, out, argv = self.run_review(BLOCKED_OUTPUT, "/x/cap")
+        rc, out, argv = self.run_review(BLOCKED_OUTPUT, True)
         self.assertEqual(rc, 2)
         self.assertIn("could not inspect the diff", out["error"])
         self.assertIn("already on (source: nono)", out["error"])
         self.assertIn(cl.BYPASS_FLAG, argv)
 
     def test_clean_review_under_nono_passes_bypass(self):
-        rc, out, argv = self.run_review(CLEAN_OUTPUT, "/x/cap")
+        rc, out, argv = self.run_review(CLEAN_OUTPUT, True)
         self.assertEqual(rc, 0)
         self.assertTrue(out["clean"])
         self.assertEqual(out["outer_sandbox"], {"enabled": True, "source": "nono"})

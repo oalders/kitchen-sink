@@ -34,10 +34,10 @@ The mode comes from this clone's local `git config --local kitchen-sink.codexRev
 
 Codex's own sandbox (bubblewrap) can't start inside an outer sandbox such as nono. `outer_sandbox.enabled` makes `local-review` pass `--dangerously-bypass-approvals-and-sandbox`; the outer sandbox still confines Codex.
 
-- Under nono it is on by default (`source: nono`).
+- Under nono it is on by default (`source: nono`). nono is detected when `NONO_CAP_FILE` names nono's capability file and, on Linux, the process has `NoNewPrivs` set. Landlock cannot be queried directly, so this is a best-effort check, not proof.
 - `git config --local kitchen-sink.codexOuterSandbox false` turns it off; `true` turns it on under another outer sandbox (e.g. a container). It must only be `true` when an outer sandbox really confines the process.
 - The key is read from local repo config only (`--local`); global, system, or included config is ignored.
-- **Never set this key yourself.** That is the user's decision.
+- **Never set this key yourself, and never set, change, or fake `NONO_CAP_FILE`** (for example by prefixing a command with `NONO_CAP_FILE=...`). Whether to bypass Codex's sandbox is the user's decision.
 - When `outer_sandbox.enabled` is true, say so in your report to the user and in the PR body: Codex ran with its own sandbox bypassed (give the `source`).
 
 If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap error), `local-review` exits `2`. That is a tool error: STOP and report it. It is never a pass. If the error suggests enabling the bypass, relay that to the user; never run the `git config` command yourself.

@@ -73,11 +73,44 @@ def resolve_mode(configured):
     return "off", "default"
 
 
-def resolve_outer_sandbox(configured, nono_cap_file):
+def resolve_outer_sandbox(configured, under_nono):
     """Return (enabled, source). Config wins; unset means on under nono."""
     if configured in ("true", "false"):
         return configured == "true", "git-config"
-    return (True, "nono") if nono_cap_file else (False, "default")
+    return (True, "nono") if under_nono else (False, "default")
+
+
+def nono_detected(cap_file, proc_status):
+    """Best-effort check that nono really confines this process.
+
+    Landlock offers no way to ask "am I confined?", so this only raises the bar
+    above a bare NONO_CAP_FILE=x: the variable must name nono's capability file
+    (JSON with an `fs` list) and, on Linux, the kernel must report NoNewPrivs,
+    which Landlock requires of an unprivileged process. proc_status is None
+    where /proc/self/status does not exist (macOS).
+    """
+    if not cap_file:
+        return False
+    try:
+        with open(cap_file) as fh:
+            caps = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(caps, dict) or not isinstance(caps.get("fs"), list):
+        return False
+    if proc_status is None:
+        return True
+    return re.search(r"^NoNewPrivs:\s*1\s*$", proc_status, re.M) is not None
+
+
+def read_proc_status():
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        with open("/proc/self/status") as fh:
+            return fh.read()
+    except OSError:
+        return ""
 
 
 def outer_sandbox():
@@ -87,8 +120,8 @@ def outer_sandbox():
         raise ToolError(f"{OUTER_SANDBOX_KEY} is not a boolean: {proc.stderr.strip()}")
     # nono sets NONO_CAP_FILE for sandboxed processes; `nono why --self` uses it
     # to decide whether it is running inside a sandbox.
-    nono_cap_file = os.environ.get("NONO_CAP_FILE")
-    enabled, source = resolve_outer_sandbox(proc.stdout.strip(), nono_cap_file)
+    under_nono = nono_detected(os.environ.get("NONO_CAP_FILE"), read_proc_status())
+    enabled, source = resolve_outer_sandbox(proc.stdout.strip(), under_nono)
     return {"enabled": enabled, "source": source}
 
 
