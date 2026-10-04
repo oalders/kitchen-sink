@@ -212,6 +212,91 @@ class Gate(RepoCase):
         self.assertFalse(is_deny(self.bash("gh pr create", cwd=wt)))
 
 
+class Rebase(RepoCase):
+    """Patch-id fallback: a clean rebase keeps a reviewed diff reviewed."""
+
+    def write(self, name, text):
+        with open(os.path.join(self.repo, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def change(self, name, text, msg):
+        self.write(name, text)
+        self.git("add", name)
+        self.commit(msg)
+
+    def setUp(self):
+        super().setUp()
+        self.git("checkout", "-q", "main")
+        self.change("shared.txt", "".join(f"line {i}\n" for i in range(20)), "base")
+        self.git("checkout", "-q", "-B", "fix-123")
+        self.change("feature.txt", "feature\n", "feature")
+        self.skill("code-review-intense-flow")
+
+    def advance_main(self, name, text):
+        self.git("checkout", "-q", "main")
+        self.change(name, text, "upstream")
+        self.git("checkout", "-q", "fix-123")
+
+    def test_records_patch_marker(self):
+        pdir = os.path.join(self.repo, ".git", "kitchen-sink", "reviewed", "patch")
+        self.assertEqual(len(os.listdir(pdir)), 1)
+
+    def test_clean_rebase_allowed(self):
+        reviewed = self.head()
+        self.advance_main("upstream.txt", "unrelated\n")
+        self.git("rebase", "-q", "main")
+        self.assertNotEqual(self.head(), reviewed)
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+    def test_squash_allowed(self):
+        self.change("feature2.txt", "more\n", "feature 2")
+        self.skill("code-review-intense-flow")
+        self.git("reset", "-q", "--soft", "main")
+        self.commit("squashed")
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+    def test_conflict_resolution_denied(self):
+        self.change("shared.txt", "branch\n", "branch edit")
+        self.skill("code-review-intense-flow")
+        self.advance_main("shared.txt", "upstream\n")
+        proc = subprocess.run(["git", "-C", self.repo, "rebase", "-q", "main"],
+                              capture_output=True, text=True)
+        self.assertNotEqual(proc.returncode, 0)
+        self.write("shared.txt", "resolved\n")
+        self.git("add", "shared.txt")
+        self.git("-c", "core.editor=true", "rebase", "--continue")
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+    def test_new_change_after_rebase_denied(self):
+        self.advance_main("upstream.txt", "unrelated\n")
+        self.git("rebase", "-q", "main")
+        self.change("feature.txt", "changed\n", "post-rebase edit")
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+    def test_origin_head_preferred_over_stale_local_main(self):
+        # A remote whose default branch has moved on; local main is stale.
+        remote = os.path.join(self.tmp, "remote.git")
+        subprocess.run(["git", "clone", "-q", "--bare", self.repo, remote],
+                       check=True, capture_output=True)
+        self.git("remote", "add", "origin", remote)
+        self.git("fetch", "-q", "origin")
+        self.git("remote", "set-head", "origin", "main")
+        reviewed = self.head()
+        self.git("checkout", "-q", "-b", "upstream-work", "origin/main")
+        self.change("upstream.txt", "unrelated\n", "upstream")
+        self.git("push", "-q", "origin", "upstream-work:main")
+        self.git("fetch", "-q", "origin")
+        self.git("checkout", "-q", "fix-123")
+        self.git("rebase", "-q", "origin/main")
+        self.assertNotEqual(self.head(), reviewed)
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+    def test_no_base_ref_falls_back_to_sha_only(self):
+        self.git("branch", "-q", "-m", "main", "trunk")
+        self.change("feature.txt", "changed\n", "edit")
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+
 class FailOpen(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

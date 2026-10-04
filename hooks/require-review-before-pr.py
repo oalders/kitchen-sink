@@ -25,6 +25,16 @@ Markers live at ``<git-common-dir>/kitchen-sink/reviewed/<full-sha>``, so they
 are shared across worktrees of the same repository and never tracked by git.
 A new commit moves HEAD, so any review-fix commit requires a re-review.
 
+Rebases: recording also writes ``reviewed/patch/<patch-id>``, where the
+patch-id is ``git patch-id --stable`` of the branch's cumulative diff against
+its merge-base with the default branch (``origin/HEAD``, then ``origin/main``,
+``origin/master``, ``main``, ``master``). When no marker exists for HEAD, the
+gate allows the command if the current diff has a recorded patch-id. A clean
+rebase (or a squash/reword) leaves the diff unchanged and passes; resolving a
+conflict changes the diff and requires a re-review. ``patch-id`` ignores line
+numbers and whitespace but not context lines, so a rebase where upstream edited
+lines next to a hunk also changes the fingerprint and needs a re-review.
+
 Escape hatch: ``KITCHEN_SINK_ALLOW_UNREVIEWED_PR=1`` in the hook's OWN
 environment (i.e. the environment Claude Code was launched from) allows the
 command. An inline ``KITCHEN_SINK_ALLOW_UNREVIEWED_PR=1 gh pr create`` prefix in
@@ -53,6 +63,13 @@ Known accepted gaps (fail-open by design)
   a drift guardrail against skipped reviews, not a security boundary.
 - Only ``fix-<digits>`` branches are gated; the repo checked is the payload
   ``cwd``, regardless of ``gh -R`` / ``git -C`` targets in the command.
+- A patch-id match proves the diff is textually the same as a reviewed one,
+  not that it still behaves the same: an upstream change that breaks the branch
+  without a textual conflict (a renamed callee, say) is not caught. That is
+  CI's job. The patch-id fallback is skipped (no patch marker written, no
+  match, so the gate denies) when no default-branch ref resolves, the branch
+  diff is empty, or a git call in it fails; it allows only if the shared
+  TIME_BUDGET runs out.
 """
 
 import datetime
@@ -61,13 +78,24 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 ENV_BYPASS = "KITCHEN_SINK_ALLOW_UNREVIEWED_PR"
-# Invariant: (max git calls on any path) x GIT_TIMEOUT must stay well below
-# every hooks.json timeout for this script (10s). PreToolUse makes up to 3
-# sequential calls (3 x 2 = 6s); if the harness kills the hook, it silently
-# allows the command.
+# Each git call gets at most GIT_TIMEOUT, and all calls together share
+# TIME_BUDGET, which must stay well below every hooks.json timeout for this
+# script (10s). Once the budget runs out, git() returns None and the hook
+# fails open; if the harness kills the hook instead, it also allows silently.
 GIT_TIMEOUT = 2  # seconds
+TIME_BUDGET = 7  # seconds
+_deadline = None
+
+BASE_REFS = (
+    "refs/remotes/origin/HEAD",
+    "refs/remotes/origin/main",
+    "refs/remotes/origin/master",
+    "refs/heads/main",
+    "refs/heads/master",
+)
 
 REVIEW_SKILLS = {"code-review-intense-flow", "kitchen-sink:code-review-intense-flow"}
 
@@ -112,20 +140,28 @@ UNREVIEWED_REASON = (
     "on this fix-NNN branch. The fix-gh-issue workflow requires it before "
     "`gh pr create` / `gh pr ready`. Run `/code-review-intense-flow` via the "
     "Skill tool against the current HEAD first. Any review-fix commit moves "
-    "HEAD and needs a re-review before the PR. Only the user (not the model) "
+    "HEAD and needs a re-review before the PR. A clean rebase of a reviewed "
+    "branch passes automatically; this branch's diff differs from every "
+    "reviewed one (e.g. a resolved conflict). Only the user (not the model) "
     "can bypass this, by setting KITCHEN_SINK_ALLOW_UNREVIEWED_PR=1 in the "
     "environment Claude Code was launched from."
 )
 
 
-def git(cwd, *args):
+def git(cwd, *args, stdin=None):
     """Run git in cwd; return stripped stdout, or None on any failure."""
+    timeout = GIT_TIMEOUT
+    if _deadline is not None:
+        timeout = min(timeout, _deadline - time.monotonic())
+        if timeout <= 0:
+            return None
     try:
         proc = subprocess.run(
             ["git", "-C", cwd, *args],
+            input=stdin,
             capture_output=True,
             text=True,
-            timeout=GIT_TIMEOUT,
+            timeout=timeout,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -151,6 +187,33 @@ def marker_dir(cwd):
     return os.path.join(common, "kitchen-sink", "reviewed")
 
 
+def base_ref(cwd):
+    """First BASE_REFS entry that exists, or None."""
+    out = git(cwd, "for-each-ref", "--format=%(refname)", *BASE_REFS)
+    if not out:
+        return None
+    present = set(out.splitlines())
+    return next((ref for ref in BASE_REFS if ref in present), None)
+
+
+def branch_patch_id(cwd):
+    """Stable patch-id of the diff from the default-branch merge-base to HEAD."""
+    base = base_ref(cwd)
+    if not base:
+        return None
+    mb = git(cwd, "merge-base", base, "HEAD")
+    if not mb:
+        return None
+    diff = git(cwd, "diff", "--no-color", "--no-ext-diff", mb, "HEAD")
+    if not diff:
+        return None
+    out = git(cwd, "patch-id", "--stable", stdin=diff + "\n")
+    pid = out.split()[0] if out else None
+    if pid and re.fullmatch(r"[0-9a-f]{40,64}", pid):
+        return pid
+    return None
+
+
 def record(cwd, source):
     sha = head_sha(cwd)
     mdir = marker_dir(cwd)
@@ -160,6 +223,13 @@ def record(cwd, source):
     stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
     with open(os.path.join(mdir, sha), "w", encoding="utf-8") as fh:
         fh.write(f"{stamp} {source}\n")
+    pid = branch_patch_id(cwd)
+    if not pid:
+        return
+    pdir = os.path.join(mdir, "patch")
+    os.makedirs(pdir, exist_ok=True)
+    with open(os.path.join(pdir, pid), "w", encoding="utf-8") as fh:
+        fh.write(f"{stamp} {source} {sha}\n")
 
 
 def gated_pr_command(command):
@@ -220,6 +290,11 @@ def handle_bash(payload, cwd):
         return
     if os.path.isfile(os.path.join(mdir, sha)):
         return
+    pid = branch_patch_id(cwd)
+    if pid is None and _deadline is not None and time.monotonic() >= _deadline:
+        return  # out of time budget: fail open rather than deny unverified
+    if pid and os.path.isfile(os.path.join(mdir, "patch", pid)):
+        return
     deny(UNREVIEWED_REASON.format(sha=sha))
 
 
@@ -231,6 +306,8 @@ HANDLERS = {
 
 
 def main():
+    global _deadline
+    _deadline = time.monotonic() + TIME_BUDGET
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
