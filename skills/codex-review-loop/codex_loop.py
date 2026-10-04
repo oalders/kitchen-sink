@@ -155,7 +155,7 @@ def review_command(codex, base, out_path, title, bypass):
     cmd = [codex, "exec", "review", "--base", base, "--ephemeral", "-o", out_path]
     if title:
         cmd += ["--title", title]
-    return cmd + [BYPASS_FLAG] if bypass else cmd
+    return (cmd + [BYPASS_FLAG]) if bypass else cmd
 
 
 def cmd_local_review(args):
