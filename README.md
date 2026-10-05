@@ -338,7 +338,7 @@ Two subagents review the same work in parallel, competing under an incentive tha
 
 Catches what Claude's self-review misses, without spending CI minutes on it:
 - Runs `codex exec review --base origin/<default>` locally and classifies findings; P0–P2 block, P3 is advisory
-- Triage → fix → self-review → re-run, capped at two rounds; declined findings need evidence and the user's confirmation
+- Triage → fix → self-review → re-run, capped at three rounds; declined findings need evidence and the user's confirmation
 - In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD (a timeout is never treated as a pass), then replies on and resolves the threads it fixed
 - `codex_loop.py` helper (`mode`, `local-review`, `gh-wait`, `gh-threads`, `gh-resolve`), unit-tested in `test_codex_loop.py`
 - Called by `/fix-gh-issue` (step 8.5 and the step 10 bot gate)

@@ -50,7 +50,7 @@ If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap erro
    - **Fix it** if the input, state, or call path it describes can actually occur. A subagent applies the fixes and commits them with the attribution trailer.
    - **Decline it** only with evidence: the callers, the config, or the upstream producer that shows the input can't happen. Record it as `{title, reason}`. A declined finding is still open, and it is the **user's** decision. **Tell the user right away**, with the evidence, and keep working while they decide.
 4. Self-review the fix diff (`/code-review-flow` or the review the parent workflow uses), then go back to step 1. Add the declined list to the PR body.
-5. **Cap: 2 fix rounds.** A round is one batch of fix commits, whether it was prompted by the local review or by the bot. A run whose only blocking findings are already declined uses no round. If a third round would be needed, STOP and surface the remaining findings. Do the same if a fix brings back a finding from an earlier round. Escalating is a valid outcome.
+5. **Cap: 3 fix rounds.** A round is one batch of fix commits, whether it was prompted by the local review or by the bot. A run whose only blocking findings are already declined uses no round. If a fourth round would be needed, STOP and surface the remaining findings. Do the same if a fix brings back a finding from an earlier round. Escalating is a valid outcome.
 
 **What counts as a pass** depends only on the **latest run on the current HEAD**; a run on an earlier commit doesn't count:
 

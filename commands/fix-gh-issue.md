@@ -74,7 +74,7 @@ digraph fix_issue {
     "Used subagent-driven-development?" [shape=diamond];
     "Run code review (intense-flow)" [shape=box];
     "Issues found?" [shape=diamond];
-    "Third round needed?" [shape=diamond];
+    "Fourth round needed?" [shape=diamond];
     "STOP: surface to user (continue/simplify/change approach)" [shape=box];
     "Fix issues and commit" [shape=box];
     "Codex local loop (codex-review-loop)" [shape=box];
@@ -102,9 +102,9 @@ digraph fix_issue {
     "Used subagent-driven-development?" -> "Run code review (intense-flow)" [label="yes (once, on final HEAD)"];
     "Used subagent-driven-development?" -> "Run code review (intense-flow)" [label="no"];
     "Run code review (intense-flow)" -> "Issues found?" [shape=diamond];
-    "Issues found?" -> "Third round needed?" [label="yes"];
-    "Third round needed?" -> "STOP: surface to user (continue/simplify/change approach)" [label="yes (>2 rounds)"];
-    "Third round needed?" -> "Fix issues and commit" [label="no (<=2 rounds)"];
+    "Issues found?" -> "Fourth round needed?" [label="yes"];
+    "Fourth round needed?" -> "STOP: surface to user (continue/simplify/change approach)" [label="yes (>3 rounds)"];
+    "Fourth round needed?" -> "Fix issues and commit" [label="no (<=3 rounds)"];
     "Fix issues and commit" -> "Run code review (intense-flow)" [label="re-review"];
     "Issues found?" -> "Codex local loop (codex-review-loop)" [label="no (clean)"];
     "Codex local loop (codex-review-loop)" -> "Verify with verification-before-completion" [label="clean, or mode off"];
@@ -193,14 +193,14 @@ digraph fix_issue {
         line then the `Co-authored-by` trailer from `docs/attribution.md` (display name = the model
         running at runtime), e.g. `Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>`
      7. Re-run the **same review** with updated HEAD SHA
-     8. Repeat until the review passes clean, **to a maximum of two fix rounds.** If a third round would be needed, STOP and surface to the user instead of starting it: list the outstanding findings, state how much the diff has grown relative to the size you recorded during **Assess complexity** (step 4), and recommend whether to *continue, simplify the implementation, or change approach*. Needing three or more rounds on the same file is a signal that the design is wrong, not that the code is buggy — and successive rounds that contradict each other (round *n+1* re-flagging the horn of a tradeoff round *n* just fixed) or a growing diff whose every commit is individually defensible are the tells. Escalating is a successful outcome of this loop, alongside "passed clean," not a failure to complete it.
+     8. Repeat until the review passes clean, **to a maximum of three fix rounds.** If a fourth round would be needed, STOP and surface to the user instead of starting it: list the outstanding findings, state how much the diff has grown relative to the size you recorded during **Assess complexity** (step 4), and recommend whether to *continue, simplify the implementation, or change approach*. Needing four or more rounds on the same file is a signal that the design is wrong, not that the code is buggy — and successive rounds that contradict each other (round *n+1* re-flagging the horn of a tradeoff round *n* just fixed) or a growing diff whose every commit is individually defensible are the tells. Escalating is a successful outcome of this loop, alongside "passed clean," not a failure to complete it.
    - Do NOT skip re-review — fixes can introduce new issues, and the same lenses (accessibility, OWASP, SEO) must re-run against the new HEAD
    - **Caller-context only**: `/code-review-intense-flow` (like the specialists it dispatches) fans out via `Task`/subagents, so it MUST run in the caller's context — never inside the dispatched implementation subagent, which has no `Agent`/`Task` tool
 
 8.5. **Codex gate (`codex-review-loop`)**:
    - Runs on **both** implementation paths, including `subagent-driven-development`: Codex is an independent reviewer, not a repeat of Claude's review.
    - Run `python3 <codex-review-loop dir>/codex_loop.py mode` first. On `off`, skip this step. On `local` or `github`, follow Phase 1 of the `codex-review-loop` skill, the local review/fix loop, before pushing. Exit code `2` means STOP and report; never silently skip.
-   - Codex rounds have their own 2-round cap, separate from step 8's. A hit cap or a declined finding counts as "needs a human" in step 11.
+   - Codex rounds have their own 3-round cap, separate from step 8's. A hit cap or a declined finding counts as "needs a human" in step 11.
 
 9. **Verify fix**:
    - **REQUIRED**: Use `superpowers:verification-before-completion`
@@ -240,7 +240,7 @@ digraph fix_issue {
 
    **Leave it in draft (do NOT mark ready) — STOP and tell the user what's outstanding — if any of these is true:**
    - The workflow surfaced a decision that is still unresolved: a design/approach choice that was surfaced rather than resolved, an ambiguous requirement, or an open "should we file a follow-up issue?" question.
-   - The fix-and-re-review loop escalated to the user — it hit the two-round cap (step 8), or the ~3x scope tripwire (step 4) fired — and that hasn't been resolved.
+   - The fix-and-re-review loop escalated to the user — it hit the three-round cap (step 8), or the ~3x scope tripwire (step 4) fired — and that hasn't been resolved.
    - `superpowers:verification-before-completion` (step 9) did not fully pass.
    - The Codex gate (step 8.5 / step 10) did not pass: Codex mode is `github` and the bot's review of HEAD isn't `clean`, the bot timed out, a Codex finding was declined without user confirmation, or the Codex loop hit its cap or a tool error.
    - The >500-line exception in step 8 deferred Minor findings to follow-up GitHub issues that have not actually been filed yet.
@@ -278,7 +278,7 @@ digraph fix_issue {
 | Hand-matching reviewers from a table | Let `/code-review-intense-flow` route — manual self-selection drops the always-on general reviewer and default security pass |
 | Fix issues but skip re-review | Always re-run the same review after fixes |
 | Fixing every finding on heuristic code | Findings about hypothetical inputs are unbounded; filter to inputs that actually occur before fixing |
-| Re-reviewing past two fix rounds without stopping | Three-plus rounds on one file is a design signal; cap at two, then surface *continue / simplify / change approach* to the user |
+| Re-reviewing past three fix rounds without stopping | Four-plus rounds on one file is a design signal; cap at three, then surface *continue / simplify / change approach* to the user |
 | Letting a small change grow silently | Record an expected size at complexity assessment; if it exceeds ~3x, stop and surface the scope growth |
 | Running `/code-review-intense-flow` inside the implementation subagent | It fans out via `Task`; run it in the caller's context |
 | Skip verification | Always verify before PR |
@@ -302,8 +302,8 @@ digraph fix_issue {
 - Skipping review because "it's simple" -> Simple frontend changes can have accessibility issues
 - Hand-picking a single reviewer for any change -> Use `/code-review-intense-flow` so routing is automated, not self-selected
 - Skipping re-review after fixes -> Fixes can introduce new issues; always re-review with the same review command
-- Four review rounds on one file -> The design is the problem; stop and resurface (continue / simplify / change approach), don't write a fifth revision
-- "The reviewer keeps finding things, so I'll keep fixing" on heuristic code -> Hypothetical-input findings are unbounded; filter to inputs that actually occur, and cap the loop at two rounds
+- Five review rounds on one file -> The design is the problem; stop and resurface (continue / simplify / change approach), don't write a sixth revision
+- "The reviewer keeps finding things, so I'll keep fixing" on heuristic code -> Hypothetical-input findings are unbounded; filter to inputs that actually occur, and cap the loop at three rounds
 - The diff is 3x the size you expected but each step looked reasonable -> That's the ratchet; scope growth is the user's decision, stop and surface it
 - Running `/code-review-intense-flow` in the dispatched subagent -> It needs the caller's `Agent`/`Task` tool to fan out
 - Creating PR before verification -> Verify first, always
