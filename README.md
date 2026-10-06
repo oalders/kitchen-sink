@@ -253,7 +253,7 @@ Automates the workflow for fixing GitHub issues, guided by reuse-before-writing,
 7. Runs `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), up to three fix rounds before escalating
 8. Runs the Codex gate (`codex-review-loop`) unless its mode is `off`
 9. Verifies with `verification-before-completion`
-10. Creates a draft PR that closes the issue
+10. Creates a draft PR that closes the issue (in Codex `github` mode, waits for a clean `@codex review` of HEAD)
 11. Marks it ready and monitors CI when nothing needs a human; otherwise leaves it in draft and says why
 
 #### /triage-backlog
