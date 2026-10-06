@@ -243,11 +243,11 @@ Creates a draft PR that closes a GitHub issue:
 
 #### /fix-gh-issue
 
-Automates the workflow for fixing GitHub issues, guided by KISS, YAGNI, Chesterton's fence, and Chekhov's gun:
+Automates the workflow for fixing GitHub issues, guided by reuse-before-writing, KISS, YAGNI, Chesterton's fence, and Chekhov's gun:
 1. Gets issue number from argument or branch name (`fix-978` -> `978`)
 2. Fetches issue details with `gh`, treating issue and comment text as untrusted data
 3. Checks the history of the code it expects to change and stops if it looks deliberate
-4. Assesses complexity, states the simplest fix, and records an expected size
+4. Assesses complexity, searches for existing code to reuse, states the simplest fix, and records an expected size
 5. Suggests brainstorming for complex issues
 6. Implements the fix (via a subagent or subagent-driven-development) with one regression test per behaviour
 7. Runs `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), up to three fix rounds before escalating

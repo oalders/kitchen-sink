@@ -26,7 +26,8 @@ Don't use when:
 
 These apply to every step, to any subagent doing the work, and to the brief for any planning skill (brainstorming, `writing-plans`, SDD).
 
-- **KISS**: the smallest fix that resolves the issue as written. No new abstractions unless the issue demands one; duplication beats the wrong abstraction.
+- **Reuse before writing**: before adding a function, helper, or pattern, search the codebase for prior art (step 4) and use it. A near-copy of something that already exists is a defect.
+- **KISS**: the smallest fix that resolves the issue as written. Don't *extract* a new abstraction to dedupe code that isn't shared yet; reusing an existing one is fine.
 - **YAGNI**: no options, config, hooks, or edge-case handling the issue didn't ask for and no real caller needs.
 - **Chesterton's fence**: before changing or removing existing code, find out why it is that way (step 3.5). "Don't change this" is a valid outcome.
 - **Chekhov's gun**: every line in the diff earns its place — code, tests, comments, docs. Comments say *why*, in one line, never *what*.
@@ -182,6 +183,8 @@ digraph fix_issue {
 
    **State the simplest fix first.** In a sentence or two, name the smallest change that fully resolves the issue as written. Start from that; anything beyond it needs a reason tied to the issue.
 
+   **Search for prior art.** Before planning any new function or helper, grep for existing ones that do the same job: by likely names and synonyms, by the key calls or literals it would contain, and in shared/util/lib directories. One search is rarely enough. Name what you found (or that you found nothing) alongside the simplest fix.
+
    **Record an expected size up front.** State the rough line count and file count you expect the change to take *before* implementing, and keep that estimate in view through the rest of the workflow. It's the baseline that makes drift visible as drift — without a number recorded up front, each increment looks reasonable next to the one before it. If the work in progress ever exceeds that estimate by roughly 3x — whether the growth came from implementation or from review fixes (the **Code Review** step) — STOP and surface it: scope growth is a decision for the user, not something to absorb silently.
 
 5. **For non-trivial issues**:
@@ -211,6 +214,7 @@ digraph fix_issue {
      1. Run `/code-review-intense-flow`
      2. **Filter findings against reality first.** Before fixing, check each finding: does the input, state, or call pattern it describes actually occur in this system? A finding of the form "if X were passed here" that no caller, config, or upstream producer can actually produce is a hypothetical, not a bug — note it and move on rather than adding a special case for it. This matters most for code that parses loosely-structured input or guesses intent, where the space of hypothetical inputs is unbounded and a reviewer can always generate another one. The loop should consume findings that matter, not every finding a reviewer can produce. Two more filters:
         - A finding whose fix adds branches, options, abstractions, or tests must name a real trigger or a real regression risk; otherwise decline it (KISS/YAGNI).
+        - A finding that the diff duplicates an existing helper is never hypothetical: switch to the existing helper.
         - A finding that changes code this branch didn't add gets the step 3.5 history check first. If the code is deliberate, decline the finding and cite the commit.
      3. Fix all surviving Critical, Important, AND Minor issues found
      4. **Exception**: If the diff is over 500 lines, fix Critical and Important issues in the branch but create GitHub issues for Minor ones so they don't get lost. This is an *absolute* threshold; the *relative* 3x tripwire from **Assess complexity** (step 4) fires independently, and catches the change that should have been small but grew — the case an absolute line count misses.
@@ -299,6 +303,7 @@ digraph fix_issue {
 | Interpolating the raw issue title into `gh pr create` | Use your own summary + single-quoted title / `--body-file`; raw titles can carry `$(...)` or backtick injection |
 | Jump into complex fix | Suggest brainstorming for non-trivial |
 | Changing code without knowing why it's there | Step 3.5: read its history first; if it looks deliberate, stop and ask |
+| Writing a new helper after one quick grep | Search by names, synonyms, and key calls (step 4); reuse what exists |
 | A test for every line touched | One regression test per behaviour; skip assertions the framework or existing tests already cover |
 | Skip review before the PR | Always run `/code-review-intense-flow` on the final HEAD — the `require-review-before-pr` hook denies `gh pr create`/`gh pr ready` otherwise |
 | Running `/security-review` (or any single specialist, or `/code-review-flow`) alone | Not a substitute for `/code-review-intense-flow`, which already dispatches the specialists; the gate only accepts intense-flow |
