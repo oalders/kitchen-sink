@@ -281,4 +281,5 @@ Thoughts that mean you're about to skip a step:
 - `superpowers:brainstorming`, `superpowers:writing-plans`, `superpowers:subagent-driven-development` — steps 5–6
 - `/code-review-intense-flow` — **required** before the PR; routes to the specialist reviewers itself (step 8)
 - `codex-review-loop`, `/codex-review` (show or switch the repo's Codex mode) — steps 8.5 and 10
+- `stacking-prs` — when the branch builds on an unmerged PR (step 10)
 - `/monitor-ci`, else `/poll-ci` — step 11
