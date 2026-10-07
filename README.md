@@ -76,6 +76,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **implement-design-handoff** | Wires a design-system / component-export handoff into an app's real templates and CSS faithfully, forcing a property-by-property visual-parity check and protecting untouched surfaces |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
+| **stacking-prs** | Decides which PRs to stack and which to open against the default branch, links stacks with `gh stack`, and tells you only the merge order |
 
 **Perl & repo tuning**
 
@@ -371,6 +372,15 @@ Prevents over-engineering by evaluating whether a task needs heavyweight process
 - Checks indicators: adding constants? < 100 lines? < 3 files?
 - Announces decision with reasoning
 - Routes to direct implementation or subagent workflow
+
+#### stacking-prs
+
+Stacks PRs only when one needs another's unmerged code, so you only have to know the merge order:
+- Tries each branch on the default branch first; stacks only if it doesn't apply or the tests fail
+- Links stacks by PR number with `gh stack link` so merging the bottom PR retargets the next one
+- Reports which PRs are stacked, in what merge order, and which are independent; never merges
+- After a merge, checks the next PR's base and diff, and asks before any `gh stack rebase`/`sync` force-push
+- Referenced by `/fix-gh-issue` (step 10) and `/draft-pr`; needs the `gh stack` extension and won't install it
 
 ### Perl & repo tuning
 
