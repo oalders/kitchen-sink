@@ -39,4 +39,5 @@ Steps:
 
    🤖 Generated with [Claude Code](https://claude.com/claude-code) · Opus 4.8'
    ```
+   If the branch builds on another PR that hasn't merged yet, follow the `stacking-prs` skill for the base branch; otherwise the PR targets the default branch.
 6. Report the PR URL to the user

