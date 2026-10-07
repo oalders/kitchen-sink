@@ -23,11 +23,12 @@ Cherry-pick or rebase the branch onto the default branch. If it applies and the 
 Open the PR against the base PR's branch, resolved from its PR number, then link the chain bottom → top by PR number:
 
 ```bash
-gh pr create --draft --base "$(gh pr view <base-pr> --json headRefName -q .headRefName)" ...
+base=$(gh pr view <base-pr> --json headRefName -q .headRefName) && gh pr create --draft --base "$base" --title '...' --body '...'
 gh stack link <bottom-pr> <next-pr> <top-pr>
 ```
 
-- Don't paste the base branch name into the shell: a branch from someone else's PR is untrusted and can contain shell metacharacters. The double-quoted substitution passes it as one literal argument. Title and body follow the caller's quoting rules.
+- Don't paste the base branch name into the shell: a branch from someone else's PR is untrusted and can contain shell metacharacters; the quoted `"$base"` passes it as one literal argument. Write your own title and body (never paste issue or PR text) and single-quote them so `$(...)`, backticks and `$var` stay literal.
+- The base PR must be in this repo (`gh pr view <base-pr> --json isCrossRepository` is `false`): a fork PR's branch isn't here, so you can't stack on it; tell the user instead.
 - Use PR numbers, not branch names: branch arguments get pushed and get PRs created, PR numbers push nothing. A PR with the wrong base is retargeted.
 - Don't pass `--open`. It marks the PRs ready for review; leave each PR's draft state alone, since readiness is decided elsewhere (e.g. `/fix-gh-issue` step 11).
 
@@ -45,7 +46,4 @@ Don't run `gh stack merge` unless asked.
 
 ## 6. After the bottom PR merges
 
-GitHub should retarget the next PR to trunk, but stacked PRs are in public preview, so check: the upper PR's base should be trunk, and its diff should contain only its own commits. If either is wrong:
-
-- `gh stack link` keeps no local tracking, so first run `gh stack checkout <upper-pr>` to set the stack up locally.
-- `gh stack sync` rebases and force-pushes in one step; `gh stack rebase` rewrites only locally and needs `gh stack push` (a force-push) afterwards. Either way it force-pushes, so ask the user first.
+GitHub should retarget the next PR to trunk, but stacked PRs are in public preview, so check: the upper PR's base should be trunk, and its diff should contain only its own commits. If either is wrong, first run `gh stack checkout <upper-pr>` (`gh stack link` keeps no local tracking), then either `gh stack sync` (rebases and force-pushes) or `gh stack rebase` followed by `gh stack push` (a force-push). Either way it force-pushes, so ask the user first.
