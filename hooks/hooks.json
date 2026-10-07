@@ -29,11 +29,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-gh-attribution.py",
-            "timeout": 20
-          },
-          {
-            "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/require-review-before-pr.py",
             "timeout": 10
           }
