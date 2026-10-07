@@ -45,4 +45,4 @@ Don't run `gh stack merge` unless asked.
 
 ## 6. After the bottom PR merges
 
-GitHub should retarget the next PR to trunk, but stacked PRs are in public preview, so check: the upper PR's base should be trunk, and its diff should contain only its own commits. If either is wrong, first run `gh stack checkout <upper-pr>` (`gh stack link` keeps no local tracking), then either `gh stack sync` (rebases and force-pushes) or `gh stack rebase` followed by `gh stack push` (a force-push). Either way it force-pushes, so ask the user first.
+GitHub should retarget the next PR to trunk; verify anyway: the upper PR's base should be trunk, and its diff should contain only its own commits. If either is wrong, first run `gh stack checkout <upper-pr>` (`gh stack link` keeps no local tracking), then either `gh stack sync` (rebases and force-pushes) or `gh stack rebase` followed by `gh stack push` (a force-push). Either way it force-pushes, so ask the user first.
