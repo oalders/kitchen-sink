@@ -1,13 +1,14 @@
 ---
 name: stacking-prs
 description: Use when about to open a PR whose branch builds on another PR that hasn't merged yet, or when opening several related PRs, to decide which to stack and which to open against the default branch, and to link stacks with gh stack
+version: 1.0.0
 ---
 
 # Stacking PRs
 
 ## Overview
 
-You decide which PRs to stack; the user only needs the merge order. Stack only when a change needs an unmerged PR's code. When you do stack, link it with GitHub's native stacked PRs (`gh stack`), because a plain base-branch stack breaks on merge.
+You decide which PRs to stack; the user only needs the merge order. Stack only when a change needs an unmerged PR's code. When you do stack, link it with GitHub's stacked PRs via the `gh stack` extension, because a plain base-branch stack breaks on merge.
 
 ## 0. Preflight
 
@@ -15,16 +16,18 @@ Run `gh stack --help`. If it fails, `gh stack` isn't installed: tell the user to
 
 ## 1. Try it on trunk first
 
-Cherry-pick or rebase the branch onto the default branch. If it applies and the tests pass, open the PR against the default branch and don't stack.
+Cherry-pick or rebase the branch onto the default branch. If it applies and the tests pass, open the PR against the default branch and don't stack. If it conflicts, abort (`git cherry-pick --abort` / `git rebase --abort`) and stack instead. If the branch is already pushed, moving it onto trunk rewrites it and needs a force-push, so ask the user first.
 
 ## 2. Stack only on a real dependency
 
-Open the PR against the base PR's branch, then link the chain bottom → top by PR number:
+Open the PR against the base PR's branch, resolved from its PR number, then link the chain bottom → top by PR number:
 
 ```bash
+gh pr create --draft --base "$(gh pr view <base-pr> --json headRefName -q .headRefName)" ...
 gh stack link <bottom-pr> <next-pr> <top-pr>
 ```
 
+- Don't paste the base branch name into the shell: a branch from someone else's PR is untrusted and can contain shell metacharacters. The double-quoted substitution passes it as one literal argument. Title and body follow the caller's quoting rules.
 - Use PR numbers, not branch names: branch arguments get pushed and get PRs created, PR numbers push nothing. A PR with the wrong base is retargeted.
 - Don't pass `--open`. It marks the PRs ready for review; leave each PR's draft state alone, since readiness is decided elsewhere (e.g. `/fix-gh-issue` step 11).
 
@@ -42,4 +45,7 @@ Don't run `gh stack merge` unless asked.
 
 ## 6. After the bottom PR merges
 
-GitHub should retarget the next PR to trunk, but stacked PRs are in public preview, so check: the upper PR's base should be trunk, and its diff should contain only its own commits. If either is wrong, `gh stack rebase` or `gh stack sync` can fix it. Both rewrite the branch and need a force-push, so ask the user first.
+GitHub should retarget the next PR to trunk, but stacked PRs are in public preview, so check: the upper PR's base should be trunk, and its diff should contain only its own commits. If either is wrong:
+
+- `gh stack link` keeps no local tracking, so first run `gh stack checkout <upper-pr>` to set the stack up locally.
+- `gh stack sync` rebases and force-pushes in one step; `gh stack rebase` rewrites only locally and needs `gh stack push` (a force-push) afterwards. Either way it force-pushes, so ask the user first.
