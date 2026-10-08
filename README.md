@@ -33,7 +33,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 | Command | Description |
 |---------|-------------|
-| **/agent-instructions-review** | Reviews changes to agent-instruction files (CLAUDE.md, AGENTS.md, .cursor/rules, copilot-instructions, .claude/**) for accuracy, placement, duplication, cost, removability, and instruction quality |
+| **/agent-instructions-review** | Reviews changes to agent-instruction files (CLAUDE.md, AGENTS.md, .cursor/rules, copilot-instructions, .claude/**, plugin commands/skills/agents) for accuracy, placement, duplication, cost, removability, and instruction quality |
 | **/code-review-intense-flow** | Heavyweight fan-out that dispatches every applicable specialist reviewer (security, frontend, seo, geo, playwright, design-handoff, agent-instructions, test-value, embedded-script) in parallel and aggregates the findings |
 | **/design-handoff-review** | Reviews a design-handoff implementation for character-level text drift and orphaned input bindings against the design source |
 | **/embedded-script-review** | Flags shell and other logic embedded in CI/tool config (GitHub Actions `run:` blocks, `package.json` scripts, TOML command strings) that belongs in a standalone, testable script |
@@ -105,7 +105,7 @@ Hooks live in `hooks/hooks.json` at the plugin root.
 
 #### /agent-instructions-review
 
-Focused review for changes to agent-instruction files—the docs an AI agent loads into context on every session (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/**`, `.cursorrules`, `.github/copilot-instructions.md`, `.claude/**/*.md`):
+Focused review for changes to agent-instruction files—the docs an AI agent loads into context on every session (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/**`, `.cursorrules`, `.github/copilot-instructions.md`, `.claude/**/*.md`, and `commands/`/`skills/`/`agents/` markdown in a Claude Code plugin repo):
 - Accuracy—verifies every factual claim (paths, flags, commands, behavior) against the code at HEAD rather than trusting the text
 - Placement—mechanism/rationale belong in code comments; instruction files hold the cross-cutting rule plus a pointer to detail
 - Duplication—recommends the pointer form over restating comments that already sit next to the code (no information leaves the repo)
@@ -482,7 +482,7 @@ On `fix-NNN` branches (the `/fix-gh-issue` workflow) it skips the menu and point
 
 **Agent-Instructions Review (`/agent-instructions-review`)**
 - Triggered by: `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.github/copilot-instructions.md`
-- Directories: `.cursor/rules/`, `.claude/` (any `.md` under it)
+- Directories: `.cursor/rules/`, `.claude/` (any `.md` under it), and `commands/`, `skills/`, `agents/` (any `.md`) in a repo with `.claude-plugin/plugin.json`
 
 **Generic Review (`/request-review`)**
 - Always offered as a fallback option
