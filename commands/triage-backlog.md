@@ -1,5 +1,5 @@
 ---
-description: 'Use when grooming a repo''s open GitHub issue backlog: finding issues whose work is already done, stale task lists, or missing labels'
+description: 'Use when grooming a repo''s open GitHub issue backlog: finding issues whose work is already done, stale task lists, or missing labels.'
 ---
 
 # Triage Backlog

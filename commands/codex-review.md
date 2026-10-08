@@ -1,5 +1,5 @@
 ---
-description: Use when asked to check, turn on, turn off, or switch this repo's Codex review mode (local, github, or off), or to report the effective mode and Codex sandbox status
+description: Use when asked to check, turn on, turn off, or switch this repo's Codex review mode (local, github, or off), or to report the effective mode and Codex sandbox status.
 argument-hint: "[on|local|off|default|status]"
 ---
 

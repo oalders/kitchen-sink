@@ -1,5 +1,5 @@
 ---
-description: Use when reviewing an implementation built from a design-handoff bundle (design-system cards or a component export) that exists in the repo; not when there is no bundle or no UI change
+description: Use when reviewing an implementation built from a design-handoff bundle (design-system cards or a component export) that exists in the repo; not for repos without a bundle or diffs without UI changes.
 ---
 
 # Design-Handoff Review

@@ -1,5 +1,5 @@
 ---
-description: Use when you have a live, already-serving page and want measured evidence of responsive layout breakage (overflow, occluded controls, tiny touch targets or text) across viewport widths, including to confirm a risk /frontend-review flagged
+description: Use when you have a live, already-serving page and want measured evidence of responsive layout breakage (overflow, occluded controls, tiny touch targets or text) across viewport widths, including to confirm a risk /frontend-review flagged.
 ---
 
 # Responsive Audit

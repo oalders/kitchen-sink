@@ -1,5 +1,5 @@
 ---
-description: Use when a diff changes command strings in CI or tool config (GitHub Actions and other CI YAML, docker-compose, package.json scripts, TOML/INI tool config); not for purely declarative config changes
+description: Use when a diff changes command strings in CI or tool config (GitHub Actions and other CI YAML, docker-compose, package.json scripts, TOML/INI tool config); not for purely declarative config changes.
 ---
 
 # Embedded-Script Review

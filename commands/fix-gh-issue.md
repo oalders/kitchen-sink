@@ -1,5 +1,5 @@
 ---
-description: Use when asked to fix a GitHub issue end to end, given an issue number or on a fix-NNN branch; not for exploring code or work that isn't a GitHub issue
+description: Use when asked to fix a GitHub issue end to end, given an issue number or on a fix-NNN branch; not for exploring code or work that isn't a GitHub issue.
 ---
 
 # Fix GitHub Issue

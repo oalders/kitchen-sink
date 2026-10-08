@@ -4,7 +4,7 @@ description: Use when deciding how to split a feature or body of work into GitHu
 
 Break down the current feature or work into small, manageable GitHub issues.
 
-**Label Management**: Before using any label that may not exist, create it first using `gh label create "<label-name>" --description "<description>" --color "<hex-color>"` (if it fails with an "already exists" error, the label is already there, so carry on).
+**Label Management**: Before using any label that may not exist, create it first using `gh label create "<label-name>" --description "<description>" --color "<hex-color>"` (if it fails with an "already exists" error, the label is already there, so carry on; any other error is real, so stop and report it).
 
 ## Decision Criteria
 
