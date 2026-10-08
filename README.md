@@ -111,7 +111,7 @@ Focused review for changes to agent-instruction files—the docs an AI agent loa
 - Duplication—recommends the pointer form over restating comments that already sit next to the code (no information leaves the repo)
 - Cost—weighs each addition against its per-session context tax on all unrelated work
 - Removability—proposes deletions of superseded or contradicted text, not just critiques of additions
-- Instruction quality—actionable and unambiguous over narrative; flags internal contradictions
+- Instruction quality—actionable and unambiguous over narrative; flags internal contradictions; for skills, commands, and agents, checks that the `description` gives triggers rather than a workflow summary
 - Spawns `general-purpose` with a systematic six-dimension checklist
 
 #### /code-review-intense-flow

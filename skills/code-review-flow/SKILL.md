@@ -1,7 +1,7 @@
 ---
 name: code-review-flow
-description: Streamlined code review workflow - gets SHAs and invokes a general-purpose code reviewer without permission prompts
-version: 1.0.0
+description: Use after completing a task or feature, before merging to main, or after fixing a complex bug, when one general code review is enough (for every specialist lens, use code-review-intense-flow).
+version: 1.0.1
 ---
 
 # Code Review Flow

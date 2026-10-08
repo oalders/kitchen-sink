@@ -1,7 +1,7 @@
 ---
 name: tune-precious
-description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`). Generates the canonical config (perltidy + perlvars + omegasort + optional perlcritic + optional typos), consolidates `.perltidyrc`, edits `dist.ini` to drop Code::TidyAll, wires a CI lint job, and adds a self-installing `.githooks/pre-commit` shell hook (activated via a relative `core.hooksPath`, worktree-safe) so `precious lint --staged` runs locally on commit. Idempotent across re-runs.
-version: 1.6.0
+description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`), or when a repo still lints with Code::TidyAll (`.tidyallrc`, `tidyall.ini`, or `Test::TidyAll` in `dist.ini`).
+version: 1.6.1
 ---
 
 # Tune Precious

@@ -1,7 +1,7 @@
 ---
 name: over-engineer-no-more
-description: Triages plan complexity to avoid heavyweight execution for trivial changes
-version: 1.0.0
+description: Use after writing an implementation plan and before launching subagent-driven or other multi-step execution, or when the user frames a change as "just add..." or "a simple change".
+version: 1.0.1
 ---
 
 # Over-Engineer No More
