@@ -1,5 +1,5 @@
 ---
-description: Use when a diff adds or changes test files, when a PR claims coverage for config, CI workflows, templates, or HTML output, or when tests look written only to satisfy a "must have tests" rule
+description: Use when a diff adds or changes test files, when a PR claims coverage for config, CI workflows, templates, or HTML output, or when tests look written only to satisfy a "must have tests" rule; not for Playwright selector or performance hygiene (use /playwright-review).
 ---
 
 # Test-Value Review

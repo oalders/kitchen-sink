@@ -1,5 +1,5 @@
 ---
-description: Use when you've completed a feature or bug fix, before merging to main, after a major code change, or when you want a fresh perspective on your work
+description: Use when you've finished a feature or bug fix, before merging to main, after a major change, for a fresh perspective, or to get a review that runs unattended, without permission prompts; not before any code is written.
 ---
 
 # Code Review

@@ -375,7 +375,7 @@ jobs:
     container:
       image: perldocker/perl-tester:5.34
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build Dist
         run: dzil build
 
@@ -385,7 +385,7 @@ jobs:
     container:
       image: perldocker/perl-tester:5.34
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
 
   test_linux:
@@ -400,7 +400,7 @@ jobs:
     container:
       image: perldocker/perl-tester:${{ matrix.perl-version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install deps
         uses: perl-actions/install-with-cpm@v1.9
         with:
@@ -420,7 +420,7 @@ jobs:
           - "5.34"
     needs: build
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: ${{ matrix.perl-version }}
@@ -456,7 +456,7 @@ jobs:
     container:
       image: perldocker/perl-tester:5.44
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build Dist
         run: dzil build
 
@@ -466,7 +466,7 @@ jobs:
     container:
       image: perldocker/perl-tester:5.44
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
 
   test_linux:
@@ -487,7 +487,7 @@ jobs:
     container:
       image: perldocker/perl-tester:${{ matrix.perl-version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: perl-actions/setup-cpm@v1
         with:
           version: compat
@@ -510,7 +510,7 @@ jobs:
           - "5.44"
     needs: build
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: ${{ matrix.perl-version }}

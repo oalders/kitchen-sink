@@ -49,7 +49,7 @@ Examples:
    ```bash
    gh label create "triaged" --description "Issue has been reviewed during backlog triage" --color "C5DEF5" --force
    ```
-   (`--force` makes this safe to re-run)
+   (`--force` makes this safe to re-run; it also resets an existing `triaged` label's description and colour to these values)
 
 4. Filter out issues already labeled "triaged"
 
