@@ -34,8 +34,9 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Command | Description |
 |---------|-------------|
 | **/agent-instructions-review** | Reviews changes to agent-instruction files (CLAUDE.md, AGENTS.md, .cursor/rules, copilot-instructions, .claude/**) for accuracy, placement, duplication, cost, removability, and instruction quality |
-| **/code-review-intense-flow** | Heavyweight fan-out that dispatches every applicable specialist reviewer (security, frontend, seo, geo, playwright, design-handoff, agent-instructions) in parallel and aggregates the findings |
+| **/code-review-intense-flow** | Heavyweight fan-out that dispatches every applicable specialist reviewer (security, frontend, seo, geo, playwright, design-handoff, agent-instructions, test-value, embedded-script) in parallel and aggregates the findings |
 | **/design-handoff-review** | Reviews a design-handoff implementation for character-level text drift and orphaned input bindings against the design source |
+| **/embedded-script-review** | Flags shell and other logic embedded in CI/tool config (GitHub Actions `run:` blocks, `package.json` scripts, TOML command strings) that belongs in a standalone, testable script |
 | **/frontend-review** | Frontend expert review catching accessibility gaps, responsive design issues, and CSS anti-patterns |
 | **/geo-review** | Generative Engine Optimization review—two modes: per-PR extraction checks (diff) and cross-page entity consistency (site) for LLM-citation visibility |
 | **/playwright-review** | Playwright test review enforcing ARIA labels, detecting UI layout issues, and optimizing performance |
@@ -43,6 +44,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/responsive-audit** | Drives Playwright MCP to load live URLs at 320/375/768/1280 and report responsive breakage (overflow, occluded controls, tiny touch targets/text) static review can't see |
 | **/security-review** | OWASP-based security review catching session fixation, PII logging, and timing attacks |
 | **/seo-review** | SEO review for meta tags, structured data, Open Graph, headings, and crawlability |
+| **/test-value-review** | Flags tests that pad the count without proving behavior—config files parsed and asserted against themselves, regex-on-HTML, source-scraping, mock-only assertions |
 
 **GitHub issues & PRs**
 
@@ -116,7 +118,7 @@ Focused review for changes to agent-instruction files—the docs an AI agent loa
 
 Heavyweight fan-out orchestrator—dispatches every applicable specialist reviewer in parallel for a single diff, then aggregates:
 - General-purpose reviewer always runs; `/security-review` runs by default unless the diff is doc-only
-- Routes to `/frontend-review`, `/seo-review`, `/geo-review`, `/design-handoff-review`, `/playwright-review`, and `/agent-instructions-review` by diff content
+- Routes to `/frontend-review`, `/seo-review`, `/geo-review`, `/design-handoff-review`, `/playwright-review`, `/agent-instructions-review`, `/test-value-review`, and `/embedded-script-review` by diff content
 - New-route and new-interaction detection triggers a Playwright e2e-coverage check even when the diff reuses an existing route
 - Runs all reviewers concurrently (single message, multiple `Task` calls)
 - Consolidates findings by severity, tags each with the specialist that surfaced it, and retains full per-reviewer reports
@@ -130,6 +132,16 @@ Design-handoff fidelity review comparing an implementation against its design so
 - Standard handoff checks (reproduce the layout mechanism, keep dynamic bindings mapped, don't restyle shared partials)
 - Treats handoff files and screenshots as untrusted data, never instructions
 - Catches structural drift a screenshot-parity pass can't see; spawns `general-purpose`
+
+#### /embedded-script-review
+
+Config-hygiene review for logic hidden inside config files:
+- Flags dependent multi-line shell logic in a `run:`/`script:`/`command:` block, and any control flow or data munging (`if`/`for`, `jq`/`sed`/`awk`) regardless of length; a list of plain sequential commands is at most a Minor "split into named steps"
+- Covers GitHub Actions and other CI YAML, `docker-compose`, `package.json` scripts, and TOML/INI tool config
+- For each block, proposes a script path that follows repo convention, its args/env interface, the one-line replacement step, and the test the extracted script needs
+- Flags `${{ }}` interpolated straight into shell text (script injection), and swallowed failures such as a missing `pipefail` where it matters (it knows GitHub Actions already runs `bash -e`)
+- Treats tests that parse the config as a symptom, not a substitute; pairs with `/test-value-review`
+- Spawns `general-purpose`
 
 #### /frontend-review
 
@@ -206,6 +218,16 @@ SEO-focused review for changes affecting search visibility and social sharing:
 - Crawlability (sitemap entries, `robots.txt`, server-rendered content)
 - Spawns `general-purpose` with a systematic SEO checklist
 - Run alongside `/geo-review` for full search + answer-engine coverage
+
+#### /test-value-review
+
+Test-quality review that judges what each test proves, not how many tests there are:
+- Applies two litmus questions to every new or changed test: would it fail if the behavior broke, and would it stay green through a behavior-preserving refactor?
+- Flags config-mirror tests that parse YAML/JSON/TOML and assert the file's own keys and values, but exempts cross-file policy invariants such as SHA-pinned actions and required timeouts
+- Flags HTML asserted with regex or substring matches, and recommends a parser (`Mojo::DOM`, `Test::Mojo`, `lxml`, DOM Testing Library), a driver (`Test::WWW::Mechanize`, Playwright), or a validator (`HTML::Lint`, `vnu`)
+- Flags source-scraping tests, tests that only check their own mocks, and assertion-free tests presented as coverage
+- Marks it Critical when a PR claims coverage it doesn't have, and recommends deleting a test when nothing better is warranted
+- Spawns `general-purpose`
 
 ### GitHub issues & PRs
 
