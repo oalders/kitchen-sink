@@ -1,5 +1,5 @@
 ---
-description: GEO review for LLM-citation visibility — runs in diff mode (per-PR extraction checks) or site mode (cross-page entity consistency, claim contradictions, schema graph)
+description: Use when adding or changing content pages, blog posts, docs, or marketing copy; changing JSON-LD or AI-crawler robots.txt rules; updating author bios or E-E-A-T pages; adding claims or statistics; restructuring into Q&A, lists, or tables; or for a scheduled, post-rebrand, or external-audit GEO pass
 ---
 
 # GEO Review

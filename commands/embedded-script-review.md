@@ -1,5 +1,5 @@
 ---
-description: Review config files (GitHub Actions and other CI YAML, docker-compose, package.json scripts, TOML/INI tool config) for multi-line shell, control flow, or inline python -c/perl -e programs that belong in a standalone, testable script
+description: Use when a diff changes command strings in CI or tool config (GitHub Actions and other CI YAML, docker-compose, package.json scripts, TOML/INI tool config); not for purely declarative config changes
 ---
 
 # Embedded-Script Review

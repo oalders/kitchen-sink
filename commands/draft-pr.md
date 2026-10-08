@@ -1,5 +1,5 @@
 ---
-description: Creates a draft PR that closes the GitHub issue from the branch name
+description: Use when asked to open a draft PR for the current branch that closes its linked GitHub issue (number given, or inferred from a fix-NNN branch name)
 ---
 
 Create a draft PR that closes a GitHub issue.

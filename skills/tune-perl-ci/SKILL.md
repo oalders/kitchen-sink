@@ -1,7 +1,7 @@
 ---
 name: tune-perl-ci
 description: Use when modernizing, tuning, or hardening a Perl project's GitHub Actions CI, when a workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`/`install-with-cpanm` and looks stale, or when a Dist::Zilla starter template's CI workflow is a few years old.
-version: 1.4.1
+version: 1.4.2
 ---
 
 # Tune Perl CI
@@ -59,7 +59,7 @@ Other workflows are skipped silently. If no workflow file matches across the rep
 
 If the caller passes a single workflow path as an argument, operate only on that file (still apply the detection rule for safety; bail out with a clear message if it isn't Perl-shaped).
 
-## The Six Transforms
+## The Seven Transforms
 
 ### 1. `fail-fast: false` on every matrix job
 

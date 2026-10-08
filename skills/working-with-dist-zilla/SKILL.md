@@ -1,7 +1,7 @@
 ---
 name: working-with-dist-zilla
-description: Use when working in a Perl repo containing a dist.ini file, or when the user mentions dzil, Dist::Zilla, or @Author::* PluginBundles.
-version: 1.1.0
+description: Use when working in a Perl repo with a dist.ini file; when dzil, Dist::Zilla, @Author::* bundles, cpanfile, or META.json come up; when editing prereqs or plugins or preparing a release; or when a dzil build produces diff noise or unexpected warnings.
+version: 1.1.1
 ---
 
 # Working with Dist::Zilla Repositories

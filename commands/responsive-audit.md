@@ -1,5 +1,5 @@
 ---
-description: Drive Playwright MCP to load live URLs at multiple viewport widths and report responsive breakage static review can't see
+description: Use when you have a live, already-serving page and want measured evidence of responsive layout breakage (overflow, occluded controls, tiny touch targets or text) across viewport widths, including to confirm a risk /frontend-review flagged
 ---
 
 # Responsive Audit

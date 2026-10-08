@@ -1,5 +1,5 @@
 ---
-description: Heavy code review - fans out to all applicable specialized reviewers (security, frontend, seo, geo, playwright, design-handoff, agent-instructions, test-value, embedded-script) based on diff content
+description: Use when about to open or merge a PR with non-trivial changes, when a branch touches multiple concerns (UI, routes, content), when returning to a long-running branch, when new routes need an e2e-coverage check, or before the PR on a fix-gh-issue fix-NNN branch
 ---
 
 # Code Review Intense Flow

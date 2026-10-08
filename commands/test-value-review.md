@@ -1,5 +1,5 @@
 ---
-description: Review tests for whether they prove behavior — flags change-detector tests that parse a config file and assert its own contents, regex-on-HTML assertions, source-scraping tests, and other tests that raise the test count without raising confidence
+description: Use when a diff adds or changes test files, when a PR claims coverage for config, CI workflows, templates, or HTML output, or when tests look written only to satisfy a "must have tests" rule
 ---
 
 # Test-Value Review

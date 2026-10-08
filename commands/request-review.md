@@ -1,5 +1,5 @@
 ---
-description: Request code review without permission prompts
+description: Use when you've completed a feature or bug fix, before merging to main, after a major code change, or when you want a fresh perspective on your work
 ---
 
 # Code Review
@@ -271,7 +271,7 @@ gh pr list --head $(git branch --show-current) --json number,url
 ## Example
 
 ```
-User: /code-review
+User: /request-review
 
 Step 1: Check context
 - Recent commit showed: [fix-1065 d0e856b8]

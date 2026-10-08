@@ -1,7 +1,7 @@
 ---
 name: tune-precious
 description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`), or when a repo still lints with Code::TidyAll (`.tidyallrc`, `tidyall.ini`, or `Test::TidyAll`, a tidyall prereqs block, or `[PerlCritic]` in `dist.ini`).
-version: 1.6.1
+version: 1.6.2
 ---
 
 # Tune Precious
@@ -350,7 +350,7 @@ gh api repos/<owner>/<repo>/releases/latest --jq .tag_name   # newest release, i
 gh api repos/<owner>/<repo>/tags --jq '.[].name'             # all tags, for repos with no "latest" release
 ```
 
-Never assume `@v1`. `oalders/install-ubi-action`, for example, has never tagged a `v1` — its latest is in the `v0.0.x` line, which is why the template pins `@v0.0.6`. When an action only publishes `v0.0.x` tags, pin the exact latest `v0.0.x`; when it publishes a moving major tag (`actions/checkout` → `v6`), that major tag is fine.
+Never assume `@v1`. `oalders/install-ubi-action`, for example, has never tagged a `v1` — its latest is in the `v0.0.x` line, which is why the template pins `@v0.0.6`. When an action only publishes `v0.0.x` tags, pin the exact latest `v0.0.x`; when it publishes a moving major tag (`actions/checkout` → `v7`), that major tag is fine.
 
 ```yaml
 name: lint
@@ -371,7 +371,7 @@ jobs:
   precious:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # full history so `precious lint --git-diff-from <base>` can resolve the merge base
       - uses: shogo82148/actions-setup-perl@v1

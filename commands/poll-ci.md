@@ -1,5 +1,5 @@
 ---
-description: Polls the current branch's CI run and reports pass/fail/in-progress (fallback for monitor-ci)
+description: Use when polling the current branch's CI run for pass/fail/in-progress status and no /monitor-ci command is available in the environment
 ---
 
 Poll the status of the current branch's CI run and report back when it finishes.

@@ -84,7 +84,7 @@ Don't launch 33 subagents to add items to arrays. Don't skip review cycles for c
 
 **Demonstrates:**
 - Complete decision flowchart
-- Examples categorized by complexity (trivial/middle/complex)
+- Examples categorized by complexity (trivial/complex)
 - User signal detection ("just add..." vs "implement auth...")
 - Time/credit decision matrix
 - Quick reference cheat sheet
@@ -109,8 +109,7 @@ After planning, count TRUE indicators:
 
 ### Step 2: Score & Decide
 
-- **5-7 ✓** = TRIVIAL → Direct implementation
-- **3-4 ✓** = MIDDLE → 2-3 focused subagents
+- **3-7 ✓** = TRIVIAL → Direct implementation
 - **0-2 ✓** = COMPLEX → Heavyweight process
 
 ### Step 3: Announce Decision
@@ -263,8 +262,7 @@ You're using this skill correctly when:
 3. **Announce your decision** with clear reasoning
 4. **Listen to user language** ("just add" = trivial)
 5. **Match process to complexity** (the core principle)
-6. **Use middle ground when appropriate** (3-4 indicators)
-7. **Never skip review on security/business logic**
+6. **Never skip review on security/business logic**
 
 ---
 

@@ -1,5 +1,5 @@
 ---
-description: SEO review for meta tags, structured data, Open Graph, headings, and crawlability
+description: Use when adding or modifying pages, routes, or URLs; changing meta tags, titles, headings, or page content; modifying sitemaps, robots.txt, or canonical URLs; or adding Open Graph, Twitter Card, or structured data (JSON-LD, microdata)
 ---
 
 # SEO Review

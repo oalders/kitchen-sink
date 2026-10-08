@@ -1,5 +1,5 @@
 ---
-description: Rebases onto origin/main (or origin/master) and resolves conflicts
+description: Use when asked to rebase the current branch onto origin/main (or origin/master) and resolve any conflicts
 ---
 
 Rebase the current branch onto the remote default branch, resolving any conflicts that arise.

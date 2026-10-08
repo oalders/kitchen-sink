@@ -1,5 +1,5 @@
 ---
-description: Grooms open GitHub issues - finds completed work, updates task lists, improves labels
+description: 'Use when grooming a repo''s open GitHub issue backlog: finding issues whose work is already done, stale task lists, or missing labels'
 ---
 
 # Triage Backlog
@@ -47,9 +47,9 @@ Examples:
 
 3. Ensure "triaged" label exists:
    ```bash
-   gh label create "triaged" --description "Issue has been reviewed during backlog triage" --color "C5DEF5"
+   gh label create "triaged" --description "Issue has been reviewed during backlog triage" --color "C5DEF5" --force
    ```
-   (This succeeds whether the label exists or not)
+   (`--force` makes this safe to re-run)
 
 4. Filter out issues already labeled "triaged"
 
@@ -177,7 +177,7 @@ Run /triage-backlog again to process the next batch.
 | Guessing at completion | Only mark completed when there's clear evidence (commits, code) |
 | Editing without approval | Always present recommendations and wait |
 | Forgetting to mark triaged | Always add "triaged" label after processing, even if no changes made |
-| Creating labels without checking | Always use `gh label create` which is idempotent |
+| Creating labels without checking | Always use `gh label create --force`, which is safe to re-run when the label exists |
 
 ## Related Commands
 
