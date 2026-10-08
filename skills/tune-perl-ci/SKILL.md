@@ -1,6 +1,6 @@
 ---
 name: tune-perl-ci
-description: Use when modernizing, tuning, or hardening a Perl project's GitHub Actions CI, or when a workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`/`install-with-cpanm` and looks stale.
+description: Use when modernizing, tuning, or hardening a Perl project's GitHub Actions CI, when a workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`/`install-with-cpanm` and looks stale, or when a Dist::Zilla starter template's CI workflow is a few years old.
 version: 1.4.1
 ---
 

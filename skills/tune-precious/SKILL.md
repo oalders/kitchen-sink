@@ -1,6 +1,6 @@
 ---
 name: tune-precious
-description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`), or when a repo still lints with Code::TidyAll (`.tidyallrc`, `tidyall.ini`, or `Test::TidyAll` in `dist.ini`).
+description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`), or when a repo still lints with Code::TidyAll (`.tidyallrc`, `tidyall.ini`, or `Test::TidyAll`, a tidyall prereqs block, or `[PerlCritic]` in `dist.ini`).
 version: 1.6.1
 ---
 

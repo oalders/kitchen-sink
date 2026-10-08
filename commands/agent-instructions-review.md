@@ -109,7 +109,7 @@ Task(general-purpose):
     - Does it contradict anything already in the file (or a sibling instruction file)?
     - Prefer imperative, testable directives ("run `make lint` before committing") over vibes ("keep the code clean").
     - Flag ambiguous pronouns, undefined terms, and negative-only instructions with no positive alternative.
-    - For a skill, command, or agent file, the frontmatter `description` must say **when** to use it (triggering conditions and symptoms), not what it does or the steps it takes. Agents act on a description that summarizes the workflow and skip the body. Flag a workflow summary as **Important** and propose a triggers-only rewrite.
+    - For a skill, command, or agent file, the frontmatter `description` must say **when** to use it (triggering conditions and symptoms), not what it does or the steps it takes. An agent picks a skill, command, or agent by its description, and in superpowers' tests on skills, agents followed a description that summarized the workflow and skipped the body. Flag a workflow summary as **Important** and propose a triggers-only rewrite.
     - Match the form to the failure. A "don't X" list suits an agent that knows a rule and skips it under pressure. When the problem is output with the wrong shape, the fix is a description of the right shape (its parts, in order); flag prohibition lists aimed at shaping output.
     - Flag hedges on a rule such as "unless it matters" or "where appropriate". They reopen the rule to negotiation. A real exception should be its own condition on something observable.
     - Background for these three, if installed: `superpowers:writing-skills` ("Skill Discovery Optimization" and "Match the Form to the Failure").
