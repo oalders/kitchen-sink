@@ -1,12 +1,12 @@
 ---
-description: Heavy code review - fans out to all applicable specialized reviewers (security, frontend, seo, geo, playwright, design-handoff, agent-instructions) based on diff content
+description: Heavy code review - fans out to all applicable specialized reviewers (security, frontend, seo, geo, playwright, design-handoff, agent-instructions, test-value, embedded-script) based on diff content
 ---
 
 # Code Review Intense Flow
 
 ## Overview
 
-Fan-out orchestrator that dispatches **all relevant specialized reviewers** in parallel for a single diff, then aggregates the findings. This is the heavyweight counterpart to `/code-review-flow` — use it when you want every applicable lens applied (security, frontend, SEO, GEO, Playwright, design-handoff, agent-instructions) instead of only the general reviewer.
+Fan-out orchestrator that dispatches **all relevant specialized reviewers** in parallel for a single diff, then aggregates the findings. This is the heavyweight counterpart to `/code-review-flow` — use it when you want every applicable lens applied (security, frontend, SEO, GEO, Playwright, design-handoff, agent-instructions, test-value, embedded-script) instead of only the general reviewer.
 
 The general-purpose reviewer always runs. Specialists fire only when the diff touches their domain, with one exception: `/security-review` runs by default unless the diff is documentation-only.
 
@@ -55,10 +55,14 @@ Record the list of changed files. You'll use it for routing.
 | **`/geo-review`** | Diff touches content pages, `llms.txt`, `llms-full.txt`, JSON-LD schema, AI-bot rules in `robots.txt`, author bios, About page |
 | **`/playwright-review`** | Test files touched (`*.spec.*`, `*.test.*` under `e2e/`, `tests/e2e/`, `playwright/`) **OR new route added without a corresponding test** (see route detection below) **OR new/changed client-side interactive behavior without an e2e test exercising it** — even when no new server route was added (see interaction detection below) |
 | **`/agent-instructions-review`** | Diff touches `CLAUDE.md`, `AGENTS.md`, `.cursor/rules/**`, `.cursorrules`, `.github/copilot-instructions.md`, or `.claude/**/*.md` |
+| **`/test-value-review`** | Diff adds or changes any test file: `t/**/*.t`, `xt/**`, `test_*.py`, `*_test.*`, `*.test.*`, `*.spec.*`, or anything under `tests/`, `spec/`, `__tests__/` |
+| **`/embedded-script-review`** | Diff touches config that carries command strings: `*.yml`/`*.yaml` (`.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml`, `.circleci/**`, `docker-compose*.yml`, `.pre-commit-config.yaml`), `package.json`, `*.toml`, `tox.ini`, `dist.ini` |
 
 **Doc-only detection:** the security skip is conservative. ALL changed files must match the doc allowlist AND no code files may be touched. If in doubt, run security.
 
 **Agent-instruction caveat:** the `.md`-suffixed agent-instruction files (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`, `.claude/**/*.md`) match the doc allowlist, so a diff touching only them counts as doc-only and skips `/security-review`. Regardless of allowlist status, ANY agent-instruction change — including extensionless files like `.cursorrules` or paths under `.cursor/rules/**` that match no doc pattern — must **still** trigger `/agent-instructions-review`: an instruction file is not "documentation" in the sense the security skip assumes; it steers agent behavior on every session. `/agent-instructions-review` fires alongside the general reviewer, never replaces it.
+
+**Test-value / embedded-script pairing:** these two reinforce each other. Embedded logic in config is usually why someone writes a test that parses the config and asserts its contents. When both fire, keep both: `/embedded-script-review` says what to extract, and `/test-value-review` says which tests to replace or delete.
 
 **New-route detection** (heuristic — scan the diff for added lines matching any of):
 - `app\.(get|post|put|delete|patch|all|use)\(` (Express/Koa)
@@ -102,7 +106,7 @@ Task(general-purpose):
   prompt: [standard code-reviewer prompt with BASE/HEAD SHAs]
 ```
 
-For each applicable specialist (security/frontend/seo/geo/playwright/design-handoff/agent-instructions):
+For each applicable specialist (security/frontend/seo/geo/playwright/design-handoff/agent-instructions/test-value/embedded-script):
 ```
 Task(general-purpose):
   description: [Specialist] review of [feature]
@@ -198,6 +202,8 @@ Same protocol as `/code-review-flow`:
 - Pass the "new route, verify e2e coverage" instruction to `/playwright-review` when triggered by route detection (not test-file changes)
 - Fire `/playwright-review` for new client-side interaction (event handlers, `fetch`/AJAX, JS-wired buttons/forms) even when the diff reuses an existing route and adds no new one — a backend test does not cover the browser interaction
 - Fire `/agent-instructions-review` whenever the diff touches an agent-instruction file, even when the diff is otherwise doc-only and security is skipped
+- Fire `/test-value-review` whenever any test file changes. A test that only mirrors a config file, regexes HTML, or greps source text inflates coverage without guarding behavior
+- Fire `/embedded-script-review` whenever CI/tool config changes. Multi-line shell in YAML cannot be tested and belongs in a script
 
 **DON'T:**
 - Silently skip security on changes that touch any code file
@@ -208,5 +214,5 @@ Same protocol as `/code-review-flow`:
 ## Related Commands
 
 - **`/code-review-flow`** — Lightweight version: general reviewer only, no specialists
-- **`/security-review`**, **`/frontend-review`**, **`/design-handoff-review`**, **`/seo-review`**, **`/geo-review`**, **`/playwright-review`**, **`/agent-instructions-review`** — The specialists this orchestrator dispatches
+- **`/security-review`**, **`/frontend-review`**, **`/design-handoff-review`**, **`/seo-review`**, **`/geo-review`**, **`/playwright-review`**, **`/agent-instructions-review`**, **`/test-value-review`**, **`/embedded-script-review`** — The specialists this orchestrator dispatches
 - **general-purpose** — The base agent specialists ultimately spawn; the reviewer persona comes from the prompt they pass, not the agent itself
