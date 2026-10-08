@@ -6,7 +6,7 @@ description: Review changes to agent-instruction files (CLAUDE.md, AGENTS.md, .c
 
 ## Overview
 
-Focused review for changes to agent-instruction files — the docs LLM agents load into context on every session. Spawns `general-purpose` subagent.
+Focused review for changes to agent-instruction files — the docs LLM agents load into context on every session, or on every invocation for command, skill, and agent bodies. Spawns `general-purpose` subagent.
 
 ## When to Use
 

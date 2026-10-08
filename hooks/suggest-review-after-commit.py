@@ -85,7 +85,7 @@ SUGGESTION = """A git commit just succeeded. Suggest relevant reviews before mov
    - frontend: `.tsx`/`.jsx`/`.vue`/`.svelte`/`.css`/`.scss`/`.sass`/`.less`/`.html`, or under `components/`/`pages/`/`app/`/`assets/`/`src/components/`/`public/`/`static/`;
    - security: paths with `auth`/`login`/`password`/`token`/`session`/`crypto`/`api/`/`permissions`/`roles`, plus `.env*`/`secrets.*`/`credentials.*`/`.htaccess`/`security.txt`/`.env.example`;
    - playwright/e2e: `.spec.`/`.test.` files or `e2e/`/`playwright/`/`__tests__/e2e/` dirs;
-   - agent-instructions: `CLAUDE.md`/`AGENTS.md`/`.cursorrules`/`.github/copilot-instructions.md`, or under `.cursor/rules/`/`.claude/` (any `.md`), or `.md` under a `commands/`/`skills/`/`agents/` dir that has a sibling `.claude-plugin/plugin.json`;
+   - agent-instructions: `CLAUDE.md`/`AGENTS.md`/`.cursorrules`/`.github/copilot-instructions.md`, or under `.cursor/rules/`/`.claude/` (any `.md`), or `.md` under a `commands/`/`skills/`/`agents/` dir that has a sibling `.claude-plugin/plugin.json` (per plugin subdirectory in a marketplace repo);
    - other: everything else.
 3. Use the AskUserQuestion tool (multiSelect: true). List Intense-flow `/code-review-intense-flow` FIRST as the default option (it routes to the general reviewer, security, and the path-matched specialists automatically), then ONLY the specialist review types whose files are present, plus Generic as a fallback: Frontend `/frontend-review`, Playwright `/playwright-review`, Security `/security-review`, Agent-Instructions `/agent-instructions-review`, Generic `/request-review`.
 4. Run each selected review sequentially and summarize the findings afterward.
