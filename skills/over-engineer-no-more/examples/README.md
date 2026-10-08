@@ -72,7 +72,6 @@ Don't launch 33 subagents to add items to arrays. Don't skip review cycles for c
 - ❌ Skipping triage entirely (blindly launching heavyweight process)
 - ❌ Ignoring user signals ("just add..." = trivial)
 - ❌ Under-engineering complex changes (security without review)
-- ❌ All-or-nothing thinking (gradations exist)
 - ✅ Best practices for each scenario
 
 **When to use:** Reference guide to avoid common mistakes
