@@ -1,7 +1,7 @@
 ---
 name: tune-perl-ci
-description: Use when modernizing a Perl project's GitHub Actions CI — applies seven idempotent transforms (fail-fast flag, Perl 5.44 matrix, perl-tester image bump, default-branch push, concurrency cancel, setup-cpm + cpm install, drop pre-5.24 macOS/Windows cells) to Dist::Zilla-style workflows.
-version: 1.4.0
+description: Use when modernizing, tuning, or hardening a Perl project's GitHub Actions CI, when a workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`/`install-with-cpanm` and looks stale, or when a Dist::Zilla starter template's CI workflow is a few years old.
+version: 1.4.1
 ---
 
 # Tune Perl CI
