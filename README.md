@@ -136,10 +136,10 @@ Design-handoff fidelity review comparing an implementation against its design so
 #### /embedded-script-review
 
 Config-hygiene review for logic hidden inside config files:
-- Flags more than one or two lines of shell in a `run:`/`script:`/`command:` block, and any control flow or data munging (`if`/`for`, `jq`/`sed`/`awk`) regardless of length
+- Flags dependent multi-line shell logic in a `run:`/`script:`/`command:` block, and any control flow or data munging (`if`/`for`, `jq`/`sed`/`awk`) regardless of length; a list of plain sequential commands is at most a Minor "split into named steps"
 - Covers GitHub Actions and other CI YAML, `docker-compose`, `package.json` scripts, and TOML/INI tool config
 - For each block, proposes a script path that follows repo convention, its args/env interface, the one-line replacement step, and the test the extracted script needs
-- Flags `${{ }}` interpolated straight into shell text (script injection) and multi-line blocks without `set -euo pipefail`
+- Flags `${{ }}` interpolated straight into shell text (script injection), and swallowed failures such as a missing `pipefail` where it matters (it knows GitHub Actions already runs `bash -e`)
 - Treats tests that parse the config as a symptom, not a substitute; pairs with `/test-value-review`
 - Spawns `general-purpose`
 

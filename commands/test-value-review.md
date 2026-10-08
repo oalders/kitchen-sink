@@ -13,7 +13,7 @@ It targets a failure mode that general reviewers miss because the tests look dil
 ## When to Use
 
 Use when:
-- Diff adds or changes test files (`t/**/*.t`, `xt/**`, `test_*.py`, `*_test.*`, `*.test.*`, `*.spec.*`, `test/**`, `tests/**`, `spec/**`, `__tests__/**`)
+- Diff adds or changes test files: `t/**/*.t`, `xt/**`, or code files under `test/`, `tests/`, `spec/`, `__tests__/`, or named `test_*.py`, `*_test.*`, `*.test.*`, `*.spec.*` (not docs, fixtures, or config that happen to match, such as an OpenAPI `*.spec.yaml`)
 - A PR claims coverage for config, CI workflows, templates, or HTML output
 - You suspect the tests were written to satisfy a "must have tests" rule
 
@@ -62,7 +62,7 @@ Task(general-purpose):
 
     ```bash
     git log --format=%B BASE_SHA..HEAD_SHA
-    gh pr view --json body -q .body
+    gh pr view --json body -q .body 2>/dev/null || echo "no open PR"
     ```
 
     If neither gives a coverage claim, say "no coverage claim available" rather than guessing.

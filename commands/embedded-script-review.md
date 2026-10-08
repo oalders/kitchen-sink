@@ -151,7 +151,7 @@ Task(general-purpose):
 
 1. **Extract** each flagged block into the proposed script and replace the config step with a one-line call
 2. **Test** the extracted script directly, covering the branches the embedded logic had
-3. **Delete** any config-mirror tests that the extraction makes redundant (see `/test-value-review`)
+3. **Delete** config-mirror tests that the extraction makes redundant, per `/test-value-review`'s findings
 
 ## Related Commands
 
