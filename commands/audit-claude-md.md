@@ -1,5 +1,5 @@
 ---
-description: Audit CLAUDE.md files for token efficiency, clarity, and accuracy against actual codebase
+description: Use periodically (monthly, or after a major refactor) to check CLAUDE.md files for token efficiency, clarity, and accuracy against the codebase.
 ---
 
 # Audit CLAUDE.md Files
@@ -508,5 +508,6 @@ Task(general-purpose):
 
 ## Related Commands
 
+- **/agent-instructions-review** - Review a diff's changes to agent-instruction files
 - **/codebase-health** - Overall codebase health check
 - **/request-review** - General code review

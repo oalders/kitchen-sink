@@ -1,7 +1,7 @@
 ---
 name: stacking-prs
-description: Use when about to open a PR whose branch builds on another PR that hasn't merged yet, or when opening several related PRs, to decide which to stack and which to open against the default branch, and to link stacks with gh stack
-version: 1.0.0
+description: Use before opening a PR whose branch depends on another unmerged PR, or when opening several related PRs together.
+version: 1.0.1
 ---
 
 # Stacking PRs

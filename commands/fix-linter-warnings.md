@@ -1,5 +1,5 @@
 ---
-description: Fixes 25 lint issues per batch, uses suppression when needed
+description: Use when cleaning up an existing codebase with many linter warnings or working through a linter backlog in reviewable batches; not for a few isolated issues, real bugs the linter surfaces, or new code.
 ---
 
 # Fix Linter Warnings

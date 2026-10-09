@@ -1,5 +1,5 @@
 ---
-description: Fixes immediate PR feedback, defers remaining items as issues
+description: Use when addressing review feedback on the current branch's PR — fixing actionable comments now and filing issues for anything deferred.
 ---
 
 Check the last code review on the current branch and address all the feedback.

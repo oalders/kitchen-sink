@@ -1,5 +1,5 @@
 ---
-description: Playwright test review for accessibility, UI issues, and performance optimization
+description: Use when reviewing Playwright E2E tests, adding accessibility checks to tests, optimizing test performance, or checking UI/layout test coverage; not for unit tests or backend code.
 ---
 
 # Playwright Review

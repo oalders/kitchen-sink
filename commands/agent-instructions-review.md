@@ -1,5 +1,5 @@
 ---
-description: Review changes to agent-instruction files (CLAUDE.md, AGENTS.md, .cursor/rules, copilot-instructions, .claude/**, Claude Code plugin commands/skills/agents) for accuracy, placement, duplication, cost, removability, and instruction quality
+description: Use when a diff touches CLAUDE.md or AGENTS.md (root or nested), .cursor/rules/** or .cursorrules, .github/copilot-instructions.md, .claude/**/*.md, or a Claude Code plugin's commands/**/*.md, skills/**/*.md, or agents/**/*.md — or when adding/editing any file meant to steer an AI agent's behavior.
 ---
 
 # Agent-Instructions Review
@@ -173,5 +173,4 @@ Task(general-purpose):
 
 - **general-purpose** - The subagent this command invokes
 - **/audit-claude-md** - Full standalone audit of CLAUDE.md files for token efficiency, clarity, and accuracy
-- **/security-review**, **/frontend-review**, **/seo-review**, **/geo-review** - Sibling specialist reviewers
-- **/code-review-intense-flow** - Fan-out orchestrator that dispatches this reviewer alongside the others by diff content
+- **/code-review-intense-flow** lists the sibling specialist reviewers and dispatches this one alongside them by diff content

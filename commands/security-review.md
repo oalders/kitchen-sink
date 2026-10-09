@@ -1,5 +1,5 @@
 ---
-description: OWASP-focused security review with systematic vulnerability checklist
+description: Use when implementing authentication or authorization, handling user input or external data, working with sensitive data, exposing new API endpoints, integrating an LLM or building prompts from external content, or before deploying security-critical features; not for pure documentation changes.
 ---
 
 # Security Review

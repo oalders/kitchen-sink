@@ -15,7 +15,7 @@
                 v
 ┌─────────────────────────────────────────────────────────┐
 │ Count TRUE indicators:                                  │
-│                                                          │
+│                                                         │
 │ [ ] Just adding constants/enums/data?                   │
 │ [ ] No new functions or types?                          │
 │ [ ] No new business logic/algorithms?                   │
@@ -23,11 +23,11 @@
 │ [ ] < 100 lines of code?                                │
 │ [ ] < 3 files changed?                                  │
 │ [ ] Same package/module?                                │
-└───┬─────────────────────────────┬──────────────────────┘
+└───┬─────────────────────────────┬───────────────────────┘
     │                             │
     v                             v
 ┌───────────┐                ┌───────────┐
-│  5-7 ✓    │                │  0-2 ✓    │
+│  3-7 ✓    │                │  0-2 ✓    │
 │           │                │           │
 │  TRIVIAL  │                │  COMPLEX  │
 └─────┬─────┘                └─────┬─────┘
@@ -45,27 +45,6 @@
 │ Time: 5-15 min       │    │ Time: 1-3 hours          │
 │ Credits: 1 agent     │    │ Credits: 10-30 agents    │
 └──────────────────────┘    └──────────────────────────┘
-                                    │
-                                    v
-                            ┌───────────────┐
-                            │   3-4 ✓       │
-                            │               │
-                            │   MIDDLE      │
-                            │   GROUND      │
-                            └───────┬───────┘
-                                    │
-                                    v
-                            ┌──────────────────────────┐
-                            │ FOCUSED SUBAGENTS        │
-                            │                          │
-                            │ 1. 2-3 implementation    │
-                            │    subagents             │
-                            │ 2. Quick review cycle    │
-                            │ 3. Done                  │
-                            │                          │
-                            │ Time: 30-60 min          │
-                            │ Credits: 3-5 agents      │
-                            └──────────────────────────┘
 ```
 
 ---
@@ -74,7 +53,7 @@
 
 ### 🟢 TRIVIAL (Direct Implementation)
 
-**Indicators: 5-7 ✓**
+**Indicators: 3-7 ✓**
 
 ```
 ✓ Adding constants
@@ -120,29 +99,6 @@
 - Cross-cutting refactors
 
 **Process:** Subagent-driven dev → Review cycles → Done (1-3 hours)
-
----
-
-### 🟡 MIDDLE GROUND (Focused Subagents)
-
-**Indicators: 3-4 ✓**
-
-```
-~ Some new logic
-~ Moderate complexity
-~ 3-5 files
-~ 100-300 lines
-~ Needs review but not complex
-```
-
-**Examples:**
-- Simple bug fix with tests
-- Add validation logic
-- Simple API route (CRUD only)
-- Configuration restructure
-- Test framework updates
-
-**Process:** 2-3 focused subagents → Quick review → Done (30-60 min)
 
 ---
 
@@ -192,8 +148,8 @@ Check indicators:
 ✓ 2 files (code + test)
 ✗ Some logic involved
 
-Score: 4/7 → MIDDLE GROUND
-Decision: 2 subagents (implementation + review)
+Score: 4/7 → TRIVIAL
+Decision: Direct implementation
 Time: 25 minutes
 ```
 
@@ -234,15 +190,14 @@ Time: 25 minutes
 QUALITY       HIGH  │  COMPLEX      │  COMPLEX
 CRITICAL?           │  (Fast lanes) │  (Full review)
                     │               │
-              LOW   │  TRIVIAL      │  MIDDLE
-                    │  (Fast impl)  │  (Focused)
+              LOW   │  TRIVIAL      │  TRIVIAL
+                    │  (Fast impl)  │  (Direct)
 ```
 
 **Key:**
 - **High quality + time critical** → Use parallelized subagents
 - **High quality + not time critical** → Full review cycles
-- **Low complexity + time critical** → Direct implementation
-- **Low complexity + not urgent** → Focused subagents for learning
+- **Low complexity** → Direct implementation
 
 ---
 
@@ -291,12 +246,6 @@ CRITICAL?           │  (Fast lanes) │  (Full review)
 │   • < 100 lines, < 3 files                      │
 │   • No business logic                           │
 │   • Time: 5-15 min, Credits: 1                  │
-│                                                 │
-│ MIDDLE (2-3 Subagents):                         │
-│   • Simple bug fixes with tests                 │
-│   • 100-300 lines, 3-5 files                    │
-│   • Some logic, needs review                    │
-│   • Time: 30-60 min, Credits: 3-5               │
 │                                                 │
 │ COMPLEX (Heavyweight):                          │
 │   • New features, APIs, auth                    │

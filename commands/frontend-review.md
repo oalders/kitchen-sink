@@ -1,5 +1,5 @@
 ---
-description: Frontend code review for images, accessibility, responsive design, and CSS patterns
+description: Use when a diff converts image formats, changes CSS or layout, updates HTML templates or components, or otherwise changes visual UI; not for backend changes with no visual impact.
 ---
 
 # Frontend Review

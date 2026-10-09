@@ -1,7 +1,7 @@
 ---
 name: perl-review
-description: Use when reviewing or improving Perl code against project standards — reads changed .pm/.pl/.t files (or named paths) and flags violations of the rules in STANDARDS.md (quoting, core-module use, URL building, test hygiene, and more).
-version: 1.0.0
+description: Use when asked to review Perl, or after writing or changing Perl (.pm/.pl/.t) on a branch, to check it against the project's Perl standards.
+version: 1.0.1
 ---
 
 # Perl Review

@@ -123,33 +123,6 @@ Using subagent-driven development for:
 
 ---
 
-## ❌ Anti-Pattern 5: All-or-Nothing Thinking
-
-### Scenario
-Assuming every task is either "trivial" or "needs 50 subagents"
-
-**BAD Mindset:**
-```
-Either:
-- Direct implementation (10 minutes)
-OR
-- Full subagent-driven development (3 hours, 50 subagents)
-
-No middle ground.
-```
-
-**GOOD Mindset:**
-```
-Options:
-- Trivial: Direct implementation (10 min)
-- Simple but needs review: 2-3 focused subagents (30 min)
-- Complex: Full subagent-driven development (2-3 hours)
-
-Match process to complexity.
-```
-
----
-
 ## ✅ Best Practices Summary
 
 ### DO:
@@ -164,7 +137,6 @@ Match process to complexity.
 2. **Ignore user language** ("just add" means trivial!)
 3. **Over-engineer simple changes** (constants don't need 20 subagents)
 4. **Under-engineer complex changes** (security code needs review)
-5. **Think in all-or-nothing terms** (there are gradations)
 
 ---
 
@@ -235,4 +207,3 @@ Check indicators:
 
 - Trivial changes → Direct (save time/credits)
 - Complex changes → Heavyweight (ensure quality)
-- Simple with review needs → Middle ground (2-3 focused subagents)

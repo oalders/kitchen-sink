@@ -1,10 +1,10 @@
 ---
-description: Splits big issues into reviewable chunks with tracking issue
+description: Use when deciding how to split a feature or body of work into GitHub issues — sizing changes against the 400-line threshold, and choosing single-issue vs. an umbrella-plus-sub-issues breakdown.
 ---
 
 Break down the current feature or work into small, manageable GitHub issues.
 
-**Label Management**: Before using any label that may not exist, create it first using `gh label create "<label-name>" --description "<description>" --color "<hex-color>"` (the command succeeds either way: creating the label if it doesn't exist, or printing a message if it does).
+**Label Management**: Before using any label that may not exist, create it first using `gh label create "<label-name>" --description "<description>" --color "<hex-color>"` (if it fails with an "already exists" error, the label is already there, so carry on; any other error is real, so stop and report it).
 
 ## Decision Criteria
 
@@ -81,6 +81,8 @@ Create the umbrella issue with:
 gh issue create --label "Umbrella Issue" --title "Feature: <name>" --body "<body>"
 ```
 
+Per `docs/attribution.md`, the issue body ends with the PR-body attribution line.
+
 Include:
 - Overview and Goals (see Common Sections)
 - Design Details (see Common Sections)
@@ -100,6 +102,8 @@ gh issue create --label "enhancement" --body "**Part of**: #<umbrella-issue-numb
 
 <issue body>"
 ```
+
+Per `docs/attribution.md`, the issue body ends with the PR-body attribution line.
 
 Each sub-issue must include:
 - Link to umbrella issue: `**Part of**: #X` (at the top, before other content)

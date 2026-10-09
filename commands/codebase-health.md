@@ -1,5 +1,5 @@
 ---
-description: Codebase health check for AI optimization - token efficiency, discoverability, and code quality
+description: 'Use when running a periodic (e.g. monthly) or pre-release codebase health check for AI-friendliness: dead code, file organization, discoverability, duplication, and dependency health.'
 ---
 
 # Codebase Health Check

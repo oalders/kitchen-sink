@@ -86,7 +86,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 |-------|-------------|
 | **perl-review** | Flags Perl code that strays from your project standards — quoting, core-module use, URL building, test hygiene — reading a living rules doc you edit freely |
 | **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown |
-| **tune-perl-ci** | Six idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI |
+| **tune-perl-ci** | Seven idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI |
 | **tune-precious** | Migrates a Perl repo from `Code::TidyAll` to `precious` (or sets up `precious` from scratch) — config, `.perltidyrc`, `dist.ini`, CI lint job |
 | **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
 

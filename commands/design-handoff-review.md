@@ -1,5 +1,5 @@
 ---
-description: Review a design-handoff implementation for character-level text fidelity and orphaned input bindings against the design source.
+description: Use when reviewing an implementation built from a design-handoff bundle (design-system cards or a component export) that exists in the repo; not for repos without a bundle or diffs without UI changes.
 ---
 
 # Design-Handoff Review
