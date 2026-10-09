@@ -103,7 +103,7 @@ cooldown:
 
 Never applied by default. Offer it only when the repo's CI is trusted to catch breakage; skip it when the user prefers hands-on review (e.g. heavy npm lockfile churn). Majors stay manual, consistent with the core principle.
 
-**Before starting — gather up front** (whoever talks to the user does this once; set nothing up without all four):
+**Before starting — gather up front** (the caller does this once before dispatching, or you when running inline; set nothing up without all four):
 
 - (a) The user opts in for this repo.
 - (b) The user confirms the default branch has branch protection or a ruleset with required status checks. Without that, auto-merge either fails to enable or merges before CI passes.
@@ -193,8 +193,7 @@ For each `- ` entry under `updates:` in `.github/dependabot.yml`:
    - If the file uses single quotes consistently, write new strings with single quotes.
    - If the file mixes quotes (or uses bare strings), default new strings to single quotes.
    - Preserve unquoted bare values (e.g. `weekly`, `daily`, `npm`) on existing keys.
-
-If the user opted in, then set up [auto-merge](#optional-auto-merge-minor-and-patch-prs).
+7. **Auto-merge, if the user opted in.** Follow [Optional: Auto-merge minor and patch PRs](#optional-auto-merge-minor-and-patch-prs).
 
 After editing, run a YAML parser sanity check (e.g. `python3 -c 'import yaml,sys; yaml.safe_load(open(".github/dependabot.yml"))'`) to confirm the file still parses.
 
