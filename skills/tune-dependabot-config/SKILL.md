@@ -106,7 +106,11 @@ Never applied by default. Offer it only when the repo's CI is trusted to catch b
 **Before starting — gather up front** (the caller does this once before dispatching, or you when running inline; set nothing up without all four):
 
 - (a) The user opts in for this repo.
-- (b) The user confirms the default branch has branch protection or a ruleset with required status checks. Without that, auto-merge either fails to enable or merges before CI passes.
+- (b) The default branch (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`) requires status checks — without them auto-merge either fails to enable or merges before CI passes. Verify either:
+  - classic protection: `gh api repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks` succeeds, or
+  - a ruleset: `gh api repos/{owner}/{repo}/rules/branches/{branch} --jq '[.[] | select(.type == "required_status_checks")] | length'` is greater than 0.
+
+  If neither shows required checks, or the result is inconclusive (e.g. 403 without admin access), stop and tell the user.
 - (c) The user approves you running `gh repo edit --enable-auto-merge` on their behalf.
 - (d) Merge method: run `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`; if only one is allowed, use it without asking; if more than one is allowed, the user picks `--merge`, `--squash`, or `--rebase`.
 
@@ -193,9 +197,10 @@ For each `- ` entry under `updates:` in `.github/dependabot.yml`:
    - If the file uses single quotes consistently, write new strings with single quotes.
    - If the file mixes quotes (or uses bare strings), default new strings to single quotes.
    - Preserve unquoted bare values (e.g. `weekly`, `daily`, `npm`) on existing keys.
-7. **Auto-merge, if the user opted in.** Follow [Optional: Auto-merge minor and patch PRs](#optional-auto-merge-minor-and-patch-prs).
 
 After editing, run a YAML parser sanity check (e.g. `python3 -c 'import yaml,sys; yaml.safe_load(open(".github/dependabot.yml"))'`) to confirm the file still parses.
+
+After all entries are processed, if the user opted in, follow [Optional: Auto-merge minor and patch PRs](#optional-auto-merge-minor-and-patch-prs) once for the repo.
 
 ## Examples
 
@@ -364,7 +369,7 @@ Note `applies-to: security-updates` inside the group — groups default to `vers
 | Adding the block when the entry has `open-pull-requests-limit: 0` | The entry is intentionally paused | Skip paused entries |
 | Auto-merging via `pull_request_target` or a third-party action | Widens the attack surface for a job holding write permissions | Use `on: pull_request` with first-party `dependabot/fetch-metadata` and `gh pr merge` |
 | Auto-merging majors | Breaking changes land without anyone evaluating them | Gate the merge step on semver-minor or semver-patch only |
-| Enabling auto-merge without required status checks | Nothing makes the merge wait for CI | Confirm branch protection or a ruleset requires checks first |
+| Enabling auto-merge without required status checks | Nothing makes the merge wait for CI | Verify via the API (classic protection or rulesets) that checks are required first |
 
 ## Verification
 
