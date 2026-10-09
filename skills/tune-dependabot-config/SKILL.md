@@ -12,7 +12,7 @@ version: 1.2.0
 
 1. **Group minor and patch updates.** Add a catch-all group that batches minor and patch bumps for the ecosystem into a single rolling PR. Major updates stay as individual PRs.
 2. **Add a 7-day cooldown.** Wait 7 days after a release before opening a PR so broken releases get yanked or patched first.
-3. **Optional, per repo: auto-merge minor and patch PRs.** Only when the user says yes for this repo. See [Optional: Auto-merge minor and patch PRs](#optional-auto-merge-minor-and-patch-prs).
+3. **Optional: auto-merge minor and patch PRs** — per repo, opt-in. See [Optional: Auto-merge minor and patch PRs](#optional-auto-merge-minor-and-patch-prs).
 
 **Core principle:** Reduce dependabot PR noise on safe updates while preserving one-PR-per-package signal on breaking changes. Majors get individual PRs because each one is a breaking change that needs to be evaluated on its own — batching them hides which package failed CI.
 
@@ -27,7 +27,7 @@ Why:
 How to dispatch:
 - Brief the subagent with this SKILL.md as its working spec — pass the path or invoke the skill from inside the subagent.
 - Tell the subagent the working directory.
-- Before dispatching, ask the user whether to set up auto-merge for this repo (subagents can't ask the user), and pass the answer — including confirmation of the repo-settings change — in the brief.
+- Subagents can't ask the user, so before dispatching gather the auto-merge answers listed under [Before starting](#optional-auto-merge-minor-and-patch-prs) and pass them in the brief. Without them, the subagent must not set up auto-merge.
 - Require the subagent to report back, in under 200 words: the summary line, whether auto-merge was set up (or why not), and any entries skipped (paused, security-only, user-tuned cooldown) with reason.
 - If the YAML sanity check fails after editing, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
@@ -103,28 +103,31 @@ cooldown:
 
 Never applied by default. Offer it only when the repo's CI is trusted to catch breakage; skip it when the user prefers hands-on review (e.g. heavy npm lockfile churn). Majors stay manual, consistent with the core principle.
 
-**Prerequisite:** auto-merge only waits for checks when the default branch has branch protection or a ruleset with required status checks. Without that it either fails to enable or merges before CI passes. Confirm with the user that required checks are in place before proceeding.
+**Before starting — gather up front** (whoever talks to the user does this once; set nothing up without all four):
+
+- (a) The user opts in for this repo.
+- (b) The user confirms the default branch has branch protection or a ruleset with required status checks. Without that, auto-merge either fails to enable or merges before CI passes.
+- (c) The user confirms the repo-settings change `gh repo edit --enable-auto-merge`.
+- (d) Merge method: run `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`; if more than one is allowed, the user picks `--merge`, `--squash`, or `--rebase`.
 
 Steps:
 
-1. **Enable the repo setting.** This changes repo settings on GitHub, so get explicit user confirmation first, then run `gh repo edit --enable-auto-merge`.
-2. **Pick the merge method.** Run `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed` and use a flag (`--merge`, `--squash`, or `--rebase`) the repo allows; ask the user if more than one is allowed.
-3. **Write `.github/workflows/dependabot-automerge.yml`** (skip if an equivalent workflow already exists):
+1. **Enable the repo setting:** `gh repo edit --enable-auto-merge`.
+2. **Write `.github/workflows/dependabot-automerge.yml`** — skip if any `.github/workflows/*.y*ml` already runs `gh pr merge --auto` for `dependabot[bot]` PRs, and report it as already present:
 
 ```yaml
 name: Dependabot auto-merge
 
 on: pull_request
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
   automerge:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
@@ -135,7 +138,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Replace `--squash` with the method from step 2. For a grouped PR, `fetch-metadata` reports the highest change in the group, so `minor-and-patch` PRs qualify and the `github-actions` `major-updates` PR does not.
+Replace `--squash` with the method from (d). For a grouped PR, `fetch-metadata` reports the highest change in the group, so `minor-and-patch` PRs qualify and the `github-actions` `major-updates` PR does not.
 
 **Caveat:** merges made with `GITHUB_TOKEN` don't trigger `push` workflows on the default branch, so release/deploy-on-push won't fire for these merges.
 
@@ -190,6 +193,8 @@ For each `- ` entry under `updates:` in `.github/dependabot.yml`:
    - If the file uses single quotes consistently, write new strings with single quotes.
    - If the file mixes quotes (or uses bare strings), default new strings to single quotes.
    - Preserve unquoted bare values (e.g. `weekly`, `daily`, `npm`) on existing keys.
+
+If the user opted in, then set up [auto-merge](#optional-auto-merge-minor-and-patch-prs).
 
 After editing, run a YAML parser sanity check (e.g. `python3 -c 'import yaml,sys; yaml.safe_load(open(".github/dependabot.yml"))'`) to confirm the file still parses.
 
