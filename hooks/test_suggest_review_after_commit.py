@@ -19,6 +19,11 @@ _spec = importlib.util.spec_from_file_location("suggest_review", _MOD_PATH)
 sr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sr)
 
+_PR_PATH = os.path.join(os.path.dirname(__file__), "require-review-before-pr.py")
+_pr_spec = importlib.util.spec_from_file_location("require_review", _PR_PATH)
+rr = importlib.util.module_from_spec(_pr_spec)
+_pr_spec.loader.exec_module(rr)
+
 
 def ok(stdout="", stderr="", interrupted=False):
     return {"stdout": stdout, "stderr": stderr, "interrupted": interrupted}
@@ -77,6 +82,11 @@ class IsSuccessfulCommit(unittest.TestCase):
     def test_empty_command(self):
         self.assertFalse(sr.is_successful_commit("", ok()))
         self.assertFalse(sr.is_successful_commit(None, ok()))
+
+    def test_regex_matches_require_review_copy(self):
+        # Both hooks must agree on what counts as a commit (#70).
+        self.assertEqual(sr.GIT_COMMIT_RE.pattern, rr.GIT_COMMIT_RE.pattern)
+        self.assertEqual(sr.GIT_COMMIT_RE.flags, rr.GIT_COMMIT_RE.flags)
 
 
 class MainOutput(unittest.TestCase):
