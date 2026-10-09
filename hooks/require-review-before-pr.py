@@ -107,8 +107,8 @@ PROMPT_RE = re.compile(r"^/(?:kitchen-sink:)?code-review-intense-flow(?:\s|$)")
 
 FIX_BRANCH_RE = re.compile(r"^fix-\d+$")
 
-# Same idea as GIT_COMMIT_RE in suggest-review-after-commit.py (copied rather
-# than imported because that module's filename is hyphenated).
+# Copy of GIT_COMMIT_RE in suggest-review-after-commit.py (hyphenated filename
+# blocks import); test_suggest_review_after_commit.py asserts they stay identical.
 GIT_COMMIT_RE = re.compile(
     r"""(?:^|[;&|]|\bthen\b|\bdo\b|&&|\|\|)   # statement boundary
         \s*git\b                               # the git binary
