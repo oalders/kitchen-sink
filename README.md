@@ -85,7 +85,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Skill | Description |
 |-------|-------------|
 | **perl-review** | Flags Perl code that strays from your project standards — quoting, core-module use, URL building, test hygiene — reading a living rules doc you edit freely |
-| **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown |
+| **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown; optionally auto-merges minor/patch PRs |
 | **tune-perl-ci** | Seven idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI |
 | **tune-precious** | Migrates a Perl repo from `Code::TidyAll` to `precious` (or sets up `precious` from scratch) — config, `.perltidyrc`, `dist.ini`, CI lint job |
 | **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
@@ -422,6 +422,7 @@ Groups Dependabot minor/patch updates per ecosystem (majors stay individual) and
 - Preserves user-customized schedules, labels, reviewers
 - Adds `groups:` block with `update-types: [minor, patch]` per ecosystem
 - Sets `cooldown.default-days: 7` to absorb release-day churn
+- Optional, opt-in per repo: a workflow that auto-merges minor/patch Dependabot PRs once required checks pass
 
 #### tune-perl-ci
 
