@@ -107,8 +107,8 @@ Never applied by default. Offer it only when the repo's CI is trusted to catch b
 
 - (a) The user opts in for this repo.
 - (b) The user confirms the default branch has branch protection or a ruleset with required status checks. Without that, auto-merge either fails to enable or merges before CI passes.
-- (c) The user confirms the repo-settings change `gh repo edit --enable-auto-merge`.
-- (d) Merge method: run `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`; if more than one is allowed, the user picks `--merge`, `--squash`, or `--rebase`.
+- (c) The user approves you running `gh repo edit --enable-auto-merge` on their behalf.
+- (d) Merge method: run `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`; if only one is allowed, use it without asking; if more than one is allowed, the user picks `--merge`, `--squash`, or `--rebase`.
 
 Steps:
 
