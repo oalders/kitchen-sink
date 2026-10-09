@@ -1,17 +1,18 @@
 ---
 name: tune-dependabot-config
-description: Use when adding, auditing, or editing `.github/dependabot.yml`, when that file has no `groups:` or no `cooldown:` block, or when dependabot PRs are cluttering a repo's PR queue.
-version: 1.1.1
+description: Use when adding, auditing, or editing `.github/dependabot.yml`, when that file has no `groups:` or no `cooldown:` block, when dependabot PRs are cluttering a repo's PR queue, or when the user wants dependabot PRs to auto-merge.
+version: 1.2.0
 ---
 
 # Tune Dependabot Config
 
 ## Overview
 
-**Two changes applied to every `updates:` entry in `.github/dependabot.yml`:**
+**Two changes applied to every `updates:` entry in `.github/dependabot.yml`, plus one opt-in step:**
 
 1. **Group minor and patch updates.** Add a catch-all group that batches minor and patch bumps for the ecosystem into a single rolling PR. Major updates stay as individual PRs.
 2. **Add a 7-day cooldown.** Wait 7 days after a release before opening a PR so broken releases get yanked or patched first.
+3. **Optional: auto-merge minor and patch PRs** — per repo, opt-in. See [Optional: Auto-merge minor and patch PRs](#optional-auto-merge-minor-and-patch-prs).
 
 **Core principle:** Reduce dependabot PR noise on safe updates while preserving one-PR-per-package signal on breaking changes. Majors get individual PRs because each one is a breaking change that needs to be evaluated on its own — batching them hides which package failed CI.
 
@@ -26,7 +27,8 @@ Why:
 How to dispatch:
 - Brief the subagent with this SKILL.md as its working spec — pass the path or invoke the skill from inside the subagent.
 - Tell the subagent the working directory.
-- Require the subagent to report back, in under 200 words: the summary line and any entries skipped (paused, security-only, user-tuned cooldown) with reason.
+- Subagents can't ask the user, so before dispatching gather the auto-merge answers listed under [Before starting](#optional-auto-merge-minor-and-patch-prs) and pass them in the brief. Without them, the subagent must not set up auto-merge.
+- Require the subagent to report back, in under 200 words: the summary line, whether auto-merge was set up (or why not), and any entries skipped (paused, security-only, user-tuned cooldown) with reason.
 - If the YAML sanity check fails after editing, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -97,6 +99,53 @@ cooldown:
 
 **Do not add cooldown to security-update entries** — dependabot ignores it there, and the whole point of security updates is to land fast.
 
+## Optional: Auto-merge minor and patch PRs
+
+Never applied by default. Offer it only when the repo's CI is trusted to catch breakage; skip it when the user prefers hands-on review (e.g. heavy npm lockfile churn). Majors stay manual, consistent with the core principle.
+
+**Before starting — gather up front** (the caller does this once before dispatching, or you when running inline; set nothing up without all four):
+
+- (a) The user opts in for this repo.
+- (b) The default branch (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`) requires status checks — without them auto-merge either fails to enable or merges before CI passes. Verify either:
+  - classic protection: `gh api repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks` succeeds, or
+  - a ruleset: `gh api repos/{owner}/{repo}/rules/branches/{branch} --jq '[.[] | select(.type == "required_status_checks")] | length'` is greater than 0.
+
+  If neither shows required checks, or the result is inconclusive (e.g. 403 without admin access), stop and tell the user.
+- (c) The user approves you running `gh repo edit --enable-auto-merge` on their behalf.
+- (d) Merge method: run `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`; if only one is allowed, use it without asking; if more than one is allowed, the user picks `--merge`, `--squash`, or `--rebase`.
+
+Steps:
+
+1. **Enable the repo setting:** `gh repo edit --enable-auto-merge`.
+2. **Write `.github/workflows/dependabot-automerge.yml`** — skip if any `.github/workflows/*.y*ml` already runs `gh pr merge --auto` for `dependabot[bot]` PRs, and report it as already present:
+
+```yaml
+name: Dependabot auto-merge
+
+on: pull_request
+
+jobs:
+  automerge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - if: steps.metadata.outputs.update-type == 'version-update:semver-minor' || steps.metadata.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Replace `--squash` with the method from (d). For a grouped PR, `fetch-metadata` reports the highest change in the group, so `minor-and-patch` PRs qualify and the `github-actions` `major-updates` PR does not.
+
+**Caveat:** merges made with `GITHUB_TOKEN` don't trigger `push` workflows on the default branch, so release/deploy-on-push won't fire for these merges.
+
 ## Schema Reference
 
 ### `groups:` (per ecosystem entry)
@@ -150,6 +199,8 @@ For each `- ` entry under `updates:` in `.github/dependabot.yml`:
    - Preserve unquoted bare values (e.g. `weekly`, `daily`, `npm`) on existing keys.
 
 After editing, run a YAML parser sanity check (e.g. `python3 -c 'import yaml,sys; yaml.safe_load(open(".github/dependabot.yml"))'`) to confirm the file still parses.
+
+After all entries are processed, if the user opted in, follow [Optional: Auto-merge minor and patch PRs](#optional-auto-merge-minor-and-patch-prs) once for the repo.
 
 ## Examples
 
@@ -316,6 +367,9 @@ Note `applies-to: security-updates` inside the group — groups default to `vers
 | Using `default-days: 7` *and* `semver-*-days` together without thought | Conflicting signals; one will silently win | If the user has `semver-*-days`, leave cooldown alone entirely |
 | Editing the file as a string and reflowing it | Loses comments, breaks key order users care about | Edit minimally — append the missing keys to each entry |
 | Adding the block when the entry has `open-pull-requests-limit: 0` | The entry is intentionally paused | Skip paused entries |
+| Auto-merging via `pull_request_target` or a third-party action | Widens the attack surface for a job holding write permissions | Use `on: pull_request` with first-party `dependabot/fetch-metadata` and `gh pr merge` |
+| Auto-merging majors | Breaking changes land without anyone evaluating them | Gate the merge step on semver-minor or semver-patch only |
+| Enabling auto-merge without required status checks | Nothing makes the merge wait for CI | Verify via the API (classic protection or rulesets) that checks are required first |
 
 ## Verification
 
@@ -325,9 +379,10 @@ After writing the file:
 2. Re-read each `updates:` entry and confirm:
    - A group with `patterns: ['*']` covers minor + patch (or another catch-all is in place)
    - For version-updates entries, `cooldown.default-days` is set (or the user already has cooldown configured)
-3. Report a summary: "Added grouping to N entries (X minor+patch, Y major-updates for github-actions), added cooldown to M entries, preserved K existing groups."
+3. Report a summary: "Added grouping to N entries (X minor+patch, Y major-updates for github-actions), added cooldown to M entries, preserved K existing groups; auto-merge set up / not requested."
 
 ## Related
 
 - GitHub docs: [Dependabot options reference — groups](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#groups--)
 - GitHub docs: [Dependabot options reference — cooldown](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#cooldown--)
+- GitHub docs: [Automating Dependabot with GitHub Actions](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions)
