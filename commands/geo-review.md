@@ -271,11 +271,12 @@ Also check: **is the strongest description on the site actually deployed where i
 | Bot | Operator | Purpose |
 |---|---|---|
 | `GPTBot` | OpenAI | Training |
-| `OAI-SearchBot` | OpenAI | SearchGPT indexing |
+| `OAI-SearchBot` | OpenAI | ChatGPT search indexing |
 | `ChatGPT-User` | OpenAI | On-demand fetches |
 | `ClaudeBot` | Anthropic | Training |
-| `anthropic-ai` | Anthropic | Legacy / general |
-| `Claude-Web` | Anthropic | On-demand fetches |
+| `Claude-SearchBot` | Anthropic | Search indexing |
+| `Claude-User` | Anthropic | On-demand fetches |
+| `anthropic-ai`, `Claude-Web` | Anthropic | Legacy names absent from Anthropic's current docs — blocking only these does not block the bots above |
 | `PerplexityBot` | Perplexity | Indexing |
 | `Perplexity-User` | Perplexity | On-demand fetches |
 | `Google-Extended` | Google | Gemini / AI Overviews opt-out token |

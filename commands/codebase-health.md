@@ -52,7 +52,7 @@ Task(general-purpose):
 
     ## Comprehensive Checklist
 
-    **CRITICAL: Check EVERY category systematically with specific examples.**
+    Cover each category below, citing specific file:line examples.
 
     ### 1. Dead Code Analysis (Token Waste)
 
@@ -193,21 +193,22 @@ Task(general-purpose):
     **Circular Dependencies:**
     - Package A imports B, B imports A
     - Prevents clean mental model
-    - **REQUIRED**: Run `go mod graph | grep -E "^(.+) \1$"` or equivalent
+    - Go: skip — the compiler already rejects package import cycles
     - JavaScript: Use `npx madge --circular src/`
+    - Other languages: use the ecosystem's dependency-graph tool if one exists, else report "not checked"
     - Report: cycles with package names or "0 circular dependencies found"
 
     **Unused Exports:**
     - Exported functions/types never imported elsewhere
     - Should be unexported (private)
-    - **REQUIRED**: Build import graph, check each exported symbol
+    - Build import graph, check each exported symbol
     - Go: Grep for `^func [A-Z]`, `^type [A-Z]`, cross-reference imports
     - Report: count and examples or "all exports used"
 
     **Orphaned Modules:**
     - Entire packages/modules that nothing imports
     - May be leftover from refactoring
-    - **REQUIRED**: Build dependency tree, find disconnected packages
+    - Build dependency tree, find disconnected packages
     - Exclude: main packages, _test.go files, cmd/* binaries
     - Report: package names or "no orphaned packages"
 
@@ -274,7 +275,7 @@ Task(general-purpose):
 
     ### Executive Summary
 
-    **Overall Health Score:** X/100
+    **Overall health:** [Poor/Fair/Good/Excellent] — [1-2 sentence reasoning]
 
     **Top 3 Issues:**
     1. [Issue] - [Impact] - [Files affected]
@@ -340,105 +341,26 @@ Task(general-purpose):
 
     ### Recommendations by Priority
 
-    **Immediate Actions** (High ROI, Low Effort):
-    1. Remove unused imports (automated)
-    2. Delete commented-out code blocks
-    3. Add README to top 3 packages
-    4. Consolidate duplicate templates
+    **Immediate Actions** (High ROI, Low Effort): [items, each tied to a finding above]
 
-    **Short Term** (This Sprint):
-    5. Split monolithic files (>1000 lines)
-    6. Fix circular dependencies
-    7. Consolidate CLAUDE.md files
-    8. Document common patterns
+    **Short Term** (This Sprint): [items]
 
-    **Medium Term** (Next Month):
-    9. Refactor deep directory nesting
-    10. Standardize naming conventions
-    11. Extract hidden functionality
-    12. Create architecture docs
+    **Medium Term** (Next Month): [items]
 
-    **Long Term** (Nice to Have):
-    13. Remove orphaned packages
-    14. Flatten dependency chains
-    15. Automate health checks in CI
-
-    ### Health Score Breakdown
-
-    **Token Efficiency:** X/25
-    - Dead code cleanup potential: Y points
-    - File size optimization: Z points
-
-    **Discoverability:** X/25
-    - Naming quality: Y points
-    - Documentation completeness: Z points
-
-    **Code Quality:** X/25
-    - Duplication level: Y points
-    - Consistency: Z points
-
-    **Dependency Health:** X/25
-    - Import graph cleanliness: Y points
-    - Module organization: Z points
+    **Long Term** (Nice to Have): [items]
 
     ## Critical Rules for Analyzer
 
     **DO:**
-    - Check EVERY category systematically
     - Provide specific file:line examples
     - Give quantitative metrics (counts, sizes, percentages)
     - Estimate token savings for each recommendation
     - Prioritize by impact × effort
 
     **DON'T:**
-    - Skip categories because "codebase looks clean"
-    - Give vague advice ("improve organization")
-    - Ignore small issues (they compound)
     - Recommend changes without specific examples
     - Assume patterns are consistent without checking
 
-    ## Example Issue Format
-
-    ```
-    #### Critical
-
-    1. **Dead Code - 2,847 Lines of Unused Functions**
-       - Category: Token Waste
-       - Impact: AI loads ~11,000 unused tokens on typical operations
-       - Locations:
-         * go/web/helpers.go:234 - formatDate() (67 lines, no callers)
-         * go/model/legacy.go:89 - convertOldFormat() (143 lines, no callers)
-         * [3 more examples]
-       - Count: 23 unused functions across 8 files
-       - Fix:
-         ```bash
-         # Find unused functions
-         grep -rn "^func [a-z]" . | # find unexported functions
-         # Cross-reference with grep calls
-         # Delete functions with 0 references
-         ```
-       - Estimated Savings: ~11,000 tokens per typical session
-
-    2. **Duplicate Pagination Templates - 95% Identical**
-       - Category: Code Duplication & Token Waste
-       - Impact: AI may edit one copy, miss others; wastes ~1,200 tokens
-       - Locations:
-         * go/templates/include-pagination.gohtml (75 lines)
-         * go/templates/include-pagination-nearby.gohtml (76 lines)
-         * go/templates/include-pagination-organizations.gohtml (76 lines)
-       - Difference: Only URL building logic differs (5 lines)
-       - Fix: Create single parameterized template:
-         ```go
-         {{define "pagination"}}
-           {{/* Accept URL builder function as parameter */}}
-           {{$urlFunc := .URLBuilder}}
-           {{range .Pages}}
-             <a href="{{call $urlFunc .}}">{{.}}</a>
-           {{end}}
-         {{end}}
-         ```
-       - Estimated Savings: ~900 tokens per pagination edit
-    ```
 ```
 
 ### 3. After Analysis

@@ -31,7 +31,7 @@ Why:
 How to dispatch:
 - Brief the subagent with this SKILL.md as its working spec — pass the path to the file or invoke the skill from inside the subagent.
 - Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
-- Require the subagent to report back, in under 200 words: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
+- Require the subagent to report back only: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -150,7 +150,7 @@ build:
 
 **Skip** transform 4 if `on.push:` itself is absent — nothing to restrict. If the key is present but `branches:` is missing, add `branches:` with the resolved default branch.
 
-**Default branch resolution:** Resolve the default branch with `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` (fall back to `main`, then `master`).
+**Default branch resolution:** see [Default branch resolution](#default-branch-resolution) below.
 
 **Why:** avoid double CI runs when a push is also part of a PR. Each pushed commit triggers both a push run and a PR run, doubling queue time and burning Actions minutes.
 
@@ -559,7 +559,7 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 | Adding `concurrency:` when the user already has one | Overwrites their grouping/cancellation choice | Skip transform 5 if any `concurrency:` exists at workflow level |
 | Stripping `pull_request.branches` | Spec says leave `pull_request:` alone | Only touch `on.push.branches`, never `pull_request` |
 | Hardcoding a single cpm `version:` on the `setup-cpm` step | Forces one cpm release across all Perls instead of per-Perl selection | Use `version: compat` so old Perls get cpm `0.998003` and newer Perls get the latest |
-| Batching all 6 transforms into one commit | Can't revert one transform without the others | One commit per transform |
+| Batching all seven transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Auto-reverting on verification failure | Hides bugs in the skill | Stop, surface the failure, leave files uncommitted |
 | Carrying the old `sudo:` key onto the `cpm install` run step | There is no `sudo:` input on a `run:` step, and the install target is already writable (root container / user-local Perl) | Drop `sudo:` when converting to `setup-cpm` + `cpm install` |
 | Carrying `--with-develop` onto a macOS-only or Windows-only `cpm install` step | Develop-phase prereqs are author/release tooling the cross-platform matrix never runs, and they often fail to build on hosted macOS/Windows runners | Strip `--with-develop` from the args on macOS-only/Windows-only jobs; keep it on Linux and mixed-OS jobs |

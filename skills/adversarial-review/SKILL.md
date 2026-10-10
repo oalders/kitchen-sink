@@ -38,8 +38,6 @@ If the caller can't supply these, **abort** with this exact message:
 
 > adversarial-review requires scope to work. Without invariants and a threat model, reviewers will pad with nits and propose features instead of finding defects. Please supply: (1) invariants the patch claims, (2) threat model, (3) explicit out-of-scope list. Then re-invoke.
 
-Do NOT dispatch with improvised defaults. Do NOT proceed.
-
 ## Step 2: Round-number gate
 
 The caller MUST state which round this is — a positive integer (1, 2, 3, ...) where the number counts *the current invocation including this one*. So "round 1" means first invocation on this patch; "round 3" means this is the third.
@@ -171,5 +169,3 @@ Structure the final output as:
 ## Source
 
 Original technique: https://blog.fsck.com/2026/05/01/adversarial-review/
-
-Scope-discipline rewrite motivated by GitHub issue #11 (worked example: 5-round review of a `WWW::RobotRules::parse` patch where finding count stayed high but real-defect convergence stalled by round 3).

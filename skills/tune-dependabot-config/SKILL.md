@@ -28,7 +28,7 @@ How to dispatch:
 - Brief the subagent with this SKILL.md as its working spec — pass the path or invoke the skill from inside the subagent.
 - Tell the subagent the working directory.
 - Subagents can't ask the user, so before dispatching gather the auto-merge answers listed under [Before starting](#optional-auto-merge-minor-and-patch-prs) and pass them in the brief. Without them, the subagent must not set up auto-merge.
-- Require the subagent to report back, in under 200 words: the summary line, whether auto-merge was set up (or why not), and any entries skipped (paused, security-only, user-tuned cooldown) with reason.
+- Require the subagent to report back only: the summary line, whether auto-merge was set up (or why not), and any entries skipped (paused, misplaced `applies-to`, user-tuned cooldown) with reason.
 - If the YAML sanity check fails after editing, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -43,7 +43,7 @@ If the user explicitly asks to run inline (e.g. "do it here so I can watch"), ho
 **Skip when:**
 - The user has explicitly customised groups for a reason (e.g. `aws-sdk-*` separated from rest); preserve their groups, only add what's missing
 - The entry has `open-pull-requests-limit: 0` (paused) — leave it alone
-- An entry is security-updates only — cooldown does not apply to security updates
+- An entry has `applies-to` directly on it — that key is only valid inside `groups.<name>`; flag it to the user rather than guessing their intent
 
 ## The Two Transforms
 
@@ -88,7 +88,7 @@ groups:
 
 ### 2. Cooldown
 
-Inside each `updates:` entry where `applies-to` is `version-updates` (the default), add:
+Inside each `updates:` entry, add:
 
 ```yaml
 cooldown:
@@ -97,7 +97,7 @@ cooldown:
 
 `default-days: 7` is enough for every ecosystem — both the SemVer-aware ones (npm, Bundler, Cargo, Composer, Gomod, Gradle, Maven, NuGet, Pip, UV, etc.) and the ecosystems that only honour `default-days` (Docker, GitHub Actions, Helm, Terraform, Devcontainers, Bazel, Conda, Hex/Mix, Gitsubmodule, Docker Compose).
 
-**Do not add cooldown to security-update entries** — dependabot ignores it there, and the whole point of security updates is to land fast.
+Cooldown only delays version updates — Dependabot never applies it to security updates, so those still land fast.
 
 ## Optional: Auto-merge minor and patch PRs
 
@@ -177,7 +177,7 @@ This skill writes only `default-days: 7`. If the user later wants tighter patch 
 For each `- ` entry under `updates:` in `.github/dependabot.yml`:
 
 1. **Skip if paused.** If the entry has `open-pull-requests-limit: 0`, leave it alone.
-2. **Determine update class.** If `applies-to: security-updates`, only step 3 applies.
+2. **Check for a misplaced `applies-to`.** If the entry itself (not one of its groups) has `applies-to`, flag it — the key is only valid inside `groups.<name>` — and leave the entry alone.
 3. **Ensure grouping.** The required catch-all groups depend on `package-ecosystem`:
    - For `github-actions`: two catch-alls — `major-updates` with `update-types: [major]`, and `minor-and-patch` with `update-types: [minor, patch]`.
    - For every other ecosystem: one catch-all — `minor-and-patch` with `update-types: [minor, patch]`.
@@ -187,7 +187,7 @@ For each `- ` entry under `updates:` in `.github/dependabot.yml`:
    - Otherwise leave that catch-all out — it's already satisfied.
 
    Existing user-defined groups are always preserved.
-4. **Ensure cooldown** (skip for security-updates entries).
+4. **Ensure cooldown.**
    - If no `cooldown:` key exists, add `cooldown: { default-days: 7 }`.
    - If `cooldown:` exists with no `default-days`, add `default-days: 7`.
    - Otherwise leave cooldown alone — the user has tuned it deliberately.
@@ -305,7 +305,7 @@ updates:
 
 The `aws-sdk` group still wins for `@aws-sdk/*` packages; `minor-and-patch` sweeps up the rest. Majors for any package land as individual PRs.
 
-### Example 3 — Security-only entry left alone
+### Example 3 — Misplaced entry-level `applies-to`
 
 **Before:**
 
@@ -317,14 +317,16 @@ The `aws-sdk` group still wins for `@aws-sdk/*` packages; `minor-and-patch` swee
   applies-to: security-updates
 ```
 
-**After:** Same plus the catch-all group (security updates can also be grouped) but **no `cooldown:` block** — cooldown is ignored for security-updates and adding it would be misleading.
+**After:** Leave the entry unchanged and tell the user that `applies-to` is only valid inside `groups.<name>`. Offer the two fixes, depending on intent:
+
+- **Security updates only:** replace it with `open-pull-requests-limit: 0`. That disables version updates while security PRs continue, and step 1 then skips the entry.
+- **Grouped security PRs:** move the key into a group:
 
 ```yaml
 - package-ecosystem: "pip"
   directory: "/"
   schedule:
     interval: "weekly"
-  applies-to: security-updates
   groups:
     minor-and-patch:
       applies-to: security-updates
@@ -335,7 +337,7 @@ The `aws-sdk` group still wins for `@aws-sdk/*` packages; `minor-and-patch` swee
         - "patch"
 ```
 
-Note `applies-to: security-updates` inside the group — groups default to `version-updates`, so an explicit match is required. Major security advisories still land as individual PRs so each can be triaged on its own.
+Groups default to `version-updates`, so a security group needs the explicit `applies-to`. Major security advisories still land as individual PRs so each can be triaged on its own.
 
 ### Example 4 — User has already tuned cooldown
 
@@ -357,7 +359,7 @@ Note `applies-to: security-updates` inside the group — groups default to `vers
 
 | Mistake | Why it's wrong | Fix |
 |---|---|---|
-| Adding `cooldown:` to a security-updates entry | Dependabot ignores it; misleads readers | Skip cooldown for `applies-to: security-updates` |
+| Putting `applies-to` directly on an `updates:` entry | Not a valid key there; it only exists under `groups.<name>` | Move it into a group, or use `open-pull-requests-limit: 0` for security-only |
 | Replacing the user's existing groups with `minor-and-patch` | Destroys their per-package-family routing | Add alongside, don't replace |
 | Leaving `update-types` off the catch-all group | Behaviour ambiguous across dependabot versions | Always list `[minor, patch]` explicitly |
 | Including `major` in the catch-all `update-types` for non-actions ecosystems | Hides which package broke when a batched major-bump PR fails CI | Group only minor + patch; let majors arrive as individual PRs |

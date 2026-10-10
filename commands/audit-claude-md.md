@@ -48,13 +48,13 @@ Task(general-purpose):
 
     ## Comprehensive Audit Checklist
 
-    **CRITICAL: Check EVERY category systematically with specific examples.**
+    Cover each category below, citing specific file:line examples.
 
     ### 1. Token Efficiency
 
     **40K Character Limit (HARD LIMIT — check first):**
     - Claude Code warns and degrades when a single CLAUDE.md exceeds 40,000 characters (~40K), so every file MUST stay under it.
-    - **REQUIRED**: Measure each file's character count. For each file run:
+    - Measure each file's character count. For each file run:
       ```bash
       wc -m CLAUDE.md
       ```
@@ -66,7 +66,7 @@ Task(general-purpose):
     **Duplication Between Files:**
     - Multiple CLAUDE.md files with overlapping content
     - Same instructions repeated in different files
-    - **REQUIRED**: If multiple files exist, compare line-by-line
+    - If multiple files exist, compare line-by-line
     - Calculate duplication percentage
     - Report: word count per file, overlap estimate, which sections duplicate
 
@@ -102,7 +102,7 @@ Task(general-purpose):
     **Contradictory Instructions:**
     - Section A says "always do X", Section B shows doing Y
     - One file says "NEVER run X" but Commands section shows running X
-    - **REQUIRED**: Cross-reference all command examples with CRITICAL/WARNING sections
+    - Cross-reference all command examples with CRITICAL/WARNING sections
     - Report: specific contradictions with line numbers
 
     **Vague Instructions:**
@@ -139,7 +139,7 @@ Task(general-purpose):
     - No clear principle for what goes in which file
     - Critical info split across files
     - Related info separated
-    - **REQUIRED**: If multiple files exist, describe current split and recommend better organization
+    - If multiple files exist, describe current split and recommend better organization
     - Report: proposed file structure
 
     **Hard to Scan:**
@@ -169,7 +169,7 @@ Task(general-purpose):
     **Outdated Commands:**
     - Commands that no longer work
     - References to moved/renamed binaries
-    - **REQUIRED**: Test each command path exists
+    - Test each command path exists
     - Example checks:
       * `go/bin/model` → Check file exists and is executable
       * `npm run test` → Check package.json has "test" script
@@ -179,45 +179,45 @@ Task(general-purpose):
     **Dead Links/References:**
     - References to files that don't exist
     - "See README.md" when no README exists
-    - **REQUIRED**: Verify every file reference with actual filesystem
+    - Verify every file reference with actual filesystem
     - Report: dead links with file:line and what they reference
 
     **Incorrect Environment Variables:**
     - Documentation uses variable name that doesn't match code
     - Example: CLAUDE.md says `ANTHROPIC_API_KEY` but code uses `MMIR_ANTHROPIC_API_KEY`
-    - **REQUIRED**: Grep codebase for environment variable usage
+    - Grep codebase for environment variable usage
     - Report: mismatched variable names with correct values from code
 
     **Outdated Tool/Dependency Info:**
     - Lists tools/dependencies that are no longer used
     - Missing newly added dependencies
-    - **REQUIRED**: Compare with actual dependencies (go.mod, package.json, requirements.txt)
+    - Compare with actual dependencies (go.mod, package.json, requirements.txt)
     - Report: outdated dependency information
 
     **Version-Specific Instructions:**
     - References specific versions that may be obsolete
     - Example: "In Go 1.18+" when project now uses Go 1.22
     - Example: "Before Node 16" when project requires Node 20
-    - **REQUIRED**: Check version references against actual project requirements
+    - Check version references against actual project requirements
     - Report: version-specific instructions that may be outdated
 
     **Incorrect Directory Structure:**
     - Documentation describes structure that doesn't match reality
     - Example: Says tests are in `test/` but they're in `__tests__/`
-    - **REQUIRED**: Verify key directories mentioned
+    - Verify key directories mentioned
     - Report: structure mismatches
 
     **Incomplete Feature Lists:**
     - Lists scrapers, importers, commands that are incomplete
     - Example: Lists 8 scrapers but 12 actually exist
-    - **REQUIRED**: Find actual implementations, compare with documentation
+    - Find actual implementations, compare with documentation
     - Report: missing items with counts
 
     **Example Code That Doesn't Work:**
     - Code snippets with syntax errors
     - Imports that don't exist
     - Function calls with wrong signatures
-    - **REQUIRED**: Check example code against actual codebase patterns
+    - Check example code against actual codebase patterns
     - Report: broken examples with fixes
 
     **Metrics to Report:**
@@ -279,7 +279,7 @@ Task(general-purpose):
     **Described Workflows vs Actual Practice:**
     - CLAUDE.md describes workflow that's not actually used
     - Example: Says "run tests with X" but actual CI/scripts use Y
-    - **REQUIRED**: Compare documented workflows with:
+    - Compare documented workflows with:
       * CI configuration (.github/workflows/, .gitlab-ci.yml)
       * Make files, package.json scripts
       * Actual script files in bin/, scripts/
@@ -288,7 +288,7 @@ Task(general-purpose):
     **Tool Availability:**
     - Mentions tools that aren't available in project
     - Example: "Use goimports" but not in go.mod tools
-    - **REQUIRED**: Check tool installation/availability
+    - Check tool installation/availability
     - Report: missing tools
 
     **Metrics to Report:**
@@ -303,7 +303,7 @@ Task(general-purpose):
 
     ### Executive Summary
 
-    **Overall Quality Score:** X/100
+    **Overall quality:** [Poor/Fair/Good/Excellent] — [1-2 sentence reasoning]
 
     **Top 3 Issues:**
     1. [Issue] - [Impact] - [Location]
@@ -432,71 +432,20 @@ Task(general-purpose):
     ## Critical Rules for Auditor
 
     **DO:**
-    - Measure EVERY file's character count with `wc -m` and enforce the 40,000-character limit
-    - Verify EVERY file reference against actual filesystem
-    - Test EVERY command path for existence
-    - Compare EVERY environment variable with codebase usage
-    - Check EVERY workflow against CI/scripts
+    - Measure each file's character count with `wc -m` and enforce the 40,000-character limit
+    - Verify each file reference against actual filesystem
+    - Test each command path for existence
+    - Compare each environment variable with codebase usage
+    - Check each workflow against CI/scripts
     - Provide specific line numbers for all issues
     - Give concrete before/after examples
     - Calculate quantitative metrics
 
     **DON'T:**
-    - Skip verification checks because "it probably works"
     - Report style preferences as issues
     - Suggest changes without showing specific examples
-    - Ignore small inaccuracies (they compound)
     - Assume documentation is correct without checking
 
-    ## Example Issue Format
-
-    ```
-    #### Critical
-
-    1. **Broken Command Path - Accuracy Issue**
-       - Category: Accuracy Against Codebase
-       - Impact: AI will try to run non-existent binary, fail immediately
-       - Location: go/CLAUDE.md:32
-       - Current:
-         ```markdown
-         - `./go/bin/model -auto-migrate` - Run database migrations
-         ```
-       - Verification: Checked filesystem, binary is at `go/bin/model` not `./go/bin/model` (working directory matters)
-       - Fix:
-         ```markdown
-         ### Database Commands (from repository root)
-         - `go/bin/model -auto-migrate` - Run database migrations
-
-         ### Database Commands (from go/ directory)
-         - `./bin/model -auto-migrate` - Run database migrations
-         ```
-       - Estimated Impact: Eliminates immediate failure, saves 1-2 minutes per attempt
-
-    2. **Contradictory Test Instructions - Clarity Issue**
-       - Category: Contradictory Instructions
-       - Impact: AI receives conflicting guidance on how to run tests
-       - Locations:
-         * go/CLAUDE.md:7 - "**NEVER run `go test` commands directly**"
-         * go/CLAUDE.md:37 - "- `go test ./...` - Run all tests"
-       - Verification: README and CI both use golang-test-runner agent, not direct go test
-       - Fix: Remove lines 37-40 (Testing subsection under Commands), keep only CRITICAL section
-       - Estimated Impact: Eliminates confusion, AI will use correct test workflow
-
-    3. **Outdated Scraper List - Accuracy Issue**
-       - Category: Incomplete Feature Lists
-       - Impact: AI has incomplete picture of available scrapers
-       - Location: go/CLAUDE.md:198
-       - Current: Lists 8 scrapers
-       - Verification: Found 12 scrapers in go/import/:
-         * Listed: active, parkrun, rr, spartan, swimrun, tri, ultrasignup, worldsmarathons
-         * Missing: raceroster, masters-swimming-canada, zwift, ics
-       - Fix:
-         ```markdown
-         Multiple event platform scrapers in `go/import/` including Active.com,
-         Parkrun, RaceRoster, UltraSignup, Zwift, and more. See directory for full list.
-         ```
-       - Estimated Impact: Prevents AI from missing available scrapers
-    ```
 ```
 
 ### 3. After Audit

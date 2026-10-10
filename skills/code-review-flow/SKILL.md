@@ -113,7 +113,7 @@ the attribution footer from `docs/attribution.md`, using the model version resol
    {
      "commit_id": "<head-sha>",
      "event": "COMMENT",
-     "body": "Automated review — inline findings below. <un-anchorable findings / overall assessment here>\n\n---\n🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8",
+     "body": "Automated review — inline findings below. <un-anchorable findings / overall assessment here>\n\n---\n🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>",
      "comments": [
        { "path": "go/web/foo.go", "line": 42, "side": "RIGHT",
          "body": "**[Important]** This nil check can move above the loop." },
@@ -151,7 +151,7 @@ the attribution footer from `docs/attribution.md`, using the model version resol
    Automated review — inline findings below. <un-anchorable findings / overall assessment here>
 
    ---
-   🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
+   🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
    BODY
    cat > "$WORKDIR/b1.md" <<'BODY'
    **[Important]** This nil check can move above the loop.
@@ -232,7 +232,7 @@ When the review finds issues, fix them automatically rather than just reporting:
 3. If a Minor issue seems wrong or counterproductive, push back rather than blindly implementing — but default to fixing since it's less overhead than a follow-up issue
 4. Commit fixes with a clear message referencing the review. Every such commit ends with a blank
    line then the `Co-authored-by` trailer from `docs/attribution.md` (display name = the model
-   running at runtime), e.g. `Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>`
+   running at runtime), e.g. `Co-authored-by: Claude <running model> <noreply@anthropic.com>`
 5. **Re-run the review cycle** on the new commits (update HEAD_SHA and review again)
 6. Repeat until the review passes clean
 
@@ -264,7 +264,7 @@ Task(general-purpose):
   DESCRIPTION: Added parseDistanceTag() and case-insensitive regex
 
 Step 3: Review found 1 major issue (missing nil check) and 2 minor issues
-- Diff is 180 lines (under 400) → fix all issues
+- Diff is 180 lines (under 500) → fix all issues
 - Commit fixes: [fix-1065 a1b2c3d4] (commit ends with the `Co-authored-by` trailer from `docs/attribution.md`)
 
 Step 4: Re-run review with updated HEAD
@@ -286,7 +286,7 @@ $ cat > "$WORKDIR/body.md" <<'BODY'
 Automated review — passes clean, no remaining issues.
 
 ---
-🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
+🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
 BODY
 $ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
     '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"
@@ -305,14 +305,6 @@ This skill works because:
 - `Bash(git rev-parse:*)` is typically already allowed
 - Separate commands don't need complex shell parsing
 - Reading conversation context needs no permissions
-
-## Benefits
-
-✅ No permission prompts during code review
-✅ User can leave window while review runs
-✅ Faster workflow - no blocking on permissions
-✅ Uses information already in context when available
-✅ Posts review to PR when one exists - keeps discussion centralized
 
 ## When to Use
 

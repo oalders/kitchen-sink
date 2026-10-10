@@ -28,8 +28,6 @@ version: 1.6.2
 | Tune | `precious.toml` already exists | All transforms run as no-ops; surfaces drift between current config and canonical recipe |
 | Typos-only | No Perl files, but `typos.toml` / `_typos.toml` / `.typos.toml` is present | T1 (typos block only) + T5; T2/T3/T4 are no-ops |
 
-**Worked example PR:** [libwww-perl/WWW-Mechanize-Cached#35](https://github.com/libwww-perl/WWW-Mechanize-Cached/pull/35) — the recipe was extracted from this PR.
-
 ## Dispatch this skill to a subagent
 
 When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the six transforms inline in the caller's context.**
@@ -41,7 +39,7 @@ Why:
 How to dispatch:
 - Brief the subagent with this SKILL.md as its working spec — pass the path to the file or invoke the skill from inside the subagent.
 - Tell the subagent the working directory.
-- Require the subagent to report back, in under 200 words: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
+- Require the subagent to report back only: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -421,7 +419,7 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 - `precious` is the single entry point — no per-tool step.
 - `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort + typos are Rust/Go); skips compile time. The input is `projects:` (newline-delimited list of `owner/repo` slugs passed to `ubi --project`). Always pass `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` under `with:` — ubi pulls binaries through the GitHub releases API, and without an authenticated token the unauthenticated rate limit fails the install step intermittently.
 - `setup-cpm@v1` installs `cpm`, and the explicit `cpm install -g` run step installs the two CPAN tools precious shells out to.
-- Perl 5.42 (the current matrix max) is enough for the lint job; nothing in this job exercises older Perls.
+- A single recent stable Perl is enough for the lint job; nothing in this job exercises older Perls.
 - `branches: [<default>]` + workflow-level `concurrency:` block — same conventions as `tune-perl-ci`. Resolve the default branch with the `git symbolic-ref` command shown above and substitute before writing the file.
 
 **Lint job and build jobs:** the generated `lint.yml` is a standalone workflow with no build job, so the `precious` job declares no `needs:`. If you instead add a precious-lint job to a workflow that already contains a build job, that lint job **must** declare `needs: <build-job>` — running lint against a tree whose build is already failing wastes a runner and clutters the failure signal.
@@ -658,7 +656,7 @@ Six commits land:
    ```
    precious: add canonical config
 
-   Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+   Co-authored-by: Claude <running model> <noreply@anthropic.com>
    ```
 2. `perltidy: consolidate profile to .perltidyrc and drop -b` — `perltidyrc` removed (it was the tidyall-managed copy and matched `.perltidyrc` modulo formatting); `.perltidyrc` kept with `-b` stripped, and kept out of the dist the same way — `filename = .perltidyrc` appended to the same `[PruneFiles]` block.
 3. `tidyall: delete config files and ignore entries` — `.tidyallrc` removed; `.gitignore` no longer mentions `.tidyall.d/`.

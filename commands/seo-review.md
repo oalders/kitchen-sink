@@ -68,7 +68,7 @@ Task(general-purpose):
 
     ## SEO Review Checklist
 
-    **CRITICAL: Check EVERY category systematically.**
+    Work through every category below. For a category the diff doesn't touch, say so in one line rather than producing findings for it.
 
     ### Meta Tags
 
@@ -193,9 +193,6 @@ Task(general-purpose):
     - Verify canonical URLs are correct
 
     **DON'T:**
-    - Say "SEO looks good" without checking meta tags
-    - Skip Open Graph review
-    - Give vague advice ("improve SEO")
     - Assume server-rendered content is crawlable without checking
     - Ignore social sharing preview quality
 ```

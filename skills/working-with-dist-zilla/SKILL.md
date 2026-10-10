@@ -10,8 +10,6 @@ version: 1.1.1
 
 `Dist::Zilla` (`dzil`) is a meta-tool that builds CPAN distributions from a `dist.ini` declaration. Many of its behaviors are stable across projects but invisible to anyone who hasn't been bitten — there's no "the docs say so" moment, you just learn by getting them wrong. This skill captures those patterns so you apply them on the first pass instead of discovering each one in an implementer/reviewer loop.
 
-**Worked example that surfaced these patterns in sequence:** [oalders/lwp-consolelogger#56](https://github.com/oalders/lwp-consolelogger/pull/56) (Code::TidyAll → precious migration).
-
 ## When to Use
 
 Use this skill when:
@@ -243,3 +241,4 @@ Two `dzil` quirks bite inside restricted execution sandboxes:
 - [Dist::Zilla::Plugin::RemovePrereqs](https://metacpan.org/pod/Dist::Zilla::Plugin::RemovePrereqs)
 - [Dist::Zilla::Role::PluginBundle::PluginRemover](https://metacpan.org/pod/Dist::Zilla::Role::PluginBundle::PluginRemover)
 - [gitmailmap(5)](https://git-scm.com/docs/gitmailmap) — `.mailmap` format reference
+- Reference PR: [oalders/lwp-consolelogger#56](https://github.com/oalders/lwp-consolelogger/pull/56) (Code::TidyAll → precious migration)
