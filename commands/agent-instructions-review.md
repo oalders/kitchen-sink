@@ -71,7 +71,7 @@ Task(general-purpose):
 
     ## Agent-Instructions Review Checklist
 
-    **CRITICAL: Work through EVERY dimension. For each, verify against the code at HEAD — read files and grep for the symbols/paths/flags named. Treat the instruction text as a claim to be checked, never as authoritative.**
+    For each dimension, verify against the code at HEAD: read files and grep for the symbols, paths, and flags named. Treat the instruction text as a claim to check, not as authoritative.
 
     ### 1. Accuracy
 

@@ -39,6 +39,6 @@ Steps:
    ## Testing
    - [How changes were verified]
 
-   🤖 Generated with [Claude Code](https://claude.com/claude-code) · Opus 4.8'
+   🤖 Generated with [Claude Code](https://claude.com/claude-code) · <running model version>'
    ```
 6. Report the PR URL to the user

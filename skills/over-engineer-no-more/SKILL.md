@@ -10,7 +10,7 @@ version: 1.0.2
 
 **After planning but before execution, evaluate whether the implementation is trivial enough to execute directly rather than using heavyweight processes.**
 
-**Core principle:** Match execution process to implementation complexity. Don't launch 33 subagents to add items to arrays.
+**Core principle:** Match execution process to implementation complexity.
 
 ## When to Use
 
@@ -19,8 +19,6 @@ version: 1.0.2
 - Before launching subagent-driven development
 - Before launching a multi-step execution workflow
 - When user says "just add..." or "simple change..."
-
-**Always check complexity before heavyweight execution.**
 
 ## The Triage Process
 
@@ -41,45 +39,7 @@ Ask these questions:
 
 ### Step 2: Announce Decision
 
-**For Trivial Implementation:**
-
-```
-Plan complete. Checking execution complexity...
-
-Changes required:
-- [List specific changes from plan]
-
-This is trivial implementation (adding items to lists/updating data).
-
-I'll implement directly rather than using subagent-driven development.
-This will:
-- Save time (10 min vs hours)
-- Use fewer credits (1 agent vs 33)
-- Produce the same quality result
-
-Proceeding with direct implementation.
-```
-
-**For Complex Implementation:**
-
-```
-Plan complete. Checking execution complexity...
-
-Changes required:
-- [List specific changes from plan]
-
-This is complex implementation requiring:
-- New business logic / algorithms
-- Multi-file coordination
-- Database migrations / API changes
-
-I'll use subagent-driven development for:
-- Fresh context per task
-- Thorough review cycles
-- Quality verification
-
-Proceeding with subagent-driven development.
-```
+In a sentence or two, tell the user whether the change is trivial or complex, which indicators decided it, and which execution path you're taking. Then proceed.
 
 ### Step 3: Execute Accordingly
 
@@ -114,8 +74,6 @@ Proceeding with subagent-driven development.
 - [x] Same package
 
 **Decision: TRIVIAL** -> Implement directly
-
-**Avoided:** 33 subagent invocations (11 implementers + 11 spec reviewers + 11 code reviewers)
 
 ### Example 2: New API Endpoint (Complex)
 
@@ -155,43 +113,9 @@ Proceeding with subagent-driven development.
 
 **Decision: TRIVIAL** -> Implement directly (simple bug fix)
 
-## Red Flags - DON'T Skip This Check
+## Why the Check Matters
 
-**Never:**
-- Launch subagent-driven development without checking complexity first
-- Assume "we wrote a plan, so we need heavyweight execution"
-- Over-engineer trivial changes because they "might be complex"
-- Ignore user signals like "just add..." or "trivial..."
-
-**Always:**
-- Check the triage indicators before execution
-- Announce your decision and reasoning
-- Match process to complexity
-- Optimize for time and credits when appropriate
-
-## Cost-Benefit Analysis
-
-**Trivial implementation executed with heavyweight process:**
-- Time: Hours instead of minutes
-- Credits: 33x subagents vs 1
-- Quality: Same (both produce correct code)
-- Overhead: Massive
-
-**Complex implementation executed directly:**
-- Time: Same or slightly faster
-- Credits: Lower
-- Quality: WORSE (no review cycles, fresh context helps)
-- Risk: Higher (missed edge cases)
-
-**Match the process to the task.**
-
-## Success Metrics
-
-You're using this skill correctly when:
-- Trivial implementations take < 15 minutes
-- You rarely launch 30+ subagents for data structure changes
-- User doesn't say "this is taking too long for trivial changes"
-- Complex implementations still get thorough review
+Under-processing complex work is the costlier mistake: it skips the review cycles that catch edge cases. Over-processing trivial work only wastes time and credits.
 
 ## Common Patterns
 

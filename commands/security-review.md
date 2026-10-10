@@ -79,7 +79,7 @@ Task(general-purpose):
 
     ## OWASP-Based Security Checklist
 
-    **CRITICAL: Check EVERY category below, even if you think it doesn't apply.** (The one exception is "LLM / AI Integration", which is explicitly gated to code that touches model calls — see its note.)
+    Check every category below; for one that doesn't apply, state in one line why, so coverage is visible. (The one exception is "LLM / AI Integration", which is explicitly gated to code that touches model calls — see its note.)
 
     ### Authentication & Session Management
 
@@ -256,9 +256,6 @@ Task(general-purpose):
     - Consider attacker mindset (how would I break this?)
 
     **DON'T:**
-    - Skip categories because "they don't apply"
-    - Say "looks secure" without systematic analysis
-    - Give vague advice ("improve security")
     - Mark theoretical issues as Critical without exploit path
     - Assume frameworks handle everything automatically
 ```

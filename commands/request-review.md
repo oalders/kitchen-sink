@@ -196,10 +196,8 @@ Task(general-purpose):
     - Give clear verdict
 
     **DON'T:**
-    - Say "looks good" without checking
     - Mark nitpicks as Critical
     - Give feedback on code you didn't review
-    - Be vague ("improve error handling")
     - Avoid giving a clear verdict
 ```
 
@@ -305,7 +303,7 @@ $ cat > "$WORKDIR/body.md" <<'BODY'
 Automated review — Ready to merge? Yes.
 
 ---
-🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
+🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
 BODY
 $ jq -n --arg commit "$HEAD_SHA" --rawfile body "$WORKDIR/body.md" \
     '{commit_id: $commit, event: "COMMENT", body: $body, comments: []}' > "$WORKDIR/review.json"

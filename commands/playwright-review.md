@@ -64,7 +64,7 @@ Task(general-purpose):
 
     ## Playwright-Specific Review Checklist
 
-    **CRITICAL: Check EVERY category systematically.**
+    Work through every category below. For a category the diff doesn't touch, say so in one line rather than producing findings for it.
 
     ### Accessibility - ARIA Labels & Attributes
 
@@ -160,7 +160,7 @@ Task(general-purpose):
 
     // ✅ FAST: Use built-in waitForSelector
     await page.waitForSelector('#region:not([disabled])', { state: 'attached' });
-    // Then verify options: await expect(page.locator('#region option')).toHaveCount({ min: 2 });
+    // Then verify options: await expect(page.locator('#region option').nth(1)).toBeAttached();
     ```
 
     **2. Sequential actions that could be parallel**
@@ -335,7 +335,7 @@ Task(general-purpose):
          // Extract to helper in test-utils.js
          export async function waitForRegionSelect(page) {
              await page.waitForSelector('#region:not([disabled])', { state: 'attached' });
-             await expect(page.locator('#region option')).toHaveCount({ min: 2 });
+             await expect(page.locator('#region option').nth(1)).toBeAttached();
          }
 
          // Usage
@@ -353,9 +353,6 @@ Task(general-purpose):
     - Estimate performance impact (milliseconds saved)
 
     **DON'T:**
-    - Say "accessibility looks good" without checking ARIA attributes
-    - Skip performance analysis
-    - Give vague advice ("improve selectors")
     - Assume semantic selectors mean ARIA is present (verify!)
 ```
 

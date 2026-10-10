@@ -188,7 +188,7 @@ Same protocol as `/code-review-flow`:
   resolved at runtime), e.g.:
   ```
   ---
-  🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
+  🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
   ```
 - Never self-approve (`event: "COMMENT"`)
 - Fix Critical and Important issues automatically; for diffs > 500 lines, file GitHub issues for Minor

@@ -66,7 +66,7 @@ Task(general-purpose):
 
     ## Frontend Review Checklist
 
-    **CRITICAL: Check EVERY category systematically.**
+    Work through every category below. For a category the diff doesn't touch, say so in one line rather than producing findings for it.
 
     ### Images & Assets
 
@@ -163,7 +163,7 @@ Task(general-purpose):
     - Check for layout shift (CLS)?
 
     **Browser Compatibility:**
-    - SVG supported in target browsers (IE11 needs fallback)?
+    - SVG features supported in the project's stated target browsers?
     - CSS features have fallbacks or polyfills?
     - Test in Chrome, Firefox, Safari?
     - Mobile browser testing (iOS Safari, Chrome Mobile)?
@@ -326,9 +326,6 @@ Task(general-purpose):
     - Consider both visual and screen reader experiences
 
     **DON'T:**
-    - Say "accessibility looks good" without checking ARIA strategy
-    - Skip responsive testing
-    - Give vague advice ("improve images")
     - Assume SVG = automatic accessibility
     - Ignore CSS performance implications
 ```

@@ -136,7 +136,7 @@ Fix style, constant, line-length issues (25 total)
 
 All tests pass.
 
-Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+Co-authored-by: Claude <running model> <noreply@anthropic.com>
 MSG
 ```
 
@@ -165,7 +165,7 @@ Changes:
 
 All tests pass.
 
-Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+Co-authored-by: Claude <running model> <noreply@anthropic.com>
 ```
 
 ## Decision Framework: Fix vs Suppress
