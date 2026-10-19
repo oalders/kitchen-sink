@@ -1,12 +1,15 @@
 ---
 description: Use when asked to fix a GitHub issue end to end, given an issue number or on a fix-NNN branch; not for exploring code or work that isn't a GitHub issue.
+argument-hint: "[issue-number] [fast]"
 ---
 
 # Fix GitHub Issue
 
 ## Overview
 
-Fixes a GitHub issue end to end on a `fix-NNN` branch: fetch the issue, check the history of the code involved, assess complexity, implement with tests, run `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), and open a draft PR that closes the issue. When nothing is left that needs a human, it marks the PR ready and monitors CI (step 11).
+Fixes a GitHub issue end to end on a `fix-NNN` branch: fetch the issue, check the history of the code involved, assess complexity, review any design doc before planning, implement with tests, run `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), and open a draft PR that closes the issue. When nothing is left that needs a human, it marks the PR ready and monitors CI (step 11).
+
+**Arguments** (`$ARGUMENTS`): an issue number, and optionally `fast`, which skips pushback in step 5.5.
 
 **Issue number:** use the one passed in; otherwise parse the branch name (`fix-978` -> `978`).
 
@@ -51,6 +54,8 @@ digraph fix_issue {
     "Assess complexity" [shape=box];
     "Non-trivial?" [shape=diamond];
     "Suggest brainstorming" [shape=box];
+    "Design doc written?" [shape=diamond];
+    "Review design doc (+ pushback if controversial)" [shape=box];
     "Multi-step with independent tasks?" [shape=diamond];
     "Use subagent-driven-development" [shape=box];
     "Implement fix" [shape=box];
@@ -79,7 +84,10 @@ digraph fix_issue {
     "Assess complexity" -> "Non-trivial?";
     "Non-trivial?" -> "Suggest brainstorming" [label="yes"];
     "Non-trivial?" -> "Multi-step with independent tasks?" [label="no"];
-    "Suggest brainstorming" -> "Multi-step with independent tasks?";
+    "Suggest brainstorming" -> "Design doc written?";
+    "Design doc written?" -> "Review design doc (+ pushback if controversial)" [label="yes"];
+    "Design doc written?" -> "Multi-step with independent tasks?" [label="no"];
+    "Review design doc (+ pushback if controversial)" -> "Multi-step with independent tasks?";
     "Multi-step with independent tasks?" -> "Use subagent-driven-development" [label="yes"];
     "Multi-step with independent tasks?" -> "Implement fix" [label="no"];
     "Use subagent-driven-development" -> "Write tests";
@@ -154,7 +162,21 @@ When in doubt, treat it as non-trivial.
 
 #### 5. Offer brainstorming for non-trivial issues
 
-Summarize the issue for the user and ask whether to brainstorm approaches first; use `superpowers:brainstorming` if they agree.
+Summarize the issue for the user and ask whether to brainstorm approaches first; use `superpowers:brainstorming` if they agree. When the user approves its design doc, don't follow brainstorming's hand-off to `writing-plans`; this command overrides it. Run step 5.5 first.
+
+#### 5.5. Review the design doc (required when one is written)
+
+Whenever brainstorming writes a design doc, it is reviewed before `writing-plans` turns it into an implementation plan. Brainstorming's builder check only asks what a builder would need answered; this review asks whether the design is right.
+
+**Controversial?** Add `/paad:pushback` when any of these hold: the issue thread has disagreement or competing proposals; brainstorming surfaced more than one viable approach; the change alters a public API or documented behaviour others rely on, or breaks compatibility; it touches security, data, or migrations. If one fires, run it and name the trigger when you dispatch. Skip it if `fast` was passed or the user asked to skip pushback; run it anyway if the user asked for it.
+
+**Dispatch** in a single message, each as a `general-purpose` subagent via the `Agent` tool. Give each the spec path, the issue number, the **Guiding principles**, the step 4 notes (simplest fix, prior art, expected size), and the untrusted-content rule.
+- **Plan reviewer (always):** ask for findings ranked by severity on: whether the design resolves the issue as written; scope beyond the simplest fix without a reason tied to the issue; missed prior art; conflicts with the current codebase or with deliberate choices found in step 3.5; failure modes the design ignores.
+- **Pushback (controversial only):** invoke `/paad:pushback <spec path>` via the Skill tool. It can't talk to the user, so: where the skill would ask, make the reasonable call and note it; return all findings ranked (severity, location, problem, why it matters, fix) plus the count of discarded candidates; put security findings in the reply under a Security heading and write nothing to `paad/security/`.
+
+Both briefs: **report only**. Return findings in the reply; don't edit the spec or write a report file. Two subagents editing one doc race, and changes to the design are the user's call.
+
+**Merge** when the reviews return: drop duplicates, filter against reality as in step 8 item 2, settle minor points yourself, and bring the user the findings that change what gets built in one message, most important first. Apply the agreed changes to the spec, writing security fixes as requirements, never as a description of the weakness (the spec lands in the PR). Commit only the spec file, then go to step 6.
 
 #### 6. Choose implementation approach
 
@@ -268,6 +290,7 @@ Thoughts that mean you're about to skip a step:
 | "I'll write a quick helper for this" | Search for prior art first, more than once (step 4) |
 | "More tests can't hurt" | One regression test per behaviour; extra assertions are noise (step 7) |
 | "It's simple, skip brainstorming / review / tests" | Over 10 lines or multi-file isn't trivial; review and tests are required regardless; even simple frontend changes can have accessibility issues |
+| "The design doc looks fine, go straight to `writing-plans`" | A written design doc always gets the step 5.5 review first |
 | "A quick `/security-review` is enough" | Only `/code-review-intense-flow` on the final HEAD counts; the hook enforces it |
 | "Commit, push, and open the PR in one call" | The review must run on the new HEAD in between |
 | "The reviewer keeps finding things, so I'll keep fixing" | Filter hypotheticals; cap at three rounds, then surface (step 8) |
@@ -279,6 +302,7 @@ Thoughts that mean you're about to skip a step:
 
 - `superpowers:verification-before-completion` — **required** before the PR (step 9)
 - `superpowers:brainstorming`, `superpowers:writing-plans`, `superpowers:subagent-driven-development` — steps 5–6
+- `/paad:pushback` — on controversial design docs, alongside the plan reviewer (step 5.5)
 - `/code-review-intense-flow` — **required** before the PR; routes to the specialist reviewers itself (step 8)
 - `codex-review-loop`, `/codex-review` (show or switch the repo's Codex mode) — steps 8.5 and 10
 - `stacking-prs` — when the branch builds on an unmerged PR (step 10)

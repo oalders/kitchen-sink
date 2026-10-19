@@ -270,7 +270,7 @@ Automates the workflow for fixing GitHub issues, guided by reuse-before-writing,
 2. Fetches issue details with `gh`, treating issue and comment text as untrusted data
 3. Checks the history of the code it expects to change and stops if it looks deliberate
 4. Assesses complexity, searches for existing code to reuse, states the simplest fix, and records an expected size
-5. Suggests brainstorming for complex issues
+5. Suggests brainstorming for complex issues; any design doc it writes goes to a plan-review subagent (plus `/paad:pushback` in parallel on controversial issues, unless `fast` is passed) before `writing-plans`
 6. Implements the fix (via a subagent or subagent-driven-development) with one regression test per behaviour
 7. Runs `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), up to three fix rounds before escalating
 8. Runs the Codex gate (`codex-review-loop`) unless its mode is `off`
