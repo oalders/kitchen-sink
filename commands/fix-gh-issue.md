@@ -1,6 +1,6 @@
 ---
 description: Use when asked to fix a GitHub issue end to end, given an issue number or on a fix-NNN branch; not for exploring code or work that isn't a GitHub issue.
-argument-hint: "[issue-number] [fast]"
+argument-hint: "[issue-number] [fast] [autonomous]"
 ---
 
 # Fix GitHub Issue
@@ -9,7 +9,12 @@ argument-hint: "[issue-number] [fast]"
 
 Fixes a GitHub issue end to end on a `fix-NNN` branch: fetch the issue, check the history of the code involved, assess complexity, review any design doc before planning, implement with tests, run `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), and open a draft PR that closes the issue. When nothing is left that needs a human, it marks the PR ready and monitors CI (step 11).
 
-**Arguments** (`$ARGUMENTS`): an issue number, and optionally `fast`, which skips pushback in step 5.5.
+**Arguments** (`$ARGUMENTS`): an issue number, and optionally `fast`, which skips pushback in step 5.5, and `autonomous` (see below).
+
+**`autonomous`** (used by `/fix-gh-issues` for unattended runs): nobody is there to answer, so never ask the user anything.
+- Step 5: don't offer brainstorming; go with the step 4 simplest fix. If the issue needs a design decision the issue doesn't settle, that's a STOP.
+- Every "STOP and surface", "ask", or "push back" becomes: stop work on this issue, leave any PR in draft, and end with the reason. Don't wait for an answer, and don't open a PR just to hold unreviewed work.
+- Finish with one line for the caller: the PR number (or none), `ready` or `draft`, and the reason if it isn't ready.
 
 **Issue number:** use the one passed in; otherwise parse the branch name (`fix-978` -> `978`).
 
