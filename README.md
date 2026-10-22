@@ -288,7 +288,7 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 - Snapshots the queue once (skipping `in progress`, `needs human`, and issues with an open PR), shows it with body excerpts, and confirms before starting
 - Per issue: hands it to a human if its title or body changed since you confirmed, labels it `in progress`, creates a worktree under `$TMPDIR` from the fresh default branch, and runs `/fix-gh-issue <N> autonomous`
 - Merges only PRs `fix-gh-issue` marked ready, with green CI, never with `--admin`; anything else is labelled `needs human`
-- Keeps a ledger in `$TMPDIR` so long runs survive context compaction, leaves worktrees in place, and ends with a report: merged, needs a human (with reasons), skipped, not reached
+- Checks up front whether PR CI exposes secrets to pushed branches (on non-private repos it recommends stopping), keeps a ledger in `$TMPDIR` (a read-only, checksummed policy file plus a run log) so long runs survive context compaction, leaves worktrees in place, and ends with a report: merged, needs a human (with reasons), skipped, not reached
 
 #### /triage-backlog
 
