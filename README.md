@@ -286,7 +286,7 @@ Pass `autonomous` (as `/fix-gh-issues` does) to never ask questions: it skips th
 Works through open GitHub issues one at a time, unattended, so you can start it and walk away:
 - Asks everything up front: whether to merge (recommended off on non-private repos, and off when the repo has no PR CI unless you override), the PR cap (default 15, or `max=N`), and, on non-private repos, which issues are eligible (label-gated, collaborators only, or listed numbers)
 - Snapshots the queue once (skipping `in progress`, `needs human`, and issues with an open PR), shows it with body excerpts, and confirms before starting
-- Per issue: skips it if its body changed since you confirmed, labels it `in progress`, creates a worktree under `$TMPDIR` from the fresh default branch, and runs `/fix-gh-issue <N> autonomous`
+- Per issue: hands it to a human if its title or body changed since you confirmed, labels it `in progress`, creates a worktree under `$TMPDIR` from the fresh default branch, and runs `/fix-gh-issue <N> autonomous`
 - Merges only PRs `fix-gh-issue` marked ready, with green CI, never with `--admin`; anything else is labelled `needs human`
 - Keeps a ledger in `$TMPDIR` so long runs survive context compaction, leaves worktrees in place, and ends with a report: merged, needs a human (with reasons), skipped, not reached
 
