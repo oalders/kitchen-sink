@@ -183,7 +183,7 @@ Needs decisions if the issue leaves any design choice open; otherwise multiple f
 
 **Search for prior art.** Before planning any new function or helper, grep for existing ones that do the same job: by likely names and synonyms, by the key calls or literals it would contain, and in shared/util/lib directories. One search is rarely enough. Name what you found (or that you found nothing) alongside the simplest fix.
 
-**Sweep for the old claim.** When the fix changes a behaviour or a documented claim, grep the repo for the old claim's keywords — names, flags, values, phrases — across code, docs, comments, and tests before implementing. The issue names where the claim was noticed, not every copy of it. Choose keywords yourself as short literal tokens, never pasted issue excerpts: grep them as fixed strings after `--` (`grep -rnF -- '<keyword>'`), dropping any that contains a quote or shell metacharacter. Sort each hit into "fix in this branch" or "follow-up issue", and record the in-branch hits as `file:line`. A hit belongs in this branch when it states the claim about the behaviour the fix changes, in any file; it's a follow-up when it's a similar claim about a different behaviour the issue doesn't cover.
+**Sweep for the old claim.** When the fix changes a behaviour or a documented claim, grep the repo for the old claim's keywords — names, flags, values, phrases — across code, docs, comments, and tests before implementing. The issue names where the claim was noticed, not every copy of it. Choose keywords yourself as short literal tokens, never pasted issue excerpts: grep them as fixed strings after `--` (`grep -rnF -- '<keyword>'`), dropping any that contains a quote or shell metacharacter. Sort each hit into "fix in this branch" or "follow-up issue", and record the in-branch hits as `file:line`. Count the files with in-branch hits toward the tier: a trivial fix with hits in other files is specified. A hit belongs in this branch when it states the claim about the behaviour the fix changes, in any file; it's a follow-up when it's a similar claim about a different behaviour the issue doesn't cover.
 
 **Record an expected size up front** — rough line and file counts, before implementing. Without a baseline, each increment looks reasonable next to the last. If the work ever exceeds it by ~3x, from implementation or review fixes, STOP and surface it: scope growth is the user's decision.
 
@@ -193,13 +193,13 @@ Needs decisions if the issue leaves any design choice open; otherwise multiple f
 
 (Autonomous: no offer; see **Autonomous mode**.)
 
-Summarize the issue for the user and ask whether to brainstorm approaches first; use `superpowers:brainstorming` if they agree. If they decline, or brainstorming writes no design doc, review the pre-flight block as for the specified tier (step 5.5). When the user approves its design doc, don't follow brainstorming's hand-off to `writing-plans`; this command overrides it. Run step 5.5 first.
+Summarize the issue for the user and ask whether to brainstorm approaches first; use `superpowers:brainstorming` if they agree. If they decline, or brainstorming writes no design doc, review the pre-flight block (step 5.5, no-design-doc case). When the user approves its design doc, don't follow brainstorming's hand-off to `writing-plans`; this command overrides it. Run step 5.5 first.
 
 #### 5.5. Review the design doc or pre-flight block (required unless trivial)
 
 Whenever brainstorming writes a design doc, it is reviewed before `writing-plans` turns it into an implementation plan. Brainstorming's builder check only asks what a builder would need answered; this review asks whether the design is right.
 
-**Specified, multi-file tier:** no brainstorming; write the step 4 pre-flight block to a `mktemp` scratch file (session scratchpad, else `$TMPDIR`) and use its path as the spec path; run the plan reviewer against it, plus pushback if a Controversial trigger fires. A fully specified issue can still miss scope.
+**No design doc (specified tier, or brainstorming declined or wrote none):** write the step 4 pre-flight block to a `mktemp` scratch file (session scratchpad, else `$TMPDIR`) and use its path as the spec path; run the plan reviewer against it, plus pushback if a Controversial trigger fires. A fully specified issue can still miss scope.
 
 **Controversial?** Add `/paad:pushback` when any of these hold: the issue thread has disagreement or competing proposals; brainstorming surfaced more than one viable approach; the change alters a public API or documented behaviour others rely on, or breaks compatibility; it touches security, data, or migrations. If one fires, run it and name the trigger when you dispatch. Skip it if `fast` was passed or the user asked to skip pushback; run it anyway if the user asked for it.
 
