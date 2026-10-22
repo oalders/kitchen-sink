@@ -47,9 +47,9 @@ Run from the repo's main checkout. Gather facts first, then ask once.
      --json number,title,body,labels,author,createdAt > <run>.snapshot.json
    ```
    For passed numbers, fetch each with `gh issue view <N> --json number,title,body,labels,author,state` instead, and combine them into `<run>.snapshot.json` with `jq -s`. Drop issues that are closed, labelled `in progress` or `needs human`, failing the eligibility gate, or closed by an open PR from item 5. Passed numbers keep their order; otherwise sort oldest first (`sort_by(.createdAt)`). A snapshot of exactly 200 rows is truncated: say so in item 9 and the report.
-9. **Confirm.** Show the queue (number, title, and body: the first line or two on a private repo, the whole body otherwise, since that's the text the hash pins), the cap, the merge policy and method, the orphaned claims, any truncated lists, and the worktree root. Under *Don't merge*, note that each PR branches from the same default branch, so overlapping fixes may conflict. Ask *Start* / *Stop*. This is the last question of the run.
+9. **Confirm.** Show the queue (number, title, and body: the first line or two on a private repo, the whole body otherwise, since that's the text the hash pins), the cap, the merge policy and method, the orphaned claims, any truncated lists, and the worktree root. Under *Don't merge*, note that each PR branches from the same default branch, so overlapping fixes may conflict. Under a merge policy, also propose the **auto-merge directories**: the top-level directories from `git ls-tree -d --name-only origin/<default>` that hold the project's source and tests, leaving out any that is or holds a protected path (section 3). Ask *Start* / *Stop*; under a merge policy the options are *Start with these directories* / *Stop*, and "Other" takes a replacement list. An empty list means *Don't merge*. This is the last question of the run.
 10. **Write the ledger:**
-    - `<run>.policy`: the run's start time (UTC, ISO 8601), the merge policy and method, the cap, and the queue with each issue's content hash, taken from the snapshot the user just confirmed, not a fresh fetch:
+    - `<run>.policy`: the run's start time (UTC, ISO 8601), the merge policy and method, the cap, the auto-merge directories, and the queue with each issue's content hash, taken from the snapshot the user just confirmed, not a fresh fetch:
       ```bash
       jq -r --argjson n <N> '.[] | select(.number == $n) | .title + "\n" + .body' <run>.snapshot.json | sha256sum | cut -d' ' -f1
       ```
@@ -83,7 +83,7 @@ Re-run the step 2.1 policy check first; if it fails, stop the loop. Take the pol
 
 A PR is **mergeable by this run** when all of these hold:
 - `fix-gh-issue` marked it ready: `gh pr view <PR> --json isDraft,headRefOid` shows `isDraft` `false`. Append `headRefOid` to the run log now: it's the commit CI is checked on.
-- No protected path (below) is touched, checking both the new and the old name of every file, so a rename or move out of a protected path counts:
+- Every changed file sits under an auto-merge directory, and none is a protected path (below). Check both the new and the old name of every file, so a rename or move counts:
   ```bash
   gh api repos/{owner}/{repo}/pulls/<PR>/files --paginate \
     -q '.[] | .filename, (.previous_filename // empty)'
