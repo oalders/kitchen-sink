@@ -55,6 +55,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
 | **/draft-pr** | Creates a draft PR that closes the GitHub issue inferred from your branch name |
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
+| **/fix-gh-issues** | Point your robot at the whole backlog, go to bed, and wake up to merged PRs |
 | **/triage-backlog** | Grooms open GitHub issues—finds completed work, updates task lists, and suggests labels, one issue at a time |
 
 **Repo & CI maintenance**
@@ -277,6 +278,17 @@ Automates the workflow for fixing GitHub issues, guided by reuse-before-writing,
 9. Verifies with `verification-before-completion`
 10. Creates a draft PR that closes the issue (in Codex `github` mode, waits for a clean `@codex review` of HEAD)
 11. Marks it ready and monitors CI when nothing needs a human; otherwise leaves it in draft and says why
+
+Pass `autonomous` (as `/fix-gh-issues` does) to never ask questions: it skips the brainstorming offer, and any point that would wait for the user stops work on that issue, leaving any PR in draft, and reports why. Follow-up issues it files are labelled `needs human`, so a later unattended run won't pick them up.
+
+#### /fix-gh-issues
+
+Works through open GitHub issues one at a time, unattended, so you can start it and walk away:
+- Asks everything up front: whether to merge (recommended off on non-private repos, and off when the repo has no PR CI unless you override), the PR cap (default 15, or `max=N`), and, on non-private repos, which issues are eligible (label-gated, collaborators only, or listed numbers)
+- Snapshots the queue once (skipping `in progress`, `needs human`, issues with an open PR, and issues with hidden characters, HTML comments, or very long bodies), shows it with body excerpts, and confirms before starting
+- Per issue: hands it to a human if its title or body changed since you confirmed, labels it `in progress`, creates a worktree under `$TMPDIR` from the fresh default branch, and runs `/fix-gh-issue <N> autonomous`
+- Merges only its own PR for the issue (same repo, default base, head matching the worktree), marked ready by `fix-gh-issue`, with green CI (every test workflow you pick up front must pass, not just a bot check), closing only its own issue, every file under directories you approve, no protected paths (dotfiles, agent instructions, build files, dependency manifests), and no symlinks or mode changes; never with `--admin`, and it confirms the merge landed. Anything else is labelled `needs human`
+- Checks up front whether pushed branches could reach Actions secrets, a write token, OIDC, or self-hosted runners (on non-private repos it recommends stopping), stops after three `gh` failures in a row, keeps a ledger in `$TMPDIR` (a read-only, checksummed policy file plus a run log) so long runs survive context compaction, leaves worktrees in place, and ends with a report: merged, needs a human (with reasons), skipped, not reached
 
 #### /triage-backlog
 
