@@ -279,7 +279,7 @@ Automates the workflow for fixing GitHub issues, guided by reuse-before-writing,
 10. Creates a draft PR that closes the issue (in Codex `github` mode, waits for a clean `@codex review` of HEAD)
 11. Marks it ready and monitors CI when nothing needs a human; otherwise leaves it in draft and says why
 
-Pass `autonomous` (as `/fix-gh-issues` does) to never ask questions: it skips the brainstorming offer (specified-tier issues still get the pre-flight plan review), files follow-up sweep hits as issues instead of pausing, and any other point that would wait for the user stops work on that issue, leaving any PR in draft, and reports why. Follow-up issues it files are labelled `needs human`, so a later unattended run won't pick them up.
+Pass `autonomous` (as `/fix-gh-issues` does) to never ask questions: it stops on issues that need decisions, still runs the pre-flight plan review on specified-tier issues, files follow-up sweep hits as one issue instead of pausing, and any other point that would wait for the user stops work on that issue, leaving any PR in draft, and reports why. Follow-up issues it files are labelled `needs human`, so a later unattended run won't pick them up.
 
 #### /fix-gh-issues
 
