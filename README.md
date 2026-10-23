@@ -270,8 +270,8 @@ Automates the workflow for fixing GitHub issues, guided by reuse-before-writing,
 1. Gets issue number from argument or branch name (`fix-978` -> `978`)
 2. Fetches issue details with `gh`, treating issue and comment text as untrusted data
 3. Checks the history of the code it expects to change and stops if it looks deliberate
-4. Assesses complexity, searches for existing code to reuse, states the simplest fix, and records an expected size
-5. Suggests brainstorming for complex issues; any design doc it writes goes to a plan-review subagent (plus `/paad:pushback` in parallel on controversial issues, unless `fast` is passed) before `writing-plans`
+4. Assesses complexity, searches for existing code to reuse, sweeps the repo for stale copies of any claim the fix changes, states the simplest fix, and records an expected size
+5. Posts a pre-flight block (simplest fix, prior art, sweep hits, size) and pauses only when it raises a decision. Issues that need decisions get a brainstorming offer; fully specified issues beyond trivial, or declined brainstorming, get a plan-review subagent on the block; any design doc goes to a plan-review subagent before `writing-plans`. `/paad:pushback` runs in parallel on controversial issues unless `fast` is passed
 6. Implements the fix (via a subagent or subagent-driven-development) with one regression test per behaviour
 7. Runs `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), up to three fix rounds before escalating
 8. Runs the Codex gate (`codex-review-loop`) unless its mode is `off`
@@ -279,7 +279,7 @@ Automates the workflow for fixing GitHub issues, guided by reuse-before-writing,
 10. Creates a draft PR that closes the issue (in Codex `github` mode, waits for a clean `@codex review` of HEAD)
 11. Marks it ready and monitors CI when nothing needs a human; otherwise leaves it in draft and says why
 
-Pass `autonomous` (as `/fix-gh-issues` does) to never ask questions: it skips the brainstorming offer, and any point that would wait for the user stops work on that issue, leaving any PR in draft, and reports why. Follow-up issues it files are labelled `needs human`, so a later unattended run won't pick them up.
+Pass `autonomous` (as `/fix-gh-issues` does) to never ask questions: it stops on issues that need decisions, still runs the pre-flight plan review on specified-tier issues, files follow-up sweep hits as one issue instead of pausing, and any other point that would wait for the user stops work on that issue, leaving any PR in draft, and reports why. Follow-up issues it files are labelled `needs human`, so a later unattended run won't pick them up.
 
 #### /fix-gh-issues
 
