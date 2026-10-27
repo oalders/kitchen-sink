@@ -70,13 +70,13 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
    python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # polls up to bot_wait.minutes
    ```
    **Do not push between the trigger and the result.** A 👍 reaction from the bot carries no SHA, so a push would make it ambiguous.
-2. Act on the `status` (not the exit code; every timeout exits 1):
+2. Act on the `status`, not the exit code (every timeout exits 1); exit `2` (no `status`) is a tool error: STOP and report.
    - **`clean`**: go to step 3.
    - **`findings`**: run `python3 "$CL" gh-threads` and triage the findings as in Phase 1.
      - For a declined finding, reply on its thread with the evidence **now**, and leave the thread open.
      - If there are real findings to fix, fix them, run **Phase 1 again** on the new HEAD, push, and return to step 1.
      - If every finding is a re-raise of a declined one, don't trigger the bot again. The gate is then a conditional pass, waiting on the user.
-   - **`timeout`** with `action` `proceed`: don't re-trigger. The gate passes; note in the PR body that the bot didn't answer within `bot_wait.minutes` minutes on `<sha>`. Skip step 3: leave fixed threads open.
+   - **`timeout`** with `action` `proceed` (whether or not `acknowledged`): don't re-trigger. The gate passes; note in the PR body that the bot didn't answer within `bot_wait.minutes` minutes on `<sha>`, listing any fixed threads. Skip step 3: leave those threads open.
    - **`timeout`** with `action` `stop` and `acknowledged` false: re-trigger **once**, then run `gh-wait` again for one more full window. If that also times out, STOP and report. If `acknowledged` is true, skip the re-trigger: just wait one more window, then STOP.
      - A silent bot is not approval, and deadline pressure doesn't change that.
      - Don't post `@codex review` again before a window has run out.

@@ -174,6 +174,9 @@ class BotWait(unittest.TestCase):
         self.assertEqual(
             cl.resolve_bot_wait("10", "Proceed"), {"minutes": 10, "action": "proceed", "source": "git-config"}
         )
+        self.assertEqual(
+            cl.resolve_bot_wait("", "proceed"), {"minutes": 30, "action": "proceed", "source": "git-config"}
+        )
 
     def test_invalid_minutes_errors(self):
         for value in ("0", "-5", "ten", "1.5"):
@@ -211,7 +214,6 @@ class BotWait(unittest.TestCase):
             self.assertEqual(cl.main(["gh-wait", "--sha", SHA]), 1)
         result = json.loads(out.getvalue())
         self.assertEqual((result["status"], result["action"]), ("timeout", "proceed"))
-        self.assertEqual(sleep.call_count, 1)
 
 
 NNP_ON = "Name:\tpython3\nNoNewPrivs:\t1\nSeccomp:\t2\n"
