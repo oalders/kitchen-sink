@@ -16,7 +16,7 @@ The helper is `codex_loop.py`, in this skill's base directory. Below it is calle
 ## Step 0: Mode
 
 ```bash
-python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_version": ..., "outer_sandbox": {"enabled": ..., "source": ...}}
+python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_version": ..., "outer_sandbox": {"enabled": ..., "source": ...}, "bot_wait": {"minutes": ..., "action": ..., "source": ...}}
                       # codex_version is omitted when mode is off or codex can't run
 ```
 
@@ -29,6 +29,8 @@ python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_versio
 | `github` | Local loop, then the GitHub bot gate. **Mandatory.** |
 
 The mode comes from this clone's local `git config --local kitchen-sink.codexReview` (global config is ignored); `/codex-review on|off|local|status` changes it. If the command exits with `2` (for example, mode is `github` but `codex` is missing), STOP and report it. Never fall back to a lower mode on your own.
+
+`bot_wait` comes from `kitchen-sink.codexTimeoutMinutes` (default 30) and `kitchen-sink.codexTimeoutAction` (`stop`, the default, or `proceed`), read with `--local` only. Like `codexOuterSandbox`, they are the user's decision: **never set them yourself**.
 
 ### Outer sandbox
 
@@ -65,7 +67,7 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
    ```bash
    SHA=$(git rev-parse HEAD)
    URL=$(gh pr comment --body-file <scratch>/codex-trigger.md)  # "@codex review" + blank line + footer
-   python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # polls up to 30 min
+   python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # polls up to bot_wait.minutes
    ```
    **Do not push between the trigger and the result.** A 👍 reaction from the bot carries no SHA, so a push would make it ambiguous.
 2. Act on the `status`:
@@ -74,7 +76,8 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
      - For a declined finding, reply on its thread with the evidence **now**, and leave the thread open.
      - If there are real findings to fix, fix them, run **Phase 1 again** on the new HEAD, push, and return to step 1.
      - If every finding is a re-raise of a declined one, don't trigger the bot again. The gate is then a conditional pass, waiting on the user.
-   - **`timeout`** with `acknowledged` false: re-trigger **once**, then run `gh-wait` again for one more full window. If that also times out, STOP and report. If `acknowledged` is true, skip the re-trigger: just wait one more window, then STOP.
+   - **`timeout`** when `bot_wait.action` is `proceed` (only the user can configure that): don't re-trigger. The gate passes; note in the PR body that the bot didn't answer within `bot_wait.minutes` minutes on `<sha>`. A late review can still be picked up with `gh-wait --sha <same HEAD>`.
+   - **`timeout`** when `bot_wait.action` is `stop`, with `acknowledged` false: re-trigger **once**, then run `gh-wait` again for one more full window. If that also times out, STOP and report. If `acknowledged` is true, skip the re-trigger: just wait one more window, then STOP.
      - A silent bot is not approval, and deadline pressure doesn't change that.
      - Don't post `@codex review` again before a window has run out.
      - If the bot answers after you stop, the user can resume with `gh-wait --sha <same HEAD>`.
@@ -85,13 +88,13 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
 
 ## Done
 
-The loop **passes** when the local run on HEAD is clean and, in `github` mode, the bot's review of HEAD is clean. In that case, return to the parent workflow (for example, `fix-gh-issue` step 11) to mark the PR ready and watch CI. CI already runs on draft pushes, so you can watch it while the bot reviews.
+The loop **passes** when the local run on HEAD is clean and, in `github` mode, the bot's review of HEAD is clean (or timed out with `bot_wait.action` `proceed`). In that case, return to the parent workflow (for example, `fix-gh-issue` step 11) to mark the PR ready and watch CI. CI already runs on draft pushes, so you can watch it while the bot reviews.
 
 The PR **stays in draft**, and you report back to the user, if any of these hold:
 
 - a finding is still declined but not confirmed by the user;
 - the cap was hit;
-- the bot timed out;
+- the bot timed out and `bot_wait.action` is `stop`;
 - a tool error occurred.
 
 ## Escalating to the user
@@ -110,7 +113,7 @@ Only the user can override the gate, and only in their own words. A deadline, a 
 |---------|---------|
 | "Only P0/P1 block" | P2 blocks too. |
 | "Local Codex was clean, so the bot step is redundant" | In `github` mode the bot gate is mandatory. |
-| "Bot is quiet; user's in a hurry; mark ready" | Silence is not approval. Re-trigger once, then STOP. |
+| "Bot is quiet; user's in a hurry; mark ready" | Silence is not approval. Re-trigger once, then STOP (unless the user set `codexTimeoutAction` to `proceed`). |
 | "Nudge `@codex review` every few minutes" | Duplicate reviews. Wait the full window first. |
 | "Resolve threads as soon as I push the fix" | Resolve only after the bot's clean review of HEAD. |
 | "I'll quietly resolve the thread I disagree with" | Declined threads stay open for the user. |

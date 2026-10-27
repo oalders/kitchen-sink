@@ -247,6 +247,7 @@ Shows or switches the per-clone Codex review mode used by the `codex-review-loop
 - `on` / `github`: local Codex loop, plus a mandatory `@codex review` gate from the GitHub bot before the PR is marked ready
 - `local`: local loop only; `off`: skip Codex; `default`: unset (`off`)
 - Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
+- The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30), then `kitchen-sink.codexTimeoutAction` decides: `stop` (default) keeps the PR in draft, `proceed` passes with a note in the PR body. Set them yourself, e.g. `git config --local kitchen-sink.codexTimeoutMinutes 10` and `git config --local kitchen-sink.codexTimeoutAction proceed`
 
 #### /break-into-gh-issues
 

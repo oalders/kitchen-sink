@@ -157,6 +157,52 @@ class OuterSandbox(unittest.TestCase):
         self.assertEqual(calls[0], ["git", "config", "--local", "--get", cl.CONFIG_KEY])
 
 
+def fake_config(values):
+    def fake_run(cmd, check=True, **kw):
+        if cmd[:4] == ["git", "config", "--local", "--get"] and cmd[4] in values:
+            return subprocess.CompletedProcess(cmd, 0, values[cmd[4]] + "\n", "")
+        return subprocess.CompletedProcess(cmd, 1, "", "")
+
+    return fake_run
+
+
+class BotWait(unittest.TestCase):
+    def test_unset_keeps_today_behaviour(self):
+        self.assertEqual(cl.resolve_bot_wait("", ""), {"minutes": 30, "action": "stop", "source": "default"})
+
+    def test_configured_values(self):
+        self.assertEqual(
+            cl.resolve_bot_wait("10", "Proceed"), {"minutes": 10, "action": "proceed", "source": "git-config"}
+        )
+
+    def test_invalid_minutes_errors(self):
+        for value in ("0", "-5", "ten", "1.5"):
+            with self.subTest(value=value), self.assertRaises(cl.ToolError):
+                cl.resolve_bot_wait(value, "")
+
+    def test_invalid_action_errors(self):
+        with self.assertRaises(cl.ToolError):
+            cl.resolve_bot_wait("", "continue")
+
+    def test_invalid_config_fails_mode(self):
+        out = io.StringIO()
+        fake_run = fake_config({cl.TIMEOUT_ACTION_KEY: "yes"})
+        with mock.patch.object(cl, "run", fake_run), contextlib.redirect_stdout(out):
+            self.assertEqual(cl.main(["mode"]), 2)
+        self.assertIn(cl.TIMEOUT_ACTION_KEY, json.loads(out.getvalue())["error"])
+
+    def test_gh_wait_uses_configured_window(self):
+        sleep = mock.Mock()
+        with mock.patch.object(cl, "run", fake_config({cl.TIMEOUT_MINUTES_KEY: "10"})), mock.patch.object(
+            cl, "pr_number", lambda _: "5"
+        ), mock.patch.object(cl, "gh_json", lambda _: []), mock.patch.object(
+            cl.time, "monotonic", side_effect=[0, 599, 600]
+        ), mock.patch.object(cl.time, "sleep", sleep), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cl.main(["gh-wait", "--sha", SHA]), 1)
+        self.assertEqual(json.loads(out.getvalue())["status"], "timeout")
+        self.assertEqual(sleep.call_count, 1)
+
+
 NNP_ON = "Name:\tpython3\nNoNewPrivs:\t1\nSeccomp:\t2\n"
 NNP_OFF = "Name:\tpython3\nNoNewPrivs:\t0\nSeccomp:\t0\n"
 
