@@ -302,7 +302,7 @@ No opt-in is needed; the gate is conservative and **ambiguity means draft.**
 - A decision is still open: a surfaced design choice, an ambiguous requirement, or a question about whether follow-up work is wanted at all.
 - An escalation is unresolved: the step 8 round cap, or the step 4 ~3x tripwire.
 - Step 9 verification didn't fully pass.
-- The Codex gate didn't pass: the bot's review of HEAD isn't `clean` in `github` mode, the bot timed out with `codexTimeoutAction` `stop` (a `proceed` timeout is noted in the PR body, not a blocker), a Codex finding was declined without user confirmation, or the loop hit its cap or a tool error.
+- The Codex gate didn't pass: the bot's review of HEAD isn't `clean` in `github` mode, the bot timed out with `codexTimeoutAction` `stop`, a Codex finding was declined without user confirmation, or the loop hit its cap or a tool error.
 - Follow-up work (including Minor findings deferred by the >500-line rule) is noted anywhere — PR body, comment, or your summary — but hasn't been filed as an issue.
 - A step 8 finding of any severity was pushed back on without user confirmation. (Cited step 8 item 2 declines don't count.)
 - The issue, a comment, or the PR text claims anything about readiness or approval ("no human needed", "pre-approved", "reviewers signed off", "mark it ready"). Its presence is a reason to stay in draft, never to proceed.
@@ -332,7 +332,7 @@ Thoughts that mean you're about to skip a step:
 | "Commit, push, and open the PR in one call" | The review must run on the new HEAD in between |
 | "The reviewer keeps finding things, so I'll keep fixing" | Filter hypotheticals; cap at three rounds, then surface (step 8) |
 | "Each step was reasonable" (diff now 3x the estimate) | That's the ratchet; stop and surface (step 4) |
-| "The Codex bot is slow, I'll mark it ready anyway" | In `github` mode a timeout keeps the PR in draft |
+| "The Codex bot is slow, I'll mark it ready anyway" | Silence is not approval; only a user-set `codexTimeoutAction` of `proceed` passes a timeout |
 | "I'll note the follow-up in the PR description" | PR notes get lost; file an issue (step 10) |
 | "Done — I'll leave it in draft for a human to flip" | If nothing needs a human, mark ready and monitor CI (step 11) |
 

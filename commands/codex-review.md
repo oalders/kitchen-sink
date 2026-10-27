@@ -31,5 +31,5 @@ Steps:
 
    Also report the outer-sandbox state: `outer_sandbox.enabled` shows whether Codex's own sandbox is bypassed, and `outer_sandbox.source` says why: `git-config` (set via `kitchen-sink.codexOuterSandbox`), `nono` (on by default under nono), or `default` (off; no outer sandbox detected). Never change `kitchen-sink.codexOuterSandbox` or `NONO_CAP_FILE` yourself.
 
-   Also report `bot_wait` (`minutes`, `action`, `source`): how long the GitHub gate waits for the bot and whether a timeout stops or proceeds.
+   Also report `bot_wait`: how many minutes the bot gate waits, and whether a timeout stops or proceeds (`source` says whether that's configured).
 4. When the mode is `github`, remind the user that the repo needs the Codex GitHub integration set up to review PRs. Without it, `@codex review` gets no answer and the gate times out.

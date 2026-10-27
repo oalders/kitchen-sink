@@ -193,13 +193,15 @@ class BotWait(unittest.TestCase):
 
     def test_gh_wait_uses_configured_window(self):
         sleep = mock.Mock()
-        with mock.patch.object(cl, "run", fake_config({cl.TIMEOUT_MINUTES_KEY: "10"})), mock.patch.object(
+        config = {cl.TIMEOUT_MINUTES_KEY: "10", cl.TIMEOUT_ACTION_KEY: "proceed"}
+        with mock.patch.object(cl, "run", fake_config(config)), mock.patch.object(
             cl, "pr_number", lambda _: "5"
         ), mock.patch.object(cl, "gh_json", lambda _: []), mock.patch.object(
             cl.time, "monotonic", side_effect=[0, 599, 600]
         ), mock.patch.object(cl.time, "sleep", sleep), contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(cl.main(["gh-wait", "--sha", SHA]), 1)
-        self.assertEqual(json.loads(out.getvalue())["status"], "timeout")
+        result = json.loads(out.getvalue())
+        self.assertEqual((result["status"], result["action"]), ("timeout", "proceed"))
         self.assertEqual(sleep.call_count, 1)
 
 

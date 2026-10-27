@@ -308,7 +308,8 @@ def pr_number(override=None):
 
 
 def cmd_gh_wait(args):
-    seconds = args.timeout if args.timeout is not None else bot_wait()["minutes"] * 60
+    wait = bot_wait()
+    seconds = args.timeout if args.timeout is not None else wait["minutes"] * 60
     pr = pr_number(args.pr)
     deadline = time.monotonic() + seconds
     while True:
@@ -325,7 +326,7 @@ def cmd_gh_wait(args):
             return 0 if result["status"] == "clean" else 1
         if time.monotonic() >= deadline:
             timeout = {"status": "timeout", "pr": int(pr), "sha": args.sha}
-            timeout["acknowledged"] = result["acknowledged"]
+            timeout.update(acknowledged=result["acknowledged"], action=wait["action"])
             print(json.dumps(timeout))
             return 1
         time.sleep(args.interval)
