@@ -76,8 +76,8 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
      - For a declined finding, reply on its thread with the evidence **now**, and leave the thread open.
      - If there are real findings to fix, fix them, run **Phase 1 again** on the new HEAD, push, and return to step 1.
      - If every finding is a re-raise of a declined one, don't trigger the bot again. The gate is then a conditional pass, waiting on the user.
-   - **`timeout`** with `action` `proceed`: don't re-trigger. If `acknowledged` is true, the bot is reviewing: wait one more window first. If it still times out, the gate passes; note in the PR body that the bot didn't answer on `<sha>`. Skip step 3: don't reply to or resolve any thread.
-   - **`timeout`** with `action` `stop` and `acknowledged` false: re-trigger **once**, then run `gh-wait` again for one more full window. If that also times out, STOP and report. If `acknowledged` is true, skip the re-trigger: just wait one more window, then STOP.
+   - **`timeout`** with `action` `proceed`: don't re-trigger. If `acknowledged` is true, the bot is reviewing: run `gh-wait` for one more window first. If the timeout stands (or `acknowledged` was false), the gate passes; note in the PR body that the bot didn't answer on `<sha>`. Skip step 3: don't reply to or resolve any thread.
+   - **`timeout`** with `action` `stop`: if `acknowledged` is false, re-trigger **once**; either way, run `gh-wait` again for one more full window. If that also times out, STOP and report.
      - A silent bot is not approval, and deadline pressure doesn't change that.
      - Don't post `@codex review` again before a window has run out.
      - If the bot answers after you stop, the user can resume with `gh-wait --sha <same HEAD>`.
