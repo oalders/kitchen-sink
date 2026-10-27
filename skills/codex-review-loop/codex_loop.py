@@ -35,6 +35,9 @@ import time
 
 CONFIG_KEY = "kitchen-sink.codexReview"
 OUTER_SANDBOX_KEY = "kitchen-sink.codexOuterSandbox"
+TIMEOUT_MINUTES_KEY = "kitchen-sink.codexTimeoutMinutes"
+TIMEOUT_ACTION_KEY = "kitchen-sink.codexTimeoutAction"
+TIMEOUT_ACTIONS = ("stop", "proceed")
 BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox"
 BWRAP_MARKER = "error building bubblewrap command"
 MODES = ("off", "local", "github")
@@ -78,6 +81,25 @@ def resolve_outer_sandbox(configured, under_nono):
     if configured in ("true", "false"):
         return configured == "true", "git-config"
     return (True, "nono") if under_nono else (False, "default")
+
+
+def resolve_bot_wait(minutes, action):
+    """Return how long gh-wait polls and what a timeout means. Unset keeps 30 min / stop."""
+    out = {"minutes": 30, "action": "stop", "source": "default"}
+    if minutes:
+        try:
+            out["minutes"] = int(minutes)
+        except ValueError:
+            out["minutes"] = 0
+        if out["minutes"] <= 0:
+            raise ToolError(f"{TIMEOUT_MINUTES_KEY}={minutes!r} is not a positive integer")
+        out["source"] = "git-config"
+    if action:
+        out["action"] = action.strip().lower()
+        if out["action"] not in TIMEOUT_ACTIONS:
+            raise ToolError(f"{TIMEOUT_ACTION_KEY}={action!r} is not one of {', '.join(TIMEOUT_ACTIONS)}")
+        out["source"] = "git-config"
+    return out
 
 
 def nono_detected(cap_file, proc_status):
@@ -125,12 +147,21 @@ def outer_sandbox():
     return {"enabled": enabled, "source": source}
 
 
+def local_config(key):
+    proc = run(["git", "config", "--local", "--get", key], check=False)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def bot_wait():
+    return resolve_bot_wait(local_config(TIMEOUT_MINUTES_KEY), local_config(TIMEOUT_ACTION_KEY))
+
+
 def cmd_mode(_args):
-    proc = run(["git", "config", "--local", "--get", CONFIG_KEY], check=False)
-    configured = proc.stdout.strip() if proc.returncode == 0 else ""
+    configured = local_config(CONFIG_KEY)
     codex = shutil.which("codex")
     mode, source = resolve_mode(configured)
     out = {"mode": mode, "source": source, "codex": codex, "outer_sandbox": outer_sandbox()}
+    out["bot_wait"] = bot_wait()
     if mode != "off" and not codex:
         out["error"] = f"mode is {mode} but the codex CLI is not on PATH"
     elif mode != "off":
@@ -277,8 +308,10 @@ def pr_number(override=None):
 
 
 def cmd_gh_wait(args):
+    wait = bot_wait()
+    seconds = args.timeout if args.timeout is not None else wait["minutes"] * 60
     pr = pr_number(args.pr)
-    deadline = time.monotonic() + args.timeout
+    deadline = time.monotonic() + seconds
     while True:
         reviews = flatten(gh_json(f"repos/{{owner}}/{{repo}}/pulls/{pr}/reviews"))
         comments = flatten(gh_json(f"repos/{{owner}}/{{repo}}/issues/{pr}/comments"))
@@ -293,7 +326,7 @@ def cmd_gh_wait(args):
             return 0 if result["status"] == "clean" else 1
         if time.monotonic() >= deadline:
             timeout = {"status": "timeout", "pr": int(pr), "sha": args.sha}
-            timeout["acknowledged"] = result["acknowledged"]
+            timeout.update(acknowledged=result["acknowledged"], action=wait["action"])
             print(json.dumps(timeout))
             return 1
         time.sleep(args.interval)
@@ -393,7 +426,7 @@ def main(argv=None):
 
     p = sub.add_parser("gh-wait")
     p.add_argument("--sha", required=True, help="full HEAD sha the bot must review")
-    p.add_argument("--timeout", type=int, default=1800, help="seconds (default 1800)")
+    p.add_argument("--timeout", type=int, help=f"seconds (default: {TIMEOUT_MINUTES_KEY} minutes, else 1800)")
     p.add_argument("--interval", type=int, default=30, help="poll interval seconds (default 30)")
     p.add_argument("--pr", type=int, help="PR number (default: the current branch's PR)")
     p.add_argument("--trigger-comment", type=int, help="id of the `@codex review` comment (for its reactions)")

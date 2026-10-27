@@ -247,6 +247,7 @@ Shows or switches the per-clone Codex review mode used by the `codex-review-loop
 - `on` / `github`: local Codex loop, plus a mandatory `@codex review` gate from the GitHub bot before the PR is marked ready
 - `local`: local loop only; `off`: skip Codex; `default`: unset (`off`)
 - Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
+- The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30); on timeout, `kitchen-sink.codexTimeoutAction` `stop` (default) keeps the PR in draft and `proceed` passes with a note in the PR body, e.g. `git config --local kitchen-sink.codexTimeoutAction proceed`
 
 #### /break-into-gh-issues
 
@@ -372,7 +373,7 @@ Two subagents review the same work in parallel, competing under an incentive tha
 Catches what Claude's self-review misses, without spending CI minutes on it:
 - Runs `codex exec review --base origin/<default>` locally and classifies findings; P0–P2 block, P3 is advisory
 - Triage → fix → self-review → re-run, capped at three rounds; declined findings need evidence and the user's confirmation
-- In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD (a timeout is never treated as a pass), then replies on and resolves the threads it fixed
+- In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD (a timeout stops the gate unless the user set `codexTimeoutAction` to `proceed`), then replies on and resolves the threads it fixed
 - `codex_loop.py` helper (`mode`, `local-review`, `gh-wait`, `gh-threads`, `gh-resolve`), unit-tested in `test_codex_loop.py`
 - Called by `/fix-gh-issue` (step 8.5 and the step 10 bot gate)
 
