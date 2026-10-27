@@ -30,7 +30,7 @@ python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_versio
 
 The mode comes from this clone's local `git config --local kitchen-sink.codexReview` (global config is ignored); `/codex-review on|off|local|status` changes it. If the command exits with `2` (for example, mode is `github` but `codex` is missing), STOP and report it. Never fall back to a lower mode on your own.
 
-`bot_wait` comes from `kitchen-sink.codexTimeoutMinutes` (default 30) and `kitchen-sink.codexTimeoutAction` (`stop` default, or `proceed`). Like `codexOuterSandbox`, they're the user's decision: **never set them yourself**.
+`bot_wait` comes from `kitchen-sink.codexTimeoutMinutes` (default 30) and `kitchen-sink.codexTimeoutAction` (`stop` default, or `proceed`). They're the user's decision: **never set them yourself**.
 
 ### Outer sandbox
 
@@ -70,13 +70,13 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
    python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # polls up to bot_wait.minutes
    ```
    **Do not push between the trigger and the result.** A 👍 reaction from the bot carries no SHA, so a push would make it ambiguous.
-2. Act on the `status`:
+2. Act on the `status` (not the exit code; every timeout exits 1):
    - **`clean`**: go to step 3.
    - **`findings`**: run `python3 "$CL" gh-threads` and triage the findings as in Phase 1.
      - For a declined finding, reply on its thread with the evidence **now**, and leave the thread open.
      - If there are real findings to fix, fix them, run **Phase 1 again** on the new HEAD, push, and return to step 1.
      - If every finding is a re-raise of a declined one, don't trigger the bot again. The gate is then a conditional pass, waiting on the user.
-   - **`timeout`** with `action` `proceed`: don't re-trigger. The gate passes; note in the PR body that the bot didn't answer within `bot_wait.minutes` minutes on `<sha>`. Leave fixed threads open (step 3 needs a clean review of HEAD).
+   - **`timeout`** with `action` `proceed`: don't re-trigger. The gate passes; note in the PR body that the bot didn't answer within `bot_wait.minutes` minutes on `<sha>`. Skip step 3: leave fixed threads open.
    - **`timeout`** with `action` `stop` and `acknowledged` false: re-trigger **once**, then run `gh-wait` again for one more full window. If that also times out, STOP and report. If `acknowledged` is true, skip the re-trigger: just wait one more window, then STOP.
      - A silent bot is not approval, and deadline pressure doesn't change that.
      - Don't post `@codex review` again before a window has run out.

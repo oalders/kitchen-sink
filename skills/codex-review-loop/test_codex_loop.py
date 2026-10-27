@@ -191,6 +191,15 @@ class BotWait(unittest.TestCase):
             self.assertEqual(cl.main(["mode"]), 2)
         self.assertIn(cl.TIMEOUT_ACTION_KEY, json.loads(out.getvalue())["error"])
 
+    def test_mode_reports_bot_wait(self):
+        out = io.StringIO()
+        fake_run = fake_config({cl.CONFIG_KEY: "off", cl.TIMEOUT_MINUTES_KEY: "10"})
+        with mock.patch.object(cl, "run", fake_run), contextlib.redirect_stdout(out):
+            self.assertEqual(cl.main(["mode"]), 0)
+        self.assertEqual(
+            json.loads(out.getvalue())["bot_wait"], {"minutes": 10, "action": "stop", "source": "git-config"}
+        )
+
     def test_gh_wait_uses_configured_window(self):
         sleep = mock.Mock()
         config = {cl.TIMEOUT_MINUTES_KEY: "10", cl.TIMEOUT_ACTION_KEY: "proceed"}
