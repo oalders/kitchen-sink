@@ -300,7 +300,7 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 
 #### /shepherd-pr
 
-Carries one of your own open PRs (same repo, default base) to merged. Each run reads the PR and picks up where it stands, so re-running is safe:
+Carries one of your own open PRs (same repo, default base) to merged; with no number, the current branch's PR. Each run reads the PR and picks up where it stands, so re-running is safe:
 - In Codex `github` mode, requires an existing clean bot review of the head commit and stops without one; the gate itself never triggers one (only a repair does, after its push)
 - Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then asks once before marking it ready or enabling auto-merge
 - Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check or a new head commit it turns auto-merge off and stops, and a re-run asks again
