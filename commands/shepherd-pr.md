@@ -12,7 +12,7 @@ Rules:
 
 Steps:
 
-1. **Read.** With a non-empty (trimmed) argument, `<n>` is that argument. With none: stop on a detached HEAD (empty `git branch --show-current`); otherwise `<n>` is the output of `gh pr view --json number -q .number`, the PR gh picks for this branch. Either way, `<n>` must match `^[0-9]+$`, otherwise stop. `<n>` stays fixed for the run, including any return to step 1. Run:
+1. **Read.** With a non-empty (trimmed) argument, `<n>` is that argument. With none: on a detached HEAD (empty `git branch --show-current`), report it, say to pass a PR number, and stop; otherwise `<n>` is the output of `gh pr view --json number -q .number`, the PR gh picks for this branch. Either way, `<n>` must match `^[0-9]+$`, otherwise stop. `<n>` stays fixed for the run, including any return to step 1. Run:
    ```bash
    gh pr view <n> --json number,title,state,isDraft,isCrossRepository,author,baseRefName,headRefName,headRefOid,autoMergeRequest,mergeStateStatus,reviewDecision
    gh api user -q .login
