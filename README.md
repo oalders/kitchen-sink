@@ -58,6 +58,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
 | **/fix-gh-issues** | Point your robot at the whole backlog, go to bed, and wake up to merged PRs |
 | **/shepherd-pr** | Carries one of your own PRs to merged: checks the Codex gate, asks once, marks it ready, enables auto-merge, watches the checks, and offers a confirmed repair of failed checks or Codex findings |
+| **/shepherd-prs** | Runs `/shepherd-pr` over each of your own open PRs in this repo, one at a time, and reports a one-line status per PR |
 | **/triage-backlog** | Grooms open GitHub issues—finds completed work, updates task lists, and suggests labels, one issue at a time |
 
 **Repo & CI maintenance**
@@ -307,6 +308,14 @@ Carries one of your own open PRs (same repo, default base) to merged. Each run r
 - Shows why the PR was last removed from the merge queue, if that happened on the current head; enabling auto-merge again re-enqueues it
 - On a PR with auto-merge already on, it shows who enabled it and asks whether to keep it
 - Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge, and every repair is one you confirmed
+
+#### /shepherd-prs
+
+Sweeps your open PRs with `/shepherd-pr`:
+- Takes your own open PRs in this repo based on the default branch, oldest number first, one at a time
+- Follows `/shepherd-pr` for each, asking all of its questions per PR, so it is not unattended (under `/loop` it waits on each question)
+- Only you can start it (`disable-model-invocation`)
+- Ends with one status line per PR: merged, auto-merge on and waiting, left as is, or stopped with the reason
 
 #### /triage-backlog
 
