@@ -40,6 +40,7 @@ TIMEOUT_ACTION_KEY = "kitchen-sink.codexTimeoutAction"
 TIMEOUT_ACTIONS = ("stop", "proceed")
 ROUNDS_KEY = "kitchen-sink.codexRounds"
 ROUNDS_RANGE = range(1, 6)
+ROUNDS_DEFAULT = 3
 BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox"
 BWRAP_MARKER = "error building bubblewrap command"
 MODES = ("off", "local", "github")
@@ -105,16 +106,16 @@ def resolve_bot_wait(minutes, action):
 
 
 def resolve_rounds(rounds):
-    """Return the fix-round cap. Unset keeps 3; anything outside 1-5 fails closed."""
+    """Return the fix-round cap. Unset keeps the default; anything outside 1-5 fails closed."""
     if not rounds:
-        return {"value": 3, "source": "default"}
+        return {"value": ROUNDS_DEFAULT, "source": "default"}
     try:
         value = int(rounds)
     except ValueError:
         value = 0
     if value not in ROUNDS_RANGE:
         raise ToolError(f"{ROUNDS_KEY}={rounds!r} is not an integer from 1 to 5")
-    return {"value": value, "source": "config"}
+    return {"value": value, "source": "git-config"}
 
 
 def nono_detected(cap_file, proc_status):

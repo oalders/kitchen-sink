@@ -223,14 +223,14 @@ Write them as part of implementation, not as review remediation:
 4. **Over 500 lines of diff**: fix Critical and Important in the branch; file GitHub issues for Minor ones. This absolute threshold is separate from step 4's relative ~3x tripwire, which catches the small change that grew.
 5. Commit the fixes with a message referencing the review, ending with a blank line and the `Co-authored-by` trailer from `docs/attribution.md` (display name = the running model), e.g. `Co-authored-by: Claude <running model> <noreply@anthropic.com>`.
 6. Re-invoke `/code-review-intense-flow` via the Skill tool on the new HEAD. Dispatching the same reviewers yourself doesn't count; the `require-review-before-pr` hook won't record it. Never skip it: fixes introduce new issues, and every lens (accessibility, OWASP, SEO) must see the new code.
-7. Repeat until clean, **to a maximum of `kitchen-sink.reviewRounds` fix rounds** (`git config --local --get`; an integer 1–5, default 3 when unset; any other value: STOP and report; never set it yourself). If one more would be needed, STOP and surface: the outstanding findings, how much the diff has grown against the step 4 estimate, and a recommendation to *continue, simplify, or change approach*. Hitting the cap on the same file means the design is wrong, not the code. Tells: rounds that contradict each other (round *n+1* re-flagging the other horn of a tradeoff round *n* fixed), or a growing diff whose every commit looks defensible. Escalating is a successful outcome, like passing clean.
+7. Repeat until clean, **to at most `git config --local --get kitchen-sink.reviewRounds` fix rounds** (integer 1–5; unset: 3; anything else: STOP and report; never set it yourself). If one more is needed, STOP and surface open findings, diff growth vs step 4's estimate, and a recommendation: *continue, simplify, or change approach*. Repeated rounds on the same file suggest the design is wrong, not the code. Tells: contradictory rounds (round *n+1* re-flagging the flip side of round *n*'s tradeoff), or a growing diff of defensible-looking commits. Escalating is a successful outcome, like passing clean.
 
 #### 8.5. Codex gate (`codex-review-loop`)
 
-Runs on both implementation paths — Codex is an independent reviewer:
+Runs on both implementation paths; Codex reviews independently:
 
-- Run `python3 <codex-review-loop dir>/codex_loop.py mode`. On `off`, skip. On `local` or `github`, follow Phase 1 of `codex-review-loop` (the local review/fix loop) before pushing. Exit code `2` means STOP and report; never skip silently.
-- Codex has its own round cap (`kitchen-sink.codexRounds`), separate from step 8's. A hit cap, or a Codex finding declined without user confirmation, counts as "needs a human" in step 11.
+- Run `python3 <codex-review-loop dir>/codex_loop.py mode`. On `off`, skip; otherwise follow `codex-review-loop` Phase 1 (local review/fix loop) before pushing. Exit `2`: STOP and report; never skip silently.
+- Codex's round cap is `kitchen-sink.codexRounds`, not step 8's. A hit cap or a Codex finding declined without user confirmation counts as "needs a human" in step 11.
 
 #### 9. Verify fix
 
