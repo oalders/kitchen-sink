@@ -1,12 +1,13 @@
 ---
 name: fix-gh-issue-design-review
-description: Use only when /fix-gh-issue reaches step 5.5; holds how to review its design doc or pre-flight block.
+description: Use only when /fix-gh-issue reaches step 5.5.
 version: 1.0.0
 ---
 
 # fix-gh-issue design review
 
 Step numbers refer to `/fix-gh-issue`'s steps.
+On `autonomous` runs, the `fix-gh-issue-autonomous` rules override anywhere this says to ask or bring something to the user.
 
 **No design doc (specified tier, or brainstorming declined or wrote none):** write the step 4 pre-flight block to a `mktemp` scratch file (session scratchpad, else `$TMPDIR`) and use its path as the spec path; run the plan reviewer against it, plus pushback if a Controversial trigger fires. A fully specified issue can still miss scope. Delete the file once step 6 has its contents, or on any earlier way out, STOPs included.
 

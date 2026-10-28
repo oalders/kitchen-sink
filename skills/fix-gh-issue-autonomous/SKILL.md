@@ -1,6 +1,6 @@
 ---
 name: fix-gh-issue-autonomous
-description: Use only when /fix-gh-issue was invoked with the autonomous argument; holds its unattended-run rules.
+description: Use only when /fix-gh-issue was invoked with the autonomous argument.
 version: 1.0.0
 ---
 
