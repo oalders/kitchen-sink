@@ -312,10 +312,11 @@ Carries one of your own open PRs (same repo, default base) to merged. Each run r
 #### /shepherd-prs
 
 Sweeps your open PRs with `/shepherd-pr`:
-- Takes your own open PRs in this repo based on the default branch, oldest number first, one at a time
-- Follows `/shepherd-pr` for each, asking all of its questions per PR, so it is not unattended (under `/loop` it waits on each question)
+- Takes your own open PRs in this repo based on the default branch, drafts included, oldest number first
+- Runs them one at a time, so one PR's check watch (up to ~45 minutes) holds up the rest, and a merge can leave a later PR behind, which `/shepherd-pr` then reports and stops on
+- Follows `/shepherd-pr` for each, so every merge still waits on your answer to its question, even under `/loop`; a repair is skipped unless you're on that PR's branch, and the PR is reported as needing `/shepherd-pr <n>` from its checkout
 - Only you can start it (`disable-model-invocation`)
-- Ends with one status line per PR: merged, auto-merge on and waiting, left as is, or stopped with the reason
+- Ends with one status line per PR: merged, auto-merge on and waiting, needs repair from its checkout, left as is, or stopped with the reason
 
 #### /triage-backlog
 
