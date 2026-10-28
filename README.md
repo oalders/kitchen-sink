@@ -302,9 +302,10 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 
 Carries one of your own open PRs (same repo, default base) to merged; with no number, the current branch's PR. Running it is your consent: it asks no questions, and where it needs you it reports and stops. Each run reads the PR and picks up where it stands, so re-running is safe:
 - In Codex `github` mode, gates on a clean bot review of the head commit: without one it posts (or reuses) your own `@codex review` trigger for that head and waits the configured bot wait, then honours `codexTimeoutAction`
-- Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then marks a draft ready and enables auto-merge
+- Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then marks a draft ready (even if a `pull_request_target` workflow would then run) and enables auto-merge
 - Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check or a new head commit it turns auto-merge off and stops, and a re-run gates the new head again
-- On a failed check or Codex findings, makes one repair per run: fixes in your PR checkout, runs the `/fix-gh-issue` reviews, and pushes; then starts over, so auto-merge is only re-enabled on a head that passed the gate. It doesn't push if the reviews didn't finish clean, a Codex finding was declined (only you can confirm a decline), or the fix touches a sensitive file the PR didn't already change
+- On a failed check or Codex findings, makes one repair per run: fixes in your PR checkout, runs the `/fix-gh-issue` reviews, and pushes; then starts over, so auto-merge is only re-enabled on a head that passed the gate
+- A repair doesn't push if the reviews didn't finish clean, a Codex finding was declined (only you can confirm a decline), or the fix touches a sensitive file the PR didn't already change
 - If the PR was last removed from the merge queue on the current head, shows why and stops rather than re-enqueue the same head
 - On a PR with auto-merge already on, it shows who enabled it and keeps it
 - Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge or a repair
@@ -315,7 +316,7 @@ Sweeps your open PRs with `/shepherd-pr`:
 - Takes your own open PRs in this repo based on the default branch, drafts included, oldest number first
 - Runs them one at a time, so one PR's check watch (up to ~45 minutes) holds up the rest, and a merge can leave a later PR behind, which `/shepherd-pr` then reports and stops on
 - Follows `/shepherd-pr` for each, so it runs unattended, even under `/loop`: PRs are marked ready, auto-merged and repaired without asking; a repair is skipped unless you're on that PR's branch, and the PR is reported as needing `/shepherd-pr <n>` from its checkout
-- In Codex `github` mode it may also post up to two `@codex review` comments per PR head (the second only as a re-trigger) before enabling auto-merge, and doesn't wait on the bot: a PR whose window is still open is reported as waiting and judged on the next sweep
+- In Codex `github` mode it may also post up to two `@codex review` comments per PR head (the second only as a re-trigger), and doesn't wait on the bot: a PR whose window is still open is reported as waiting and judged on the next sweep
 - Only you can start it (`disable-model-invocation`)
 - Ends with one status line per PR: merged, auto-merge on and waiting, needs repair from its checkout, waiting on the Codex bot, left as is, or stopped with the reason
 

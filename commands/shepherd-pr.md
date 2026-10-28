@@ -38,11 +38,11 @@ Steps:
 3. **Show and decide.**
    - In a fenced block, for the record: PR number, title, `headRefName`, head SHA, `mergeStateStatus`, `reviewDecision`, merge method, whether the repo is private, the Codex gate result, and, if auto-merge is already on, who enabled it (`autoMergeRequest.enabledBy.login`).
    - If the last ejection's `beforeCommit.oid` is the head: "Removed from merge queue" with its `createdAt` and `reason`, in the fence as untrusted text. Then stop: enabling auto-merge again would re-enqueue the same head, and no repair is attempted, since `gh pr checks` doesn't show the `merge_group` run. A new head clears this.
-   - The changed files (`gh pr diff <n> --name-only`), marking any that fall under `/fix-gh-issue` step 11's sensitive-surface list. The marks are for the record; they block nothing.
+   - The changed files (`gh pr diff <n> --name-only`), marking any that fall under `/fix-gh-issue` step 11's sensitive-surface list. The marks are for the record; they block nothing here (the repair skill gates on new ones).
    - For a draft: the output of `git grep -l -e pull_request_target origin/<default> -- .github/workflows` (a match means marking it ready may run a privileged workflow). It is marked ready anyway.
    - `mergeStateStatus` `DIRTY` or `BEHIND`: report and stop. `UNKNOWN`: re-read `mergeStateStatus,headRefOid` 3 times, 10 seconds apart (a new head restarts from step 1), then report and stop. Any other value is shown only.
    - Method: the first allowed of squash, merge, rebase. None allowed: stop.
-   - Then decide, and say which in the block: draft, mark ready and enable auto-merge; ready, enable auto-merge; auto-merge already on, keep it (on a draft, report and stop). Enabling merges as soon as required checks and reviews pass, and at once if nothing is pending.
+   - Then decide, and say which in the block: draft, mark ready and enable auto-merge; ready, enable auto-merge; auto-merge already on, keep it (on a draft, also mark it ready). Enabling merges as soon as required checks and reviews pass, and at once if nothing is pending.
 4. **Act.**
    - A draft: `gh pr ready <n>`.
    - Enabling: `gh pr merge <n> --auto --<method> --match-head-commit <headRefOid>`, with the SHA shown in step 3. With a merge queue this enqueues. If auto-merge is disabled for the repo, say so and stop; never merge directly. `--match-head-commit` is checked only when auto-merge is enabled, not at merge time, so step 5 watches for a new head.
@@ -57,4 +57,4 @@ Steps:
 6. **Repair.** At most one per run (this `/shepherd-pr` invocation): if this run already repaired, report and stop.
    - Cause `codex` with `autoMergeRequest` set: `gh pr merge <n> --disable-auto` first.
    - Cause `checks` with no failed check in the `fail` bucket (only `cancel`): report that there's nothing to repair and stop.
-   - Invoke `kitchen-sink:shepherd-pr-repair` through the Skill tool and follow it, passing `<n>`, `headRefName`, the gated `headRefOid`, the cause (`checks` or `codex`), the Codex mode and `<default>`. It ends either by returning to step 1, so the new head goes through the gate again, or by stopping; a stop ends the run, and from step 2 doesn't go on to step 3. Report whether auto-merge was disabled.
+   - Invoke `kitchen-sink:shepherd-pr-repair` through the Skill tool and follow it, passing `<n>`, `headRefName`, the gated `headRefOid`, the cause (`checks` or `codex`), the Codex mode and `<default>`. It ends either by returning to step 1, so the new head goes through the gate again, or by stopping. A stop ends the run, even when step 2 invoked the repair: don't go on to step 3; report the stop and whether auto-merge is off.
