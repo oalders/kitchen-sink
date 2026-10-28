@@ -494,6 +494,12 @@ class GhWaitTriggerWindow(unittest.TestCase):
     def test_trigger_from_other_user_is_tool_error(self):
         rc, out = gh_wait(["--trigger-comment", "7"], [trigger(login="mallory")], [0, 0])
         self.assertEqual(rc, 2)
+        self.assertIn("comment 7 ", out["error"])
+
+    def test_zero_windows_is_tool_error(self):
+        rc, out = gh_wait(["--windows", "0"], [], [0, 0])
+        self.assertEqual(rc, 2)
+        self.assertIn("--windows", out["error"])
 
     def test_timeout_zero_without_trigger_still_times_out(self):
         rc, out = gh_wait(["--timeout", "0"], [], [0, 0])

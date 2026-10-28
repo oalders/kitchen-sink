@@ -11,7 +11,7 @@ Codex catches bugs that Claude's self-review misses. Running it **locally** befo
 
 **Core rule:** P0, P1 **and P2** findings block. Only P3 is advisory.
 
-The helper is `codex_loop.py`, in this skill's base directory. Below it is called `$CL`, so set `CL=<skill base dir>/codex_loop.py`. Every subcommand prints JSON. Exit codes are `0` clean, `1` findings or timeout, `2` tool error. `local-review` and `gh-wait` can run longer than a foreground Bash call is allowed, so run them with `run_in_background: true` and wait for the completion notification.
+The helper is `codex_loop.py`, in this skill's base directory. Below it is called `$CL`, so set `CL=<skill base dir>/codex_loop.py`. Every subcommand prints JSON. Exit codes are `0` clean, `1` findings, timeout or pending, `2` tool error. `gh-wait` with an explicit `--timeout` that ends before the window does reports `pending` (with `window_ends`): the window is still open, so wait again later and never apply `codexTimeoutAction` to it. `local-review` and `gh-wait` can run longer than a foreground Bash call is allowed, so run them with `run_in_background: true` and wait for the completion notification.
 
 ## Step 0: Mode
 
@@ -70,7 +70,7 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
    python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # window: bot_wait.minutes from the trigger
    ```
    **Do not push between the trigger and the result.** A 👍 reaction from the bot carries no SHA, so a push would make it ambiguous. `gh-wait` reports `trigger` (latest id) and `triggers` (count) of your own triggers for `--sha`.
-2. Act on the `status`, not the exit code (every timeout exits 1); exit `2` (no `status`) is a tool error: STOP and report.
+2. Act on the `status`, not the exit code (every timeout or pending exits 1); exit `2` (no `status`) is a tool error: STOP and report.
    - **`clean`**: go to step 3.
    - **`findings`**: run `python3 "$CL" gh-threads` and triage the findings as in Phase 1.
      - For a declined finding, reply on its thread with the evidence **now**, and leave the thread open.

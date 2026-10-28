@@ -360,6 +360,8 @@ def poll_seconds(args, comments, viewer, window, now):
 
 
 def cmd_gh_wait(args):
+    if args.windows < 1:
+        raise ToolError("--windows must be at least 1")
     wait = bot_wait()
     window = args.windows * wait["minutes"] * 60
     pr = pr_number(args.pr)
