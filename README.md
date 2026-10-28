@@ -52,6 +52,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 |---------|-------------|
 | **/address-gh-review** | A robot that does the urgent repairs now and books appointments for the rest |
 | **/codex-review** | Shows or switches this repo's Codex review mode (`on` = local loop plus a mandatory `@codex review` bot gate, `local`, `off`, `default`) via `git config --local kitchen-sink.codexReview` |
+| **/review-config** | Walks you through this repo's Codex bot wait, timeout action and review round caps, and writes them with `git config --local` |
 | **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
 | **/draft-pr** | Creates a draft PR that closes the GitHub issue inferred from your branch name |
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
@@ -250,6 +251,7 @@ Shows or switches the per-clone Codex review mode used by the `codex-review-loop
 - `local`: local loop only; `off`: skip Codex; `default`: unset (`off`)
 - Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
 - The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30); on timeout, `kitchen-sink.codexTimeoutAction` `stop` (default) keeps the PR in draft and `proceed` passes with a note in the PR body, e.g. `git config --local kitchen-sink.codexTimeoutAction proceed`
+- Run `/review-config` to see or change the timeout and round keys
 
 #### /break-into-gh-issues
 
