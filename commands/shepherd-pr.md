@@ -23,7 +23,7 @@ Steps:
    - `MERGED` or `CLOSED`: report and stop.
    - Cross-repo, `author.login` not the viewer's login, or not based on the default branch: report and stop. These limits are deliberate.
    - `headRefOid` must match `^[0-9a-f]{40}$`, and the default branch (`defaultBranchRef.name`, `<default>` below) and `headRefName` `^[A-Za-z0-9._/-]+$`, with no `..` and no leading `-`; otherwise stop.
-   - `<n>` picked from the branch: stop if `headRefName` isn't the current branch (gh can match a PR through the branch's upstream).
+   - `<n>` picked from the branch: report and stop unless `headRefName` equals `git branch --show-current` (gh can match a PR through the branch's upstream).
 2. **Codex gate.** Run `python3 <skill base dir>/codex_loop.py mode` (the `codex-review-loop` skill's base directory). Exit 2: stop. Not `github`: skip this step and put "Codex gate not checked (mode `<mode>`)" in step 3's block. For `github`, run `python3 <skill base dir>/codex_loop.py gh-wait --pr <n> --sha <headRefOid> --timeout 0`: a read-only check of existing reviews. The gate itself never comments, fixes or pushes; repair is the separate step 6.
    - Act on the JSON `status`, not the exit code. `clean`: go on. `findings`: report, then offer repair (step 6, cause `codex`). Exit 2: tool error; stop.
    - `timeout` (no review of this head yet): report and stop whatever the configured action, since nothing waited. To get a review, run `codex-review-loop` Phase 2 from the PR's checkout.
