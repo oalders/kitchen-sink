@@ -216,6 +216,37 @@ class BotWait(unittest.TestCase):
         self.assertEqual((result["status"], result["action"]), ("timeout", "proceed"))
 
 
+class Rounds(unittest.TestCase):
+    def test_unset_keeps_three(self):
+        self.assertEqual(cl.resolve_rounds(""), {"value": 3, "source": "default"})
+
+    def test_valid_rounds_accepted(self):
+        for value in (1, 5):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    cl.resolve_rounds(str(value)), {"value": value, "source": "git-config"}
+                )
+
+    def test_invalid_rounds_errors(self):
+        for value in ("0", "6", "two", "1.5"):
+            with self.subTest(value=value), self.assertRaises(cl.ToolError):
+                cl.resolve_rounds(value)
+
+    def test_invalid_config_fails_mode(self):
+        out = io.StringIO()
+        fake_run = fake_config({cl.ROUNDS_KEY: "9"})
+        with mock.patch.object(cl, "run", fake_run), contextlib.redirect_stdout(out):
+            self.assertEqual(cl.main(["mode"]), 2)
+        self.assertIn(cl.ROUNDS_KEY, json.loads(out.getvalue())["error"])
+
+    def test_mode_reports_rounds(self):
+        out = io.StringIO()
+        fake_run = fake_config({cl.CONFIG_KEY: "off", cl.ROUNDS_KEY: "5"})
+        with mock.patch.object(cl, "run", fake_run), contextlib.redirect_stdout(out):
+            self.assertEqual(cl.main(["mode"]), 0)
+        self.assertEqual(json.loads(out.getvalue())["rounds"], {"value": 5, "source": "git-config"})
+
+
 NNP_ON = "Name:\tpython3\nNoNewPrivs:\t1\nSeccomp:\t2\n"
 NNP_OFF = "Name:\tpython3\nNoNewPrivs:\t0\nSeccomp:\t0\n"
 

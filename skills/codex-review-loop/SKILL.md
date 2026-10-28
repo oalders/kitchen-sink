@@ -16,7 +16,7 @@ The helper is `codex_loop.py`, in this skill's base directory. Below it is calle
 ## Step 0: Mode
 
 ```bash
-python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_version": ..., "outer_sandbox": {"enabled": ..., "source": ...}, "bot_wait": {"minutes": ..., "action": ..., "source": ...}}
+python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_version": ..., "outer_sandbox": {"enabled": ..., "source": ...}, "bot_wait": {"minutes": ..., "action": ..., "source": ...}, "rounds": {"value": ..., "source": ...}}
                       # codex_version is omitted when mode is off or codex can't run
 ```
 
@@ -30,7 +30,7 @@ python3 "$CL" mode    # {"mode": ..., "source": ..., "codex": ..., "codex_versio
 
 The mode comes from this clone's local `git config --local kitchen-sink.codexReview` (global config is ignored); `/codex-review on|off|local|status` changes it. If the command exits with `2` (for example, mode is `github` but `codex` is missing), STOP and report it. Never fall back to a lower mode on your own.
 
-`bot_wait` comes from `kitchen-sink.codexTimeoutMinutes` (default 30) and `kitchen-sink.codexTimeoutAction` (`stop` default, or `proceed`). They're the user's decision: **never set them yourself**.
+`bot_wait` comes from `kitchen-sink.codexTimeoutMinutes` (default 30) and `kitchen-sink.codexTimeoutAction` (`stop` default, or `proceed`); `rounds` from `kitchen-sink.codexRounds` (1–5, default 3). They're the user's decision: **never set them yourself**.
 
 ### Outer sandbox
 
@@ -52,7 +52,7 @@ If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap erro
    - **Fix it** if the input, state, or call path it describes can actually occur. A subagent applies the fixes and commits them with the attribution trailer.
    - **Decline it** only with evidence: the callers, the config, or the upstream producer that shows the input can't happen. Record it as `{title, reason}`. A declined finding is still open, and it is the **user's** decision. **Tell the user right away**, with the evidence, and keep working while they decide.
 4. Self-review the fix diff (`/code-review-flow` or the review the parent workflow uses), then go back to step 1. Add the declined list to the PR body.
-5. **Cap: 3 fix rounds.** A round is one batch of fix commits, whether it was prompted by the local review or by the bot. A run whose only blocking findings are already declined uses no round. If a fourth round would be needed, STOP and surface the remaining findings. Do the same if a fix brings back a finding from an earlier round. Escalating is a valid outcome.
+5. **Cap: `rounds.value` fix rounds.** A round is one batch of fix commits, whether it was prompted by the local review or by the bot. A run whose only blocking findings are already declined uses no round. If one more round would be needed, STOP and surface the remaining findings. Do the same if a fix brings back a finding from an earlier round. Escalating is a valid outcome.
 
 **What counts as a pass** depends only on the **latest run on the current HEAD**; a run on an earlier commit doesn't count:
 

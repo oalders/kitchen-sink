@@ -38,6 +38,9 @@ OUTER_SANDBOX_KEY = "kitchen-sink.codexOuterSandbox"
 TIMEOUT_MINUTES_KEY = "kitchen-sink.codexTimeoutMinutes"
 TIMEOUT_ACTION_KEY = "kitchen-sink.codexTimeoutAction"
 TIMEOUT_ACTIONS = ("stop", "proceed")
+ROUNDS_KEY = "kitchen-sink.codexRounds"
+ROUNDS_RANGE = range(1, 6)
+ROUNDS_DEFAULT = 3
 BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox"
 BWRAP_MARKER = "error building bubblewrap command"
 MODES = ("off", "local", "github")
@@ -102,6 +105,19 @@ def resolve_bot_wait(minutes, action):
     return out
 
 
+def resolve_rounds(rounds):
+    """Return the fix-round cap. Unset keeps the default; anything outside 1-5 fails closed."""
+    if not rounds:
+        return {"value": ROUNDS_DEFAULT, "source": "default"}
+    try:
+        value = int(rounds)
+    except ValueError:
+        value = 0
+    if value not in ROUNDS_RANGE:
+        raise ToolError(f"{ROUNDS_KEY}={rounds!r} is not an integer from 1 to 5")
+    return {"value": value, "source": "git-config"}
+
+
 def nono_detected(cap_file, proc_status):
     """Best-effort check that nono really confines this process.
 
@@ -162,6 +178,7 @@ def cmd_mode(_args):
     mode, source = resolve_mode(configured)
     out = {"mode": mode, "source": source, "codex": codex, "outer_sandbox": outer_sandbox()}
     out["bot_wait"] = bot_wait()
+    out["rounds"] = resolve_rounds(local_config(ROUNDS_KEY))
     if mode != "off" and not codex:
         out["error"] = f"mode is {mode} but the codex CLI is not on PATH"
     elif mode != "off":
