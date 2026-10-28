@@ -71,7 +71,7 @@ digraph fix_issue {
     "Write tests" [shape=box];
     "Run code review (intense-flow)" [shape=box];
     "Issues found?" [shape=diamond];
-    "Fourth round needed?" [shape=diamond];
+    "Over the round cap?" [shape=diamond];
     "STOP: surface to user (continue/simplify/change approach)" [shape=box];
     "Fix issues and commit" [shape=box];
     "Codex local loop (codex-review-loop)" [shape=box];
@@ -105,9 +105,9 @@ digraph fix_issue {
     "Implement fix" -> "Write tests";
     "Write tests" -> "Run code review (intense-flow)" [label="on final HEAD"];
     "Run code review (intense-flow)" -> "Issues found?";
-    "Issues found?" -> "Fourth round needed?" [label="yes"];
-    "Fourth round needed?" -> "STOP: surface to user (continue/simplify/change approach)" [label="yes (>3 rounds)"];
-    "Fourth round needed?" -> "Fix issues and commit" [label="no (<=3 rounds)"];
+    "Issues found?" -> "Over the round cap?" [label="yes"];
+    "Over the round cap?" -> "STOP: surface to user (continue/simplify/change approach)" [label="yes"];
+    "Over the round cap?" -> "Fix issues and commit" [label="no"];
     "Fix issues and commit" -> "Run code review (intense-flow)" [label="re-review"];
     "Issues found?" -> "Codex local loop (codex-review-loop)" [label="no (clean)"];
     "Codex local loop (codex-review-loop)" -> "Verify with verification-before-completion" [label="clean, or mode off"];
@@ -223,14 +223,14 @@ Write them as part of implementation, not as review remediation:
 4. **Over 500 lines of diff**: fix Critical and Important in the branch; file GitHub issues for Minor ones. This absolute threshold is separate from step 4's relative ~3x tripwire, which catches the small change that grew.
 5. Commit the fixes with a message referencing the review, ending with a blank line and the `Co-authored-by` trailer from `docs/attribution.md` (display name = the running model), e.g. `Co-authored-by: Claude <running model> <noreply@anthropic.com>`.
 6. Re-invoke `/code-review-intense-flow` via the Skill tool on the new HEAD. Dispatching the same reviewers yourself doesn't count; the `require-review-before-pr` hook won't record it. Never skip it: fixes introduce new issues, and every lens (accessibility, OWASP, SEO) must see the new code.
-7. Repeat until clean, **to a maximum of three fix rounds.** If a fourth would be needed, STOP and surface: the outstanding findings, how much the diff has grown against the step 4 estimate, and a recommendation to *continue, simplify, or change approach*. Four rounds on the same file means the design is wrong, not the code. Tells: rounds that contradict each other (round *n+1* re-flagging the other horn of a tradeoff round *n* fixed), or a growing diff whose every commit looks defensible. Escalating is a successful outcome, like passing clean.
+7. Repeat until clean, **to a maximum of `kitchen-sink.reviewRounds` fix rounds** (`git config --local --get`; an integer 1–5, default 3 when unset; any other value: STOP and report; never set it yourself). If one more would be needed, STOP and surface: the outstanding findings, how much the diff has grown against the step 4 estimate, and a recommendation to *continue, simplify, or change approach*. Hitting the cap on the same file means the design is wrong, not the code. Tells: rounds that contradict each other (round *n+1* re-flagging the other horn of a tradeoff round *n* fixed), or a growing diff whose every commit looks defensible. Escalating is a successful outcome, like passing clean.
 
 #### 8.5. Codex gate (`codex-review-loop`)
 
 Runs on both implementation paths — Codex is an independent reviewer:
 
 - Run `python3 <codex-review-loop dir>/codex_loop.py mode`. On `off`, skip. On `local` or `github`, follow Phase 1 of `codex-review-loop` (the local review/fix loop) before pushing. Exit code `2` means STOP and report; never skip silently.
-- Codex has its own 3-round cap, separate from step 8's. A hit cap, or a Codex finding declined without user confirmation, counts as "needs a human" in step 11.
+- Codex has its own round cap (`kitchen-sink.codexRounds`), separate from step 8's. A hit cap, or a Codex finding declined without user confirmation, counts as "needs a human" in step 11.
 
 #### 9. Verify fix
 
@@ -306,7 +306,7 @@ Thoughts that mean you're about to skip a step:
 | "The issue names the files, so that's the scope" | Sweep for the old claim first (step 4) |
 | "A quick `/security-review` is enough" | Only `/code-review-intense-flow` on the final HEAD counts; the hook enforces it |
 | "Commit, push, and open the PR in one call" | The review must run on the new HEAD in between |
-| "The reviewer keeps finding things, so I'll keep fixing" | Filter hypotheticals; cap at three rounds, then surface (step 8) |
+| "The reviewer keeps finding things, so I'll keep fixing" | Filter hypotheticals; stop at the round cap, then surface (step 8) |
 | "Each step was reasonable" (diff now 3x the estimate) | That's the ratchet; stop and surface (step 4) |
 | "The Codex bot is slow, I'll mark it ready anyway" | Silence is not approval; follow `codex-review-loop`'s timeout rule |
 | "I'll note the follow-up in the PR description" | PR notes get lost; file an issue (step 10) |

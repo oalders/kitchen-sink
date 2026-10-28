@@ -276,7 +276,7 @@ Automates the workflow for fixing GitHub issues, guided by reuse-before-writing,
 4. Assesses complexity, searches for existing code to reuse, sweeps the repo for stale copies of any claim the fix changes, states the simplest fix, and records an expected size
 5. Posts a pre-flight block (simplest fix, prior art, sweep hits, size) and pauses only when it raises a decision. Issues that need decisions get a brainstorming offer; fully specified issues beyond trivial, or declined brainstorming, get a plan-review subagent on the block; any design doc goes to a plan-review subagent before `writing-plans`. `/paad:pushback` runs in parallel on controversial issues unless `fast` is passed
 6. Implements the fix (via a subagent or subagent-driven-development) with one regression test per behaviour
-7. Runs `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), up to three fix rounds before escalating
+7. Runs `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), up to `kitchen-sink.reviewRounds` fix rounds (1–5, default 3) before escalating
 8. Runs the Codex gate (`codex-review-loop`) unless its mode is `off`
 9. Verifies with `verification-before-completion`
 10. Creates a draft PR that closes the issue (in Codex `github` mode, waits for a clean `@codex review` of HEAD)
@@ -374,7 +374,7 @@ Two subagents review the same work in parallel, competing under an incentive tha
 
 Catches what Claude's self-review misses, without spending CI minutes on it:
 - Runs `codex exec review --base origin/<default>` locally and classifies findings; P0–P2 block, P3 is advisory
-- Triage → fix → self-review → re-run, capped at three rounds; declined findings need evidence and the user's confirmation
+- Triage → fix → self-review → re-run, capped at `kitchen-sink.codexRounds` rounds (1–5, default 3); declined findings need evidence and the user's confirmation
 - In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD (a timeout stops the gate unless the user set `codexTimeoutAction` to `proceed`), then replies on and resolves the threads it fixed
 - `codex_loop.py` helper (`mode`, `local-review`, `gh-wait`, `gh-threads`, `gh-resolve`), unit-tested in `test_codex_loop.py`
 - Called by `/fix-gh-issue` (step 8.5 and the step 10 bot gate)
