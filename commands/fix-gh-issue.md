@@ -321,3 +321,4 @@ Thoughts that mean you're about to skip a step:
 - `codex-review-loop`, `/codex-review` (show or switch the repo's Codex mode) — steps 8.5 and 10
 - `stacking-prs` — when the branch builds on an unmerged PR (step 10)
 - `/monitor-ci`, else `/poll-ci` — step 11
+- `/shepherd-pr` — user-run only, to carry a PR to merged after step 11; this workflow never invokes it

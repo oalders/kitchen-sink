@@ -57,6 +57,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/draft-pr** | Creates a draft PR that closes the GitHub issue inferred from your branch name |
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
 | **/fix-gh-issues** | Point your robot at the whole backlog, go to bed, and wake up to merged PRs |
+| **/shepherd-pr** | Carries one of your own PRs to merged: checks the Codex gate, asks once, marks it ready, enables auto-merge, and watches the checks |
 | **/triage-backlog** | Grooms open GitHub issues—finds completed work, updates task lists, and suggests labels, one issue at a time |
 
 **Repo & CI maintenance**
@@ -294,6 +295,15 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 - Per issue: hands it to a human if its title or body changed since you confirmed, labels it `in progress`, creates a worktree under `$TMPDIR` from the fresh default branch, and runs `/fix-gh-issue <N> autonomous`
 - Merges only its own PR for the issue (same repo, default base, head matching the worktree), marked ready by `fix-gh-issue`, with green CI (every test workflow you pick up front must pass, not just a bot check), closing only its own issue, every file under directories you approve, no protected paths (dotfiles, agent instructions, build files, dependency manifests), and no symlinks or mode changes; never with `--admin`, and it confirms the merge landed. Anything else is labelled `needs human`
 - Checks up front whether pushed branches could reach Actions secrets, a write token, OIDC, or self-hosted runners (on non-private repos it recommends stopping), stops after three `gh` failures in a row, keeps a ledger in `$TMPDIR` (a read-only, checksummed policy file plus a run log) so long runs survive context compaction, leaves worktrees in place, and ends with a report: merged, needs a human (with reasons), skipped, not reached
+
+#### /shepherd-pr
+
+Carries one of your own open PRs (same repo, default base) to merged. Each run reads the PR and picks up where it stands, so re-running is safe:
+- In Codex `github` mode, requires an existing clean bot review of the head commit and stops without one; it never triggers one
+- Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then asks once before marking it ready or enabling auto-merge
+- Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check or a new head commit it turns auto-merge off and stops, and a re-run asks again
+- On a PR with auto-merge already on, it shows who enabled it and asks whether to keep it
+- Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge
 
 #### /triage-backlog
 
