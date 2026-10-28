@@ -459,8 +459,10 @@ def gh_wait(argv, comments, monotonic, minutes="15", sleep=None):
 class GhWaitTriggerWindow(unittest.TestCase):
     def test_window_counts_from_trigger(self):
         # 15-minute window, trigger 10 minutes old: 5 minutes left.
-        rc, out = gh_wait(["--trigger-comment", "7"], [trigger()], [0, 299, 300])
+        sleep = mock.Mock()
+        rc, out = gh_wait(["--trigger-comment", "7"], [trigger()], [0, 299, 300], sleep=sleep)
         self.assertEqual((rc, out["status"]), (1, "timeout"))
+        sleep.assert_called_once()
 
     def test_old_trigger_times_out_at_once(self):
         sleep = mock.Mock()
@@ -472,20 +474,25 @@ class GhWaitTriggerWindow(unittest.TestCase):
         # Trigger 10 minutes old: one 6-minute window has ended, two haven't.
         argv = ["--trigger-comment", "7", "--windows", "2", "--timeout", "0"]
         rc, out = gh_wait(argv, [trigger()], [0, 0], minutes="6")
-        self.assertEqual((out["status"], out["window_ends"]), ("pending", "2027-01-15T08:02:00Z"))
+        self.assertEqual((rc, out["status"], out["window_ends"]), (1, "pending", "2027-01-15T08:02:00Z"))
 
     def test_cap_before_window_ends_is_pending(self):
         rc, out = gh_wait(["--trigger-comment", "7", "--timeout", "0"], [trigger()], [0, 0])
         self.assertEqual((rc, out["status"], out["window_ends"]), (1, "pending", "2027-01-15T08:05:00Z"))
 
     def test_unknown_trigger_is_tool_error(self):
-        rc, out = gh_wait(["--trigger-comment", "8"], [trigger()], [0, 0])
+        rc, out = gh_wait(["--trigger-comment", "987654"], [trigger()], [0, 0])
         self.assertEqual(rc, 2)
-        self.assertIn("8", out["error"])
+        self.assertIn("comment 987654 ", out["error"])
 
     def test_trigger_for_other_sha_is_tool_error(self):
         other = TRIGGER.replace(SHA, "f" * 40)
         rc, out = gh_wait(["--trigger-comment", "7"], [trigger(body=other)], [0, 0])
+        self.assertEqual(rc, 2)
+        self.assertIn("comment 7 ", out["error"])
+
+    def test_trigger_from_other_user_is_tool_error(self):
+        rc, out = gh_wait(["--trigger-comment", "7"], [trigger(login="mallory")], [0, 0])
         self.assertEqual(rc, 2)
 
     def test_timeout_zero_without_trigger_still_times_out(self):

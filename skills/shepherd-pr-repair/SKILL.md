@@ -28,7 +28,7 @@ Steps:
 4. **Review.** `/code-review-intense-flow` through the Skill tool on the new HEAD, up to `kitchen-sink.reviewRounds` fix rounds (`/fix-gh-issue` step 8 item 7). In `local` or `github` mode, also run `codex-review-loop` Phase 1 (`local-review --base origin/<default>`), capped by `kitchen-sink.codexRounds`. No hook covers a push here, so don't skip it.
 5. **Show and push.**
    - Show `git diff --stat <sha>..HEAD`, marking paths on `/fix-gh-issue` step 11's sensitive-surface list, and the full diff of every marked path.
-   - One AskUserQuestion: **Push** / **Stop**. It says whether step 4 finished clean, that pushing runs workflows, and in `github` mode that it also posts an `@codex review` comment and may wait up to the configured bot wait, plus a second window if the bot is slow.
+   - One AskUserQuestion: **Push** / **Stop**. It says whether step 4 finished clean, that pushing runs workflows, and in `github` mode that it also posts an `@codex review` comment and waits one bot window here; a later `/shepherd-pr` step 2 may add a second.
    - **Push**: re-read `gh pr view <n> --json autoMergeRequest`; if set, `gh pr merge <n> --disable-auto`, and if that fails, don't push and say auto-merge is still on. Then `git push origin 'HEAD:<headRefName>'`, never forced.
    - **Stop**: report and end, leaving the local commits (say so). Steps 6 and 7 apply only after a push.
 6. **`github` mode:**
