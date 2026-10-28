@@ -1,9 +1,9 @@
 ---
-description: Walk through this repo's per-clone review settings (Codex bot wait, timeout action, Codex and review round caps) and write the ones the user changes with git config --local.
+description: Use when the user wants to view or change this repo's Codex bot wait, Codex timeout action, Codex round cap, or review round cap (per-clone git config).
 disable-model-invocation: true
 ---
 
-Show and change the per-repo review settings that `codex-review-loop` and `/fix-gh-issue` read. They are per-clone git config keys written with `--local`, so they are never committed. Only the user runs this command; skills only read these keys. The Codex mode itself is set with `/codex-review`.
+Show and change the per-repo review settings that `codex-review-loop` and `/fix-gh-issue` read. They are per-clone git config keys written with `--local`, so they are never committed; skills only read them. The Codex mode itself is set with `/codex-review`.
 
 | Key | Values | Default |
 |-----|--------|---------|
@@ -14,12 +14,12 @@ Show and change the per-repo review settings that `codex-review-loop` and `/fix-
 
 Steps:
 
-1. **Show.** Run `git config --local --get-regexp '^kitchen-sink\.'` for the raw values, and `python3 <skill base dir>/codex_loop.py mode`, where the base directory is the `codex-review-loop` skill's, for the effective `bot_wait` and `rounds`. List each key in the table with its value, or its default when unset. Show `kitchen-sink.codexOuterSandbox` read-only. If `mode` prints only `{"error": ...}`, say which key is invalid and offer to fix it in step 2.
-2. **Ask.** Use one AskUserQuestion with one question per key in the table (4 questions). Each offers **Keep** (current value), **Default** (unset), plus:
-   - `codexTimeoutAction`: `stop` (Recommended) and `proceed`. Describe `proceed` as: a timeout passes the gate without a bot review, and `/fix-gh-issues` may then auto-merge the PR.
+1. **Show.** Run `git config --local --get-regexp '^kitchen-sink\.'` for the raw values (exit 1 = none set; that's fine). List each key in the table with its value, or its default when unset, and flag any value that fails its step 3 pattern as invalid. Show `kitchen-sink.codexOuterSandbox` read-only, and leave `kitchen-sink.codexReview` to `/codex-review`. Then run `python3 <skill base dir>/codex_loop.py mode`, where the base directory is the `codex-review-loop` skill's, and show its `bot_wait` and `rounds`. If it prints only `{"error": ...}` about a key outside the table, report it and stop: this command doesn't write that key. An `error` next to the full JSON (the `codex` CLI is missing) is not a config problem.
+2. **Ask.** Use one AskUserQuestion with one question per key in the table (4 questions). Each offers **Keep** (current value; leave it out for a key flagged invalid) and **Default** (unset), plus:
+   - `codexTimeoutAction`: `proceed`, described as: a timeout passes the gate without a bot review, so the PR can be marked ready, and a `/fix-gh-issues` run with a merge policy may merge it. Mark **Default** (`stop`) as Recommended.
    - Numeric keys: "type a value via Other".
-3. **Validate** each answer as a whole string: minutes `^[1-9][0-9]*$`, rounds `^[1-5]$`, action `^(stop|proceed)$`. On a mismatch, re-ask once; if it still doesn't match, stop without writing anything.
-4. **Warn once** before writing: `--local` lives in the clone's shared `.git/config`, so the change applies to every worktree of this clone, including runs already in progress.
+3. **Validate** each answer as a whole string: minutes `^[1-9][0-9]*$`, rounds `^[1-5]$`, action `^(stop|proceed)$`. On a mismatch, re-ask that question once; if it still doesn't match, stop without writing anything. Never write a value that hasn't passed.
+4. **Warn** if any key will change, then go on: `--local` lives in the clone's shared `.git/config`, so the change applies to every worktree of this clone, including runs already in progress.
 5. **Write** only the keys whose answer changed:
    ```bash
    git config --local <key> '<value>'   # new value
