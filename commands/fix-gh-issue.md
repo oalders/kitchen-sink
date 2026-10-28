@@ -29,7 +29,7 @@ These apply to every step, to any subagent doing the work, and to the brief for 
 ## Autonomous mode
 
 With `autonomous`, invoke the `kitchen-sink:fix-gh-issue-autonomous` skill via the Skill tool before step 1, and again whenever your context starts with a compaction summary, and follow it: its rules override the steps below wherever they ask, confirm, suggest, or surface something.
-If it can't be loaded at any point, stop at once, leave any PR in draft, ask nothing, and end with exactly `RESULT pr=<number|none> state=draft ci=not-watched followups=none reason="autonomous rules not loaded" directives=""`.
+If it can't be loaded at any point, stop at once, mark nothing ready, ask nothing, and end with `RESULT pr=<P> state=<S> ci=not-watched followups=none reason="autonomous rules not loaded" directives=""`, where `<P>` is the PR number (`none` if there's no PR) and `<S>` its current state (`draft` if there's no PR).
 
 ## Dispatch the file-heavy work to a subagent (reviews stay in the caller)
 
