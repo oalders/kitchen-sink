@@ -1,7 +1,7 @@
 ---
 name: shepherd-pr-repair
 description: Use only when /shepherd-pr offered a repair and the user chose Repair in this conversation.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # shepherd-pr repair
@@ -28,10 +28,10 @@ Steps:
 4. **Review.** `/code-review-intense-flow` through the Skill tool on the new HEAD, up to `kitchen-sink.reviewRounds` fix rounds (`/fix-gh-issue` step 8 item 7). In `local` or `github` mode, also run `codex-review-loop` Phase 1 (`local-review --base origin/<default>`), capped by `kitchen-sink.codexRounds`. No hook covers a push here, so don't skip it.
 5. **Show and push.**
    - Show `git diff --stat <sha>..HEAD`, marking paths on `/fix-gh-issue` step 11's sensitive-surface list, and the full diff of every marked path.
-   - One AskUserQuestion: **Push** / **Stop**. It says whether step 4 finished clean, that pushing runs workflows, and in `github` mode that it also posts an `@codex review` comment and may wait up to one configured bot window.
+   - One AskUserQuestion: **Push** / **Stop**. It says whether step 4 finished clean, that pushing runs workflows, and in `github` mode that it also posts an `@codex review` comment and waits one bot window here; a later `/shepherd-pr` step 2 may re-trigger once or wait one more window.
    - **Push**: re-read `gh pr view <n> --json autoMergeRequest`; if set, `gh pr merge <n> --disable-auto`, and if that fails, don't push and say auto-merge is still on. Then `git push origin 'HEAD:<headRefName>'`, never forced.
    - **Stop**: report and end, leaving the local commits (say so). Steps 6 and 7 apply only after a push.
 6. **`github` mode:**
-   - Post the trigger comment as in Phase 2 step 1, with `gh pr comment <n>`, then run `python3 <skill base dir>/codex_loop.py gh-wait --pr <n> --sha <new HEAD> --trigger-comment <id>` with `run_in_background: true`, one window only.
-   - `clean`: Phase 2 step 3 (reply and resolve). `findings` or `timeout`: no re-trigger, fixes, thread replies or push; leave the threads and go on, since the next `/shepherd-pr` step 2 reports them.
+   - Post the trigger comment as in Phase 2 step 1 (with its `Review of <new HEAD>` line), with `gh pr comment <n>`, then run `python3 <skill base dir>/codex_loop.py gh-wait --pr <n> --sha <new HEAD> --trigger-comment <id>` with `run_in_background: true`, one window only.
+   - `clean`: Phase 2 step 3 (reply and resolve). `findings`: no fixes, thread replies or push; leave the threads, `/shepherd-pr` step 2 reports them. `timeout`: don't re-trigger here; step 2 decides.
 7. Report the new head, then return to `/shepherd-pr` step 1.

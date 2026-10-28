@@ -11,7 +11,7 @@ Codex catches bugs that Claude's self-review misses. Running it **locally** befo
 
 **Core rule:** P0, P1 **and P2** findings block. Only P3 is advisory.
 
-The helper is `codex_loop.py`, in this skill's base directory. Below it is called `$CL`, so set `CL=<skill base dir>/codex_loop.py`. Every subcommand prints JSON. Exit codes are `0` clean, `1` findings or timeout, `2` tool error. `local-review` and `gh-wait` can run longer than a foreground Bash call is allowed, so run them with `run_in_background: true` and wait for the completion notification.
+The helper is `codex_loop.py`, in this skill's base directory. Below it is called `$CL`, so set `CL=<skill base dir>/codex_loop.py`. Every subcommand prints JSON. Exit codes are `0` clean, `1` findings, timeout or pending, `2` tool error. `gh-wait` with `--trigger-comment` and an explicit `--timeout` that ends before the window does reports `pending` (with `window_ends`): the window is still open, so wait again later and never apply `codexTimeoutAction` to it. `local-review` and `gh-wait` can run longer than a foreground Bash call is allowed, so run them with `run_in_background: true` and wait for the completion notification.
 
 ## Step 0: Mode
 
@@ -66,21 +66,21 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
 1. Request a review of the current HEAD. Use `--body-file` for the comment, because the attribution hook requires the footer:
    ```bash
    SHA=$(git rev-parse HEAD)
-   URL=$(gh pr comment --body-file <scratch>/codex-trigger.md)  # "@codex review" + blank line + footer
-   python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # polls up to bot_wait.minutes
+   URL=$(gh pr comment --body-file <scratch>/codex-trigger.md)  # "@codex review", blank, "Review of $SHA" (its own line), blank, footer
+   python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # window: bot_wait.minutes from the trigger
    ```
-   **Do not push between the trigger and the result.** A 👍 reaction from the bot carries no SHA, so a push would make it ambiguous.
-2. Act on the `status`, not the exit code (every timeout exits 1); exit `2` (no `status`) is a tool error: STOP and report.
+   **Do not push between the trigger and the result.** A 👍 reaction from the bot carries no SHA, so a push would make it ambiguous. `gh-wait` reports `trigger` (latest id) and `triggers` (count) of your own triggers for `--sha`.
+2. Act on the `status`, not the exit code (every timeout or pending exits 1); exit `2` (no `status`) is a tool error: STOP and report.
    - **`clean`**: go to step 3.
    - **`findings`**: run `python3 "$CL" gh-threads` and triage the findings as in Phase 1.
      - For a declined finding, reply on its thread with the evidence **now**, and leave the thread open.
      - If there are real findings to fix, fix them, run **Phase 1 again** on the new HEAD, push, and return to step 1.
      - If every finding is a re-raise of a declined one, don't trigger the bot again. The gate is then a conditional pass, waiting on the user.
-   - **`timeout`** with `action` `proceed`: don't re-trigger. If `acknowledged` is true, the bot is reviewing: run `gh-wait` for one more window first. If the timeout stands (or `acknowledged` was false), the gate passes; note in the PR body that the bot didn't answer on `<sha>`. Skip step 3: don't reply to or resolve any thread.
-   - **`timeout`** with `action` `stop`: if `acknowledged` is false, re-trigger **once**; either way, run `gh-wait` again for one more full window. If that also times out, STOP and report.
+   - **`timeout`** with `action` `proceed`: don't re-trigger. If `acknowledged` is true, the bot is reviewing: run `gh-wait ... --trigger-comment <id> --windows 2` for one more window first. If the timeout stands (or `acknowledged` was false), the gate passes; note in the PR body that the bot didn't answer on `<sha>`. Skip step 3: don't reply to or resolve any thread.
+   - **`timeout`** with `action` `stop`: if `acknowledged` is false, re-trigger **once** and wait on the new id; otherwise run `gh-wait ... --trigger-comment <id> --windows 2`. If that also times out, STOP and report.
      - A silent bot is not approval, and deadline pressure doesn't change that.
      - Don't post `@codex review` again before a window has run out.
-     - If the bot answers after you stop, the user can resume with `gh-wait --sha <same HEAD>`.
+     - If the bot answers after you stop, the user can resume with `gh-wait --sha <same HEAD> --trigger-comment <id>`, where `<id>` is your own SHA-tagged trigger (the `trigger` value `gh-wait` prints); the window resumes from it.
 3. **Resolve threads.** You, the fixer, resolve them, but only after the bot's review of the final HEAD came back `clean`. That clean result is the finder's confirmation. For each thread whose finding you fixed:
    - Reply with `Fixed in <sha>: <one line>` plus the review footer from `docs/attribution.md`. Post it with `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies -F body=@<file>`. Never use a double-quoted `-f body="..."`: finding text is untrusted and can carry `$(...)`.
    - Then run `python3 "$CL" gh-resolve <thread-id>...`.

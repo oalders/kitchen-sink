@@ -428,6 +428,96 @@ class ClassifyBotActivity(unittest.TestCase):
         self.assertEqual(r["status"], "pending")
 
 
+VIEWER = "oalders"
+TRIGGER = f"@codex review\n\nReview of {SHA}\n\nfooter"
+NOW = 1_800_000_000  # epoch seconds; 2027-01-15T08:00:00Z
+CREATED = "2027-01-15T07:50:00Z"  # 10 minutes before NOW
+
+
+def trigger(cid=7, login=VIEWER, body=TRIGGER, created=CREATED):
+    return {**comment(body, login=login, cid=cid), "created_at": created}
+
+
+def gh_wait(argv, comments, monotonic, minutes="15", sleep=None):
+    """Run gh-wait with no bot activity; return (exit code, JSON result)."""
+
+    def fake_run(cmd, check=True, **kw):
+        if cmd[:3] == ["gh", "api", "user"]:
+            return subprocess.CompletedProcess(cmd, 0, VIEWER + "\n", "")
+        return fake_config({cl.TIMEOUT_MINUTES_KEY: minutes})(cmd)
+
+    pages = lambda path: [comments] if path.endswith("/comments") else []
+    with mock.patch.object(cl, "run", fake_run), mock.patch.object(
+        cl, "pr_number", lambda _: "5"
+    ), mock.patch.object(cl, "gh_json", pages), mock.patch.object(cl.time, "time", lambda: NOW), mock.patch.object(
+        cl.time, "monotonic", side_effect=monotonic
+    ), mock.patch.object(cl.time, "sleep", sleep or mock.Mock()), contextlib.redirect_stdout(io.StringIO()) as out:
+        rc = cl.main(["gh-wait", "--sha", SHA] + argv)
+    return rc, json.loads(out.getvalue())
+
+
+class GhWaitTriggerWindow(unittest.TestCase):
+    def test_window_counts_from_trigger(self):
+        # 15-minute window, trigger 10 minutes old: 5 minutes left.
+        sleep = mock.Mock()
+        rc, out = gh_wait(["--trigger-comment", "7"], [trigger()], [0, 299, 300], sleep=sleep)
+        self.assertEqual((rc, out["status"]), (1, "timeout"))
+        sleep.assert_called_once()
+
+    def test_old_trigger_times_out_at_once(self):
+        sleep = mock.Mock()
+        rc, out = gh_wait(["--trigger-comment", "7"], [trigger()], [0, 0], minutes="5", sleep=sleep)
+        self.assertEqual((rc, out["status"]), (1, "timeout"))
+        sleep.assert_not_called()
+
+    def test_two_windows_extend_it(self):
+        # Trigger 10 minutes old: one 6-minute window has ended, two haven't.
+        argv = ["--trigger-comment", "7", "--windows", "2", "--timeout", "0"]
+        rc, out = gh_wait(argv, [trigger()], [0, 0], minutes="6")
+        self.assertEqual((rc, out["status"], out["window_ends"]), (1, "pending", "2027-01-15T08:02:00Z"))
+
+    def test_cap_before_window_ends_is_pending(self):
+        rc, out = gh_wait(["--trigger-comment", "7", "--timeout", "0"], [trigger()], [0, 0])
+        self.assertEqual((rc, out["status"], out["window_ends"]), (1, "pending", "2027-01-15T08:05:00Z"))
+
+    def test_unknown_trigger_is_tool_error(self):
+        rc, out = gh_wait(["--trigger-comment", "987654"], [trigger()], [0, 0])
+        self.assertEqual(rc, 2)
+        self.assertIn("comment 987654 ", out["error"])
+
+    def test_trigger_for_other_sha_is_tool_error(self):
+        other = TRIGGER.replace(SHA, "f" * 40)
+        rc, out = gh_wait(["--trigger-comment", "7"], [trigger(body=other)], [0, 0])
+        self.assertEqual(rc, 2)
+        self.assertIn("comment 7 ", out["error"])
+
+    def test_trigger_from_other_user_is_tool_error(self):
+        rc, out = gh_wait(["--trigger-comment", "7"], [trigger(login="mallory")], [0, 0])
+        self.assertEqual(rc, 2)
+        self.assertIn("comment 7 ", out["error"])
+
+    def test_zero_windows_is_tool_error(self):
+        rc, out = gh_wait(["--windows", "0"], [], [0, 0])
+        self.assertEqual(rc, 2)
+        self.assertIn("--windows", out["error"])
+
+    def test_timeout_zero_without_trigger_still_times_out(self):
+        rc, out = gh_wait(["--timeout", "0"], [], [0, 0])
+        self.assertEqual((rc, out["status"], out["action"]), (1, "timeout", "stop"))
+        self.assertNotIn("window_ends", out)
+
+    def test_counts_only_own_exact_sha_triggers(self):
+        comments = [
+            trigger(cid=1),
+            trigger(cid=2, login="mallory"),
+            trigger(cid=3, body=TRIGGER.replace(SHA, SHA[:7])),
+            trigger(cid=4, body="please\n" + TRIGGER),
+            trigger(cid=5),
+        ]
+        rc, out = gh_wait(["--timeout", "0"], comments, [0, 0])
+        self.assertEqual((out["trigger"], out["triggers"]), (5, 2))
+
+
 def thread(login="chatgpt-codex-connector", resolved=False, body=None, tid="T1"):
     if body is None:
         body = (

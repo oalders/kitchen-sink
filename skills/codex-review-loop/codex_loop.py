@@ -9,7 +9,9 @@ Subcommands (all print JSON on stdout):
                             A review that could not read the diff (Codex's
                             own sandbox failed) is a tool error, not a pass.
   gh-wait --sha SHA         Wait for the Codex GitHub bot to review SHA
-                            (--trigger-comment ID to count its +1 reaction).
+                            (--trigger-comment ID to count its +1 reaction and
+                            time the window from it; --timeout then only caps
+                            the call, reporting `pending` if the window is open).
   gh-threads                List unresolved review threads opened by the bot.
   gh-resolve ID [ID ...]    Resolve review threads by GraphQL node id.
 
@@ -19,8 +21,8 @@ can see them.
 
 Outer-sandbox bypass policy: see SKILL.md.
 
-Exit codes: 0 = clean / success, 1 = blocking findings (or timeout for
-gh-wait), 2 = usage or tool error.
+Exit codes: 0 = clean / success, 1 = blocking findings (or timeout or
+pending for gh-wait), 2 = usage or tool error.
 """
 
 import argparse
@@ -32,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 
 CONFIG_KEY = "kitchen-sink.codexReview"
 OUTER_SANDBOX_KEY = "kitchen-sink.codexOuterSandbox"
@@ -324,27 +327,74 @@ def pr_number(override=None):
     return run(["gh", "pr", "view", "--json", "number", "-q", ".number"]).stdout.strip()
 
 
+def own_triggers(sha, comments, viewer):
+    """Ids of the viewer's `@codex review` comments tagged `Review of <sha>`, oldest first.
+
+    Anyone can post a trigger on a public PR, so only the viewer's own count.
+    """
+    ids = []
+    for c in comments:
+        lines = (c.get("body") or "").splitlines()
+        if c.get("user", {}).get("login") != viewer:
+            continue
+        if lines[:1] == ["@codex review"] and f"Review of {sha}" in lines:
+            ids.append(c.get("id"))
+    return ids
+
+
+def poll_seconds(args, comments, viewer, window, now):
+    """Return (seconds to poll, window end as epoch or None).
+
+    With --trigger-comment the window runs from the trigger's created_at, so a
+    re-run resumes it and an old trigger times out at once.
+    """
+    if not args.trigger_comment:
+        return (args.timeout if args.timeout is not None else window), None
+    # A stale or foreign id would credit its +1 and window to this head.
+    if args.trigger_comment not in own_triggers(args.sha, comments, viewer):
+        raise ToolError(f"comment {args.trigger_comment} is not your `@codex review` trigger for {args.sha}")
+    trigger = next(c for c in comments if c.get("id") == args.trigger_comment)
+    created = datetime.fromisoformat(trigger["created_at"].replace("Z", "+00:00")).timestamp()
+    ends = created + window
+    return min(max(ends - now, 0), window), ends
+
+
 def cmd_gh_wait(args):
+    if args.windows < 1:
+        raise ToolError("--windows must be at least 1")
     wait = bot_wait()
-    seconds = args.timeout if args.timeout is not None else wait["minutes"] * 60
+    window = args.windows * wait["minutes"] * 60
     pr = pr_number(args.pr)
-    deadline = time.monotonic() + seconds
+    viewer = run(["gh", "api", "user", "-q", ".login"]).stdout.strip()
+    deadline = None
     while True:
         reviews = flatten(gh_json(f"repos/{{owner}}/{{repo}}/pulls/{pr}/reviews"))
         comments = flatten(gh_json(f"repos/{{owner}}/{{repo}}/issues/{pr}/comments"))
+        if deadline is None:
+            seconds, ends = poll_seconds(args, comments, viewer, window, time.time())
+            # A --timeout shorter than the trigger's window only caps this call.
+            capped = ends is not None and args.timeout is not None and args.timeout < seconds
+            deadline = time.monotonic() + (args.timeout if capped else seconds)
         reactions = []
         if args.trigger_comment:
             path = f"repos/{{owner}}/{{repo}}/issues/comments/{args.trigger_comment}/reactions"
             reactions = flatten(gh_json(path))
         result = classify_bot_activity(args.sha, reviews, comments, reactions)
+        triggers = own_triggers(args.sha, comments, viewer)
+        found = {"pr": int(pr), "sha": args.sha}
+        found.update(trigger=(triggers or [None])[-1], triggers=len(triggers))
         if result["status"] != "pending":
-            result.update(pr=int(pr), sha=args.sha)
+            result.update(found)
             print(json.dumps(result))
             return 0 if result["status"] == "clean" else 1
         if time.monotonic() >= deadline:
-            timeout = {"status": "timeout", "pr": int(pr), "sha": args.sha}
-            timeout.update(acknowledged=result["acknowledged"], action=wait["action"])
-            print(json.dumps(timeout))
+            out = {"status": "pending" if capped else "timeout", **found}
+            out["acknowledged"] = result["acknowledged"]
+            if capped:
+                out["window_ends"] = datetime.fromtimestamp(ends, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            else:
+                out["action"] = wait["action"]
+            print(json.dumps(out))
             return 1
         time.sleep(args.interval)
 
@@ -446,7 +496,8 @@ def main(argv=None):
     p.add_argument("--timeout", type=int, help=f"seconds (default: {TIMEOUT_MINUTES_KEY} minutes, else 1800)")
     p.add_argument("--interval", type=int, default=30, help="poll interval seconds (default 30)")
     p.add_argument("--pr", type=int, help="PR number (default: the current branch's PR)")
-    p.add_argument("--trigger-comment", type=int, help="id of the `@codex review` comment (for its reactions)")
+    p.add_argument("--trigger-comment", type=int, help="`@codex review` comment id; the window starts at it")
+    p.add_argument("--windows", type=int, default=1, help="bot windows to wait (default 1)")
     p.set_defaults(func=cmd_gh_wait)
 
     p = sub.add_parser("gh-threads")
