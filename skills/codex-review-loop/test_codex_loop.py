@@ -438,7 +438,7 @@ def trigger(cid=7, login=VIEWER, body=TRIGGER, created=CREATED):
     return {**comment(body, login=login, cid=cid), "created_at": created}
 
 
-def gh_wait(argv, comments, monotonic, minutes="15"):
+def gh_wait(argv, comments, monotonic, minutes="15", sleep=None):
     """Run gh-wait with no bot activity; return (exit code, JSON result)."""
 
     def fake_run(cmd, check=True, **kw):
@@ -451,7 +451,7 @@ def gh_wait(argv, comments, monotonic, minutes="15"):
         cl, "pr_number", lambda _: "5"
     ), mock.patch.object(cl, "gh_json", pages), mock.patch.object(cl.time, "time", lambda: NOW), mock.patch.object(
         cl.time, "monotonic", side_effect=monotonic
-    ), mock.patch.object(cl.time, "sleep"), contextlib.redirect_stdout(io.StringIO()) as out:
+    ), mock.patch.object(cl.time, "sleep", sleep or mock.Mock()), contextlib.redirect_stdout(io.StringIO()) as out:
         rc = cl.main(["gh-wait", "--sha", SHA] + argv)
     return rc, json.loads(out.getvalue())
 
@@ -463,14 +463,16 @@ class GhWaitTriggerWindow(unittest.TestCase):
         self.assertEqual((rc, out["status"]), (1, "timeout"))
 
     def test_old_trigger_times_out_at_once(self):
-        rc, out = gh_wait(["--trigger-comment", "7"], [trigger()], [0, 0], minutes="5")
-        self.assertEqual(out["status"], "timeout")
+        sleep = mock.Mock()
+        rc, out = gh_wait(["--trigger-comment", "7"], [trigger()], [0, 0], minutes="5", sleep=sleep)
+        self.assertEqual((rc, out["status"]), (1, "timeout"))
+        sleep.assert_not_called()
 
     def test_two_windows_extend_it(self):
-        # Two 10-minute windows, trigger 10 minutes old: 10 minutes left.
-        argv = ["--trigger-comment", "7", "--windows", "2"]
-        rc, out = gh_wait(argv, [trigger()], [0, 599, 600], minutes="10")
-        self.assertEqual(out["status"], "timeout")
+        # Trigger 10 minutes old: one 6-minute window has ended, two haven't.
+        argv = ["--trigger-comment", "7", "--windows", "2", "--timeout", "0"]
+        rc, out = gh_wait(argv, [trigger()], [0, 0], minutes="6")
+        self.assertEqual((out["status"], out["window_ends"]), ("pending", "2027-01-15T08:02:00Z"))
 
     def test_cap_before_window_ends_is_pending(self):
         rc, out = gh_wait(["--trigger-comment", "7", "--timeout", "0"], [trigger()], [0, 0])
@@ -479,10 +481,17 @@ class GhWaitTriggerWindow(unittest.TestCase):
     def test_unknown_trigger_is_tool_error(self):
         rc, out = gh_wait(["--trigger-comment", "8"], [trigger()], [0, 0])
         self.assertEqual(rc, 2)
+        self.assertIn("8", out["error"])
+
+    def test_trigger_for_other_sha_is_tool_error(self):
+        other = TRIGGER.replace(SHA, "f" * 40)
+        rc, out = gh_wait(["--trigger-comment", "7"], [trigger(body=other)], [0, 0])
+        self.assertEqual(rc, 2)
 
     def test_timeout_zero_without_trigger_still_times_out(self):
         rc, out = gh_wait(["--timeout", "0"], [], [0, 0])
-        self.assertEqual(out["status"], "timeout")
+        self.assertEqual((rc, out["status"], out["action"]), (1, "timeout", "stop"))
+        self.assertNotIn("window_ends", out)
 
     def test_counts_only_own_exact_sha_triggers(self):
         comments = [

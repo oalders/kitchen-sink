@@ -66,7 +66,7 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
 1. Request a review of the current HEAD. Use `--body-file` for the comment, because the attribution hook requires the footer:
    ```bash
    SHA=$(git rev-parse HEAD)
-   URL=$(gh pr comment --body-file <scratch>/codex-trigger.md)  # "@codex review", blank, "Review of $SHA", blank, footer
+   URL=$(gh pr comment --body-file <scratch>/codex-trigger.md)  # "@codex review", blank, "Review of $SHA" (its own line), blank, footer
    python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # window: bot_wait.minutes from the trigger
    ```
    **Do not push between the trigger and the result.** A 👍 reaction from the bot carries no SHA, so a push would make it ambiguous. `gh-wait` reports `trigger` (latest id) and `triggers` (count) of your own triggers for `--sha`.
@@ -76,7 +76,6 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
      - For a declined finding, reply on its thread with the evidence **now**, and leave the thread open.
      - If there are real findings to fix, fix them, run **Phase 1 again** on the new HEAD, push, and return to step 1.
      - If every finding is a re-raise of a declined one, don't trigger the bot again. The gate is then a conditional pass, waiting on the user.
-   - **`pending`** (only with an explicit `--timeout`): the window is still open until `window_ends`; run `gh-wait` again with the same `--trigger-comment` and `--windows`.
    - **`timeout`** with `action` `proceed`: don't re-trigger. If `acknowledged` is true, the bot is reviewing: run `gh-wait ... --trigger-comment <id> --windows 2` for one more window first. If the timeout stands (or `acknowledged` was false), the gate passes; note in the PR body that the bot didn't answer on `<sha>`. Skip step 3: don't reply to or resolve any thread.
    - **`timeout`** with `action` `stop`: if `acknowledged` is false, re-trigger **once** and wait on the new id; otherwise run `gh-wait ... --trigger-comment <id> --windows 2`. If that also times out, STOP and report.
      - A silent bot is not approval, and deadline pressure doesn't change that.

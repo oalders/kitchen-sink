@@ -342,7 +342,7 @@ def own_triggers(sha, comments, viewer):
     return ids
 
 
-def poll_seconds(args, comments, window, now):
+def poll_seconds(args, comments, viewer, window, now):
     """Return (seconds to poll, window end as epoch or None).
 
     With --trigger-comment the window runs from the trigger's created_at, so a
@@ -350,9 +350,10 @@ def poll_seconds(args, comments, window, now):
     """
     if not args.trigger_comment:
         return (args.timeout if args.timeout is not None else window), None
-    trigger = next((c for c in comments if c.get("id") == args.trigger_comment), None)
-    if trigger is None:
-        raise ToolError(f"comment {args.trigger_comment} is not on this PR")
+    # A stale or foreign id would credit its +1 and window to this head.
+    if args.trigger_comment not in own_triggers(args.sha, comments, viewer):
+        raise ToolError(f"comment {args.trigger_comment} is not your `@codex review` trigger for {args.sha}")
+    trigger = next(c for c in comments if c.get("id") == args.trigger_comment)
     created = datetime.fromisoformat(trigger["created_at"].replace("Z", "+00:00")).timestamp()
     ends = created + window
     return min(max(ends - now, 0), window), ends
@@ -368,7 +369,7 @@ def cmd_gh_wait(args):
         reviews = flatten(gh_json(f"repos/{{owner}}/{{repo}}/pulls/{pr}/reviews"))
         comments = flatten(gh_json(f"repos/{{owner}}/{{repo}}/issues/{pr}/comments"))
         if deadline is None:
-            seconds, ends = poll_seconds(args, comments, window, time.time())
+            seconds, ends = poll_seconds(args, comments, viewer, window, time.time())
             # A --timeout shorter than the trigger's window only caps this call.
             capped = ends is not None and args.timeout is not None and args.timeout < seconds
             deadline = time.monotonic() + (args.timeout if capped else seconds)

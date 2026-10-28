@@ -33,5 +33,5 @@ Steps:
    - **Stop**: report and end, leaving the local commits (say so). Steps 6 and 7 apply only after a push.
 6. **`github` mode:**
    - Post the trigger comment as in Phase 2 step 1 (with its `Review of <new HEAD>` line), with `gh pr comment <n>`, then run `python3 <skill base dir>/codex_loop.py gh-wait --pr <n> --sha <new HEAD> --trigger-comment <id>` with `run_in_background: true`, one window only.
-   - `clean`: Phase 2 step 3 (reply and resolve). `findings` or `timeout`: no re-trigger, fixes, thread replies or push; leave the threads and go on, since the next `/shepherd-pr` step 2 reports them.
+   - `clean`: Phase 2 step 3 (reply and resolve). `findings`: no fixes, thread replies or push; leave the threads, `/shepherd-pr` step 2 reports them. `timeout`: don't re-trigger here; step 2 decides.
 7. Report the new head, then return to `/shepherd-pr` step 1.
