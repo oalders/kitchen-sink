@@ -77,6 +77,8 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **adversarial-review** | Two subagents compete under a scoped incentive to find real, reproducible defects—enforces scope discipline so findings count doesn't inflate across rounds |
 | **codex-review-loop** | Runs OpenAI Codex locally on the branch and loops fix → re-review until P0–P2 are gone, then (in `github` mode) gates readiness on the Codex GitHub bot and resolves its threads |
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
+| **fix-gh-issue-autonomous** | Unattended-run rules for `/fix-gh-issue autonomous`; `/fix-gh-issue` loads it on demand |
+| **fix-gh-issue-design-review** | How `/fix-gh-issue` reviews its design doc or pre-flight block (step 5.5); loaded on demand |
 | **implement-design-handoff** | Wires a design-system / component-export handoff into an app's real templates and CSS faithfully, forcing a property-by-property visual-parity check and protecting untouched surfaces |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
 | **stacking-prs** | Decides which PRs to stack and which to open against the default branch, links stacks with `gh stack`, and tells you only the merge order |
