@@ -253,7 +253,7 @@ Shows or switches the per-clone Codex review mode used by the `codex-review-loop
 - `on` / `github`: local Codex loop, plus a mandatory `@codex review` gate from the GitHub bot before the PR is marked ready
 - `local`: local loop only; `off`: skip Codex; `default`: unset (`off`)
 - Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
-- The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30); on timeout, `kitchen-sink.codexTimeoutAction` `stop` (default) keeps the PR in draft and `proceed` passes with a note in the PR body, e.g. `git config --local kitchen-sink.codexTimeoutAction proceed`
+- The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30) from the `@codex review` trigger, in `codex-review-loop` and `/shepherd-pr`; on timeout, `kitchen-sink.codexTimeoutAction` `stop` (default) keeps the PR in draft and `proceed` passes with a note in the PR body, e.g. `git config --local kitchen-sink.codexTimeoutAction proceed`
 - Run `/review-config` to see or change the timeout and round keys
 
 #### /break-into-gh-issues
@@ -301,7 +301,7 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 #### /shepherd-pr
 
 Carries one of your own open PRs (same repo, default base) to merged; with no number, the current branch's PR. Each run reads the PR and picks up where it stands, so re-running is safe:
-- In Codex `github` mode, requires an existing clean bot review of the head commit and stops without one; the gate itself never triggers one (only a repair does, after its push)
+- In Codex `github` mode, gates on a clean bot review of the head commit: without one it posts (or reuses) your own `@codex review` trigger for that head and waits the configured bot wait, then honours `codexTimeoutAction`
 - Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then asks once before marking it ready or enabling auto-merge
 - Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check or a new head commit it turns auto-merge off and stops, and a re-run asks again
 - On a failed check or Codex findings, offers one repair per run: fixes in your PR checkout, runs the `/fix-gh-issue` reviews, and asks before pushing; then starts over, so auto-merge is only re-enabled on a head you have seen
@@ -315,6 +315,7 @@ Sweeps your open PRs with `/shepherd-pr`:
 - Takes your own open PRs in this repo based on the default branch, drafts included, oldest number first
 - Runs them one at a time, so one PR's check watch (up to ~45 minutes) holds up the rest, and a merge can leave a later PR behind, which `/shepherd-pr` then reports and stops on
 - Follows `/shepherd-pr` for each, so every merge still waits on your answer to its question, even under `/loop`; a repair is skipped unless you're on that PR's branch, and the PR is reported as needing `/shepherd-pr <n>` from its checkout
+- In Codex `github` mode it may post one `@codex review` per PR head (its only write before you are asked), and doesn't wait on the bot: a PR whose window is still open is reported as waiting and judged on the next sweep
 - Only you can start it (`disable-model-invocation`)
 - Ends with one status line per PR: merged, auto-merge on and waiting, needs repair from its checkout, left as is, or stopped with the reason
 
@@ -400,7 +401,7 @@ Two subagents review the same work in parallel, competing under an incentive tha
 Catches what Claude's self-review misses, without spending CI minutes on it:
 - Runs `codex exec review --base origin/<default>` locally and classifies findings; P0–P2 block, P3 is advisory
 - Triage → fix → self-review → re-run, capped at `kitchen-sink.codexRounds` rounds (1–5, default 3); declined findings need evidence and the user's confirmation
-- In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD (a timeout stops the gate unless the user set `codexTimeoutAction` to `proceed`), then replies on and resolves the threads it fixed
+- In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD, timed from the trigger (a timeout stops the gate unless the user set `codexTimeoutAction` to `proceed`), then replies on and resolves the threads it fixed
 - `codex_loop.py` helper (`mode`, `local-review`, `gh-wait`, `gh-threads`, `gh-resolve`), unit-tested in `test_codex_loop.py`
 - Called by `/fix-gh-issue` (step 8.5 and the step 10 bot gate)
 

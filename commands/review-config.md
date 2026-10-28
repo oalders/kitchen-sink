@@ -1,9 +1,9 @@
 ---
-description: Use when the user wants to view or change this repo's Codex bot wait, Codex timeout action, Codex round cap, or review round cap (per-clone git config).
+description: Use when the user wants to view or change this repo's Codex bot wait, Codex timeout action (also read by /shepherd-pr), Codex round cap, or review round cap (per-clone git config).
 disable-model-invocation: true
 ---
 
-Show and change the per-repo review settings that `codex-review-loop` and `/fix-gh-issue` read. They are per-clone git config keys written with `--local`, so they are never committed; skills only read them. The Codex mode itself is set with `/codex-review`.
+Show and change the per-repo review settings that `codex-review-loop`, `/fix-gh-issue` and `/shepherd-pr` read. They are per-clone git config keys written with `--local`, so they are never committed; skills only read them. The Codex mode itself is set with `/codex-review`.
 
 | Key | Values | Default |
 |-----|--------|---------|
