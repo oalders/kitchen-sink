@@ -57,7 +57,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/draft-pr** | Creates a draft PR that closes the GitHub issue inferred from your branch name |
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
 | **/fix-gh-issues** | Point your robot at the whole backlog, go to bed, and wake up to merged PRs |
-| **/shepherd-pr** | Carries one of your own PRs to merged: checks the Codex gate, asks once, marks it ready, enables auto-merge pinned to the head SHA, and watches the checks |
+| **/shepherd-pr** | Carries one of your own PRs to merged: checks the Codex gate, asks once, marks it ready, enables auto-merge, and watches the checks |
 | **/triage-backlog** | Grooms open GitHub issues—finds completed work, updates task lists, and suggests labels, one issue at a time |
 
 **Repo & CI maintenance**
@@ -301,7 +301,8 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 Carries one of your own open PRs (same repo, default base) to merged, one resumable step per run:
 - In Codex `github` mode, checks for an existing clean bot review of the head commit; it never triggers one
 - Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then asks once before marking it ready or enabling auto-merge
-- Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks` and reports; on a failure it stops
+- Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check or a new head commit it turns auto-merge off and stops, and a re-run asks again
+- On a PR with auto-merge already on, it shows who enabled it and asks whether to keep it
 - Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge
 
 #### /triage-backlog
