@@ -19,6 +19,7 @@ Steps:
    gh repo view --json owner,name,defaultBranchRef,visibility,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed
    gh api graphql -f owner=<owner> -f name=<repo> -F number=<n> -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT],last:1){nodes{... on RemovedFromMergeQueueEvent{reason createdAt beforeCommit{oid}}}}}}}'
    ```
+   - Before the GraphQL query: `<owner>` is `owner.login` and `<repo>` is `name`; both must match `^[A-Za-z0-9._-]+$`, otherwise stop.
    - `MERGED` or `CLOSED`: report and stop.
    - Cross-repo, `author.login` not the viewer's login, or not based on the default branch: report and stop. These limits are deliberate.
    - `headRefOid` must match `^[0-9a-f]{40}$`, and the default branch (`defaultBranchRef.name`, `<default>` below) and `headRefName` `^[A-Za-z0-9._/-]+$`, with no `..` and no leading `-`; otherwise stop.
@@ -47,6 +48,7 @@ Steps:
    - Still `OPEN` otherwise (pending checks, review required, merge queue): report why and stop; a re-run resumes. If auto-merge is on, say it stays on unwatched and how to turn it off (`gh pr merge <n> --disable-auto`).
 6. **Repair.** At most one per run (this `/shepherd-pr` invocation): if this run already repaired, report and stop.
    - Cause `codex` with `autoMergeRequest` set: `gh pr merge <n> --disable-auto` first.
+   - Cause `checks` with no failed check in the `fail` bucket (only `cancel`): report that there's nothing to repair and stop without asking.
    - One AskUserQuestion: **Repair** (fix, review, then push after one more confirmation) / **Stop**.
-   - **Stop**: report and end the run; from step 2, don't go on to step 3.
-   - **Repair**: invoke `kitchen-sink:shepherd-pr-repair` through the Skill tool and follow it, passing `<n>`, `headRefName`, the confirmed `headRefOid`, the cause (`checks` or `codex`) and the Codex mode. It ends by returning to step 1, so the new head goes through the gate and the confirmation again.
+   - **Stop**: report, saying whether auto-merge was disabled, and end the run; from step 2, don't go on to step 3.
+   - **Repair**: invoke `kitchen-sink:shepherd-pr-repair` through the Skill tool and follow it, passing `<n>`, `headRefName`, the confirmed `headRefOid`, the cause (`checks` or `codex`), the Codex mode and `<default>`. It ends by returning to step 1, so the new head goes through the gate and the confirmation again.
