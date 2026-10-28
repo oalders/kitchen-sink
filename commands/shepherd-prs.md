@@ -19,9 +19,8 @@ Steps:
    - Each number must match `^[0-9]+$`; otherwise report and stop the sweep. Take them in ascending order.
    - None: report and stop. If the list returned 100 PRs, say some may be missing.
 2. **Per PR.** Read `/shepherd-pr`'s file once: `<skill base dir>/../../commands/shepherd-pr.md`, where the base directory is the `codex-review-loop` skill's (the same one `/shepherd-pr` step 2 uses). For each PR, run `git fetch origin` (a merge earlier in the sweep moves `origin/<default>`, which its step 3 reads), then follow all its steps with that PR number as `$ARGUMENTS`.
-   - A failed `git fetch`, or a `gh` failure from auth or the network, ends the sweep, not just the PR: every later PR would fail the same way.
-   - Where it says "stop" or "end the run", that ends this PR only; go on to the next.
+   - Where it says "stop" or "end the run", including on a failed `gh` command, that ends this PR only; go on to the next. A failed `git fetch`, or failed commands on two PRs in a row, end the sweep.
    - Its one-repair limit counts per PR.
-   - In its step 6, just before it would ask: if `git branch --show-current` isn't that PR's `headRefName`, don't ask; report that it needs a repair from its checkout (`/shepherd-pr <n>` there) and whether auto-merge is off, then go on to the next PR.
+   - In its step 6, after its disable-auto and cancel-only bullets, at the point where it would ask: if `git branch --show-current` isn't that PR's `headRefName` (from its step 1), don't ask; report that it needs a repair from its checkout (`/shepherd-pr <n>` there) and whether auto-merge is off, then go on to the next PR.
    - If context was compacted, re-read the file before the next PR.
 3. **Report.** One line per PR: its number and outcome in your own words (e.g. merged, auto-merge on and waiting, marked ready, auto-merge disabled, left as is, needs repair from its checkout (plus "auto-merge off" if so), stopped and why). Never quote PR titles, branch names or bot text.
