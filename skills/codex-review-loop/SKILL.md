@@ -11,7 +11,7 @@ Codex catches bugs that Claude's self-review misses. Running it **locally** befo
 
 **Core rule:** P0, P1 **and P2** findings block. Only P3 is advisory.
 
-The helper is `codex_loop.py`, in this skill's base directory. Below it is called `$CL`, so set `CL=<skill base dir>/codex_loop.py`. Every subcommand prints JSON. Exit codes are `0` clean, `1` findings, timeout or pending, `2` tool error. `gh-wait` with an explicit `--timeout` that ends before the window does reports `pending` (with `window_ends`): the window is still open, so wait again later and never apply `codexTimeoutAction` to it. `local-review` and `gh-wait` can run longer than a foreground Bash call is allowed, so run them with `run_in_background: true` and wait for the completion notification.
+The helper is `codex_loop.py`, in this skill's base directory. Below it is called `$CL`, so set `CL=<skill base dir>/codex_loop.py`. Every subcommand prints JSON. Exit codes are `0` clean, `1` findings, timeout or pending, `2` tool error. `gh-wait` with `--trigger-comment` and an explicit `--timeout` that ends before the window does reports `pending` (with `window_ends`): the window is still open, so wait again later and never apply `codexTimeoutAction` to it. `local-review` and `gh-wait` can run longer than a foreground Bash call is allowed, so run them with `run_in_background: true` and wait for the completion notification.
 
 ## Step 0: Mode
 

@@ -1,5 +1,5 @@
 ---
-description: Use when the user wants to view or change this repo's Codex bot wait, Codex timeout action (also read by /shepherd-pr), Codex round cap, or review round cap (per-clone git config).
+description: Use when the user wants to view or change this repo's Codex bot wait and Codex timeout action (both also read by /shepherd-pr), Codex round cap, or review round cap (per-clone git config).
 disable-model-invocation: true
 ---
 
