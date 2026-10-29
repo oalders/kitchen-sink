@@ -81,7 +81,7 @@ class ListEntries(RepoTest):
         self.entry("ci_bundle", "x", "rerun-full")
         self.entry("-lead", "x", "rerun-full")
         rc, out = self.main(["list"])
-        self.assertEqual(rc, 2)
+        self.assertEqual((rc, len(out["entries"])), (2, 2))
         for entry in out["entries"]:
             self.assertIn("bad name", entry["error"])
 
@@ -93,7 +93,7 @@ class ListEntries(RepoTest):
         self.entry("m", "", "rerun-full")
         self.entry("r", "x", "")
         rc, out = self.main(["list"])
-        self.assertEqual(rc, 2)
+        self.assertEqual((rc, len(out["entries"])), (2, 2))
         for entry in out["entries"]:
             self.assertIn("empty value", entry["error"])
 
@@ -116,12 +116,14 @@ class ListEntries(RepoTest):
         self.assertInvalid("needs at least one reads")
 
     def test_bad_reads_paths(self):
-        for i, value in enumerate(("/etc/passwd", "../x", "a/../b", "a/./b", "./")):
+        values = ("/etc/passwd", "../x", "a/../b", "a/./b", "./")
+        for i, value in enumerate(values):
             self.entry(f"e{i}", "x", "make", [value])
         rc, out = self.main(["list"])
-        self.assertEqual(rc, 2)
-        for entry in out["entries"]:
-            self.assertIn("bad reads path", entry["error"])
+        self.assertEqual((rc, len(out["entries"])), (2, len(values)))
+        for value, entry in zip(values, out["entries"]):
+            with self.subTest(value=value):
+                self.assertIn("bad reads path", entry["error"])
 
     def test_bad_regex(self):
         self.entry("a", "(", "rerun-full")
@@ -153,8 +155,11 @@ class MatchLogs(RepoTest):
         subprocess.run(["git", "add", "--", *files], check=True)
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], check=True)
 
-    def match(self, *logs, rng="base...HEAD"):
-        argv = ["match", "--range", rng]
+    def sha(self, rev="HEAD"):
+        return subprocess.run(["git", "rev-parse", rev], check=True, capture_output=True, text=True).stdout.strip()
+
+    def match(self, *logs, rng=None):
+        argv = ["match", f"--range={rng or f'base...{self.sha()}'}"]
         for i, text in enumerate(logs):
             argv += ["--log", self.write(f"log{i}", text)]
         return self.main(argv)
@@ -242,15 +247,44 @@ class MatchLogs(RepoTest):
         self.commit({"src/app.py": "x"})
         subprocess.run(["git", "tag", "x"], check=True)
         self.commit({"script/ci/build": "->../../tools/build.sh"})
-        rc, out = self.match("boom", rng="base...x")
+        rc, out = self.match("boom", rng=f"base...{self.sha('x')}")
         self.assertEqual((rc, out["blocked_by"]), (0, []))
 
     def test_malformed_range(self):
         self.entry("a", "boom", "rerun-full")
-        for rng in ("base...", "base", "...HEAD"):
+        for rng in ("base...", "base", f"...{self.sha()}", "base...HEAD", f"a..b...{self.sha()}"):
             rc, out = self.match("boom", rng=rng)
             self.assertEqual(rc, 2, rng)
             self.assertIn("error", out)
+
+    def test_option_shaped_range_refused(self):
+        self.entry("a", "boom", "make it", ["script/ci/"])
+        out_file = os.path.join(self.dir, "x")
+        rc, out = self.match("boom", rng=f"--output={out_file}...{self.sha()}")
+        self.assertEqual(rc, 2)
+        self.assertIn("error", out)
+        self.assertFalse(os.path.exists(out_file))
+
+    def test_symlink_blocked_from_subdirectory(self):
+        self.commit({"tools/build.sh": "x", "script/ci/build": "->../../tools/build.sh", "src/app.py": "x"})
+        subprocess.run(["git", "tag", "-f", "base"], check=True, capture_output=True)
+        self.entry("a", "boom", "make it", ["script/ci/"])
+        os.chdir(os.path.join(self.dir, "src"))
+        rc, out = self.match("boom")
+        self.assertEqual((rc, out["blocked_by"]), (0, ["script/ci/build"]))
+
+    def test_changed_ancestor_of_reads_blocked(self):
+        # A submodule bump lists only "vendor" in the diff.
+        self.assertEqual(cr.blocked_by(["vendor/bin/ci.sh"], ["Vendor", "vendorx"]), ["Vendor"])
+
+    def test_renamed_reads_file_blocked(self):
+        self.commit({"script/ci/run.sh": "x"})
+        subprocess.run(["git", "tag", "-f", "base"], check=True, capture_output=True)
+        self.entry("a", "boom", "make it", ["script/ci/"])
+        subprocess.run(["git", "mv", "script/ci/run.sh", "elsewhere.sh"], check=True)
+        self.commit({})
+        rc, out = self.match("boom")
+        self.assertEqual((rc, out["blocked_by"]), (0, ["script/ci/run.sh"]))
 
     def test_unrelated_path_not_blocked(self):
         self.entry("a", "boom", "make it", ["script/ci/"])

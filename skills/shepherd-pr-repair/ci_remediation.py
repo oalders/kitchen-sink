@@ -20,12 +20,15 @@ Subcommands (all print JSON on stdout):
                             The one entry every log matches (each log takes its
                             first matching entry in config order), plus, in
                             `blocked_by`, the paths that make its `run` unsafe.
-                            Any invalid entry fails the whole lookup.
+                            Any invalid entry fails the whole lookup. Entries
+                            match in config order (first match wins), and
+                            review-config appends new ones last. Each log is
+                            searched whole: the caller passes its last 300 lines.
 
 Security model (the one authoritative statement): a shell `run` executes in the
 PR checkout, so the caller refuses it when `blocked_by` is non-empty. That lists
-every path `git diff BASE...SHA` changes that equals, is under, or shares a
-directory with a `reads` file (compared case-insensitively), plus every tracked
+every path `git diff BASE...SHA` changes that equals, is under, is an ancestor
+of, or shares a directory with a `reads` file (compared case-insensitively), plus every tracked
 symlink under or above (an ancestor directory of) a `reads` path at SHA (its
 target may lie outside `reads`). So `reads` must list every file the command
 executes, including ones tools resolve on their own (Makefile includes,
@@ -49,6 +52,8 @@ import sys
 
 PREFIX = "kitchen-sink.remediation."
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*")
+SHA_RE = re.compile(r"[0-9a-f]{40}")
+BASE_RE = re.compile(r"[A-Za-z0-9._/-]+")
 RERUN_FULL = "rerun-full"
 
 
@@ -138,13 +143,14 @@ def parse_entries(pairs):
 
 
 def blocked_by(reads, changed):
-    """Changed paths equal to, under, or beside (same directory as a file) a reads path."""
+    """Changed paths equal to, under, above, or beside (same directory as a file) a reads path."""
     hits = []
     for path in changed:
         folded = path.casefold()  # case-insensitive filesystems map Script/CI/x onto script/ci/x
         for value in reads:
             base = value.rstrip("/").casefold()
-            if folded == base or folded.startswith(base + "/"):
+            # base under folded: a changed ancestor (e.g. a submodule bump) replaces what reads names.
+            if folded == base or folded.startswith(base + "/") or base.startswith(folded + "/"):
                 hits.append(path)
                 break
             if not value.endswith("/") and posixpath.dirname(folded) == posixpath.dirname(base):
@@ -153,23 +159,23 @@ def blocked_by(reads, changed):
     return hits
 
 
-def changed_paths(rng):
+def changed_paths(git, rng):
     # -z: unquoted paths, so non-ASCII or quoted names still compare against reads.
-    out = run(["git", "diff", "-z", "--no-renames", "--name-only", rng]).stdout
+    out = run([*git, "diff", "-z", "--no-renames", "--name-only", "--end-of-options", rng]).stdout
     return [p for p in out.split("\0") if p]
 
 
-def symlinks(reads, sha):
+def symlinks(git, reads, sha):
     """Tracked symlinks under any reads path, or as one of its ancestor directories, at sha."""
     hits = []
     for value in reads:
-        out = run(["git", "ls-tree", "-r", "-z", sha, "--", value.rstrip("/")]).stdout
+        out = run([*git, "ls-tree", "-r", "-z", "--end-of-options", sha, "--", value.rstrip("/")]).stdout
         hits += symlink_records(out)
     # ls-tree -r finds nothing below a symlinked ancestor, so check each ancestor itself.
     parts = [v.rstrip("/").split("/") for v in reads]
     ancestors = sorted({"/".join(p[:i]) for p in parts for i in range(1, len(p))})
     if ancestors:
-        out = run(["git", "ls-tree", "-z", sha, "--", *ancestors]).stdout
+        out = run([*git, "ls-tree", "-z", "--end-of-options", sha, "--", *ancestors]).stdout
         hits += [p for p in symlink_records(out) if p in ancestors]
     return hits
 
@@ -212,10 +218,14 @@ def cmd_match(args):
         return 1
     entry = found[0]
     base, sep, sha = args.range.rpartition("...")
-    if not (base and sep and sha):
-        raise ToolError(f"--range {args.range!r} is not BASE...SHA")
+    # A base starting with - or containing .. could be read as an option or a different range.
+    if not (sep and SHA_RE.fullmatch(sha) and BASE_RE.fullmatch(base)) or base.startswith("-") or ".." in base:
+        raise ToolError(f"--range {args.range!r} is not BASE...SHA (SHA 40 hex)")
+    # From the top level: ls-tree pathspecs and output are cwd-relative; literal: reads is never pathspec magic.
+    top = run(["git", "rev-parse", "--show-toplevel"]).stdout.rstrip("\n")
+    git = ["git", "-C", top, "--literal-pathspecs"]
     # dict.fromkeys: a changed symlink would otherwise be listed twice.
-    hits = list(dict.fromkeys(blocked_by(entry["reads"], changed_paths(args.range)) + symlinks(entry["reads"], sha)))
+    hits = list(dict.fromkeys(blocked_by(entry["reads"], changed_paths(git, args.range)) + symlinks(git, entry["reads"], sha)))
     # run picks rerun-full vs shell; the caller still executes the git config value, not this copy.
     out = {"status": "match", "name": entry["name"], "run": entry["run"], "blocked_by": hits}
     print(json.dumps(out, indent=2))
