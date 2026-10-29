@@ -269,7 +269,7 @@ Breaks down work into manageable GitHub issues:
 
 Records a problem as a GitHub issue without implementing it:
 - Takes the problem from its argument, or from the conversation (e.g. a pasted transcript)
-- Researches the code involved and searches this repo's issues and PRs for duplicates; an open PR for the same problem stops it, and an open issue for it offers a comment instead
+- Researches the code involved and searches this repo's issues and PRs for duplicates; an open PR for the same problem stops it, and an open issue for it offers a comment there or a new issue anyway
 - Shows the draft (problem, proposal, open questions, existing labels only) and files nothing until you confirm
 - Never creates branches, commits or PRs
 - Only you can start it (`disable-model-invocation`)
