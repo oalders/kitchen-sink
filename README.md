@@ -331,7 +331,7 @@ Sweeps your open PRs with `/shepherd-pr`:
 - Follows `/shepherd-pr` for each, so it runs unattended, even under `/loop`: PRs are marked ready, auto-merged and repaired without asking; a rebase or repair is skipped unless you're on that PR's branch, and the PR is reported as needing `/shepherd-pr <n>` from its checkout
 - In Codex `github` mode it may also post up to two `@codex review` comments per PR head (the second only as a re-trigger), and doesn't wait on the bot: a PR whose window is still open is reported as waiting and judged on the next sweep
 - Only you can start it (`disable-model-invocation`)
-- Makes one wait-free pass per PR, without `/shepherd-pr`'s waits, deadline or queue watch: a queued PR is reported as in the merge queue, and one with only auto-merge on as auto-merge on and waiting
+- Makes one pass per PR, without `/shepherd-pr`'s resumable wait, deadline or queue watch (its check watch still runs): a queued PR is reported as in the merge queue, and one with only auto-merge on as auto-merge on and waiting
 - Ends with one status line per PR: merged, in the merge queue, auto-merge on and waiting, needs rebase or repair from its checkout, waiting on the Codex bot, left as is, or stopped with the reason
 
 #### /triage-backlog
