@@ -4,7 +4,7 @@ argument-hint: [pr-number]
 disable-model-invocation: true
 ---
 
-Carry the PR numbered in `$ARGUMENTS`, or the current branch's PR if none, toward merged without asking (a committed `fix-NNN` branch with no PR is first handed to `/fix-gh-issue`; see step 1): Codex gate check (requesting a bot review and waiting if there is none), mark ready, auto-merge, then watch the checks, with a repair when a check fails or Codex has findings. Running it is the user's consent to all of that. Each run reads the PR from GitHub and does the next step, so re-running is always safe. `/fix-gh-issue` step 11 still decides whether a PR it opens outside a hand-off is ready; in a hand-off, anything step 11 would keep in draft stops the run; this command is for the user to take a PR the rest of the way. Run it from a clone of the PR's repo, after `git fetch origin`.
+Carry the PR numbered in `$ARGUMENTS`, or the current branch's PR if none, toward merged without asking (a committed `fix-NNN` branch with no PR is first handed to `/fix-gh-issue`; see step 1): Codex gate check (requesting a bot review and waiting if there is none), mark ready, auto-merge, then watch the checks and the merge queue, with a repair when a check fails or Codex has findings. Running it is the user's consent to all of that. Each run reads the PR from GitHub and does the next step, so re-running is always safe. `/fix-gh-issue` step 11 still decides whether a PR it opens outside a hand-off is ready; in a hand-off, anything step 11 would keep in draft stops the run; this command is for the user to take a PR the rest of the way. Run it from a clone of the PR's repo, after `git fetch origin`.
 
 Rules:
 - Never ask the user anything. Where the steps need a person, report and stop instead.
@@ -19,7 +19,7 @@ Steps:
    gh pr view <n> --json number,title,state,isDraft,isCrossRepository,author,baseRefName,headRefName,headRefOid,autoMergeRequest,mergeStateStatus,reviewDecision
    gh api user -q .login
    gh repo view --json owner,name,defaultBranchRef,visibility,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed
-   gh api graphql -f owner=<owner> -f name=<repo> -F number=<n> -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT],last:1){nodes{... on RemovedFromMergeQueueEvent{reason createdAt beforeCommit{oid}}}}}}}'
+   gh api graphql -f owner=<owner> -f name=<repo> -F number=<n> -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position estimatedTimeToMerge} timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT],last:1){nodes{... on RemovedFromMergeQueueEvent{reason createdAt beforeCommit{oid}}}}}}}'
    ```
    - Before the GraphQL query: `<owner>` is `owner.login` and `<repo>` is `name`; both must match `^[A-Za-z0-9._-]+$`, otherwise stop.
    - `MERGED` or `CLOSED`: report and stop.
@@ -39,23 +39,31 @@ Steps:
      - The `--windows 2` wait and a re-trigger's wait are the last ones, and so is the wait on `trigger` when `triggers` is 2 or more (a resumed run): no `--windows 2`, no re-trigger. A `timeout` from a last wait passes under `proceed` and reports and stops under `stop`. Never wait or re-trigger a third time in a run.
 3. **Show and decide.**
    - In a fenced block, for the record: PR number, title, `headRefName`, head SHA, `mergeStateStatus`, `reviewDecision`, merge method, whether the repo is private, the Codex gate result, and, if auto-merge is already on, who enabled it (`autoMergeRequest.enabledBy.login`).
-   - If the last ejection's `beforeCommit.oid` is the head: "Removed from merge queue" with its `createdAt` and `reason`, in the fence as untrusted text. Then stop: enabling auto-merge again would re-enqueue the same head, and no repair is attempted, since `gh pr checks` doesn't show the `merge_group` run. A new head clears this.
+   - If not `isInMergeQueue` and the last ejection's `beforeCommit.oid` is the head: "Removed from merge queue" with its `createdAt` and `reason`, in the fence as untrusted text. Then stop: enabling auto-merge again would re-enqueue the same head, and no repair is attempted, since `gh pr checks` doesn't show the `merge_group` run. A new head clears this, as does the user re-enqueueing it and re-running.
    - The changed files (`gh pr diff <n> --name-only`), marking any that fall under `/fix-gh-issue` step 11's sensitive-surface list. The marks are for the record; they block nothing here (the repair skill gates on new ones).
    - For a draft: the output of `git grep -l -e pull_request_target origin/<default> -- .github/workflows` (a match means marking it ready may run a privileged workflow). It is marked ready anyway.
    - `mergeStateStatus` `DIRTY` or `BEHIND`: report and stop. `UNKNOWN`: re-read `mergeStateStatus,headRefOid` 3 times, 10 seconds apart (a new head restarts from step 1), then report and stop. Any other value is shown only.
    - Method: the first allowed of squash, merge, rebase. None allowed: stop.
-   - Then decide, and say which in the block: draft, mark ready and enable auto-merge; ready, enable auto-merge; auto-merge already on, keep it (on a draft, also mark it ready). Enabling merges as soon as required checks and reviews pass, and at once if nothing is pending.
+   - Then decide, and say which in the block: in the merge queue (`isInMergeQueue`), keep it (go to step 5 without enabling); draft, mark ready and enable auto-merge; ready, enable auto-merge; auto-merge already on, keep it (on a draft, also mark it ready). Enabling merges as soon as required checks and reviews pass, and at once if nothing is pending.
 4. **Act.**
    - A draft: `gh pr ready <n>`.
    - Enabling: `gh pr merge <n> --auto --<method> --match-head-commit <headRefOid>`, with the SHA shown in step 3. With a merge queue this enqueues. If auto-merge is disabled for the repo, say so and stop; never merge directly. `--match-head-commit` is checked only when auto-merge is enabled, not at merge time, so step 5 watches for a new head.
-   - Auto-merge already on: go on.
+   - Auto-merge already on, or in the merge queue: go on.
 5. **Watch.** The gated SHA is the head shown in step 3.
    - `sleep 60` (checks register late), then `gh pr view <n> --json statusCheckRollup -q '.statusCheckRollup | length'`. `0`: no checks; skip to the re-read.
-   - Otherwise, up to 5 times, each with a Bash timeout of 600000 ms: `timeout 540 gh pr checks <n> --watch`. Exit `124` means not done yet: re-read `headRefOid` (a new head is handled as below, at once), then run it again. Any other exit ends the loop. Judge the result by `gh pr checks <n> --json name,bucket`, not by exit codes.
-   - Re-read: `gh pr view <n> --json state,mergeStateStatus,reviewDecision,autoMergeRequest,headRefOid`.
-   - `MERGED`: report.
-   - `headRefOid` no longer the gated SHA, or a check in the `fail` or `cancel` bucket: `gh pr merge <n> --disable-auto` so nothing ungated merges, and report why. A new head: stop; a re-run gates it again. A failed check: repair (step 6, cause `checks`). Any failing check counts, required or not.
-   - Still `OPEN` otherwise (pending checks, review required, merge queue): report why and stop; a re-run resumes. If auto-merge is on, say it stays on unwatched and how to turn it off (`gh pr merge <n> --disable-auto`).
+   - Otherwise, up to 5 times, each with a Bash timeout of 600000 ms: `timeout 540 gh pr checks <n> --watch`. Exit `124` means not done yet: re-read `headRefOid,autoMergeRequest` (a new head is handled as below, at once), then run it again. Any other exit ends the loop. Judge the result by `gh pr checks <n> --json name,bucket`, not by exit codes.
+   - Re-read: `gh pr view <n> --json state,mergeStateStatus,reviewDecision,autoMergeRequest,headRefOid`, `gh pr checks <n> --json name,bucket`, and step 1's GraphQL query. A `gh pr checks` with no checks counts as no check in any bucket. First match wins:
+     1. `MERGED`: report. `CLOSED`: report and stop.
+     2. `headRefOid` no longer the gated SHA, or a check in the `fail` or `cancel` bucket: if `autoMergeRequest` is set, `gh pr merge <n> --disable-auto` so nothing ungated merges (a push ejects a queued PR); report why. A new head: stop; a re-run gates it again. A failed check: repair (step 6, cause `checks`). Any failing check counts, required or not. This comes before item 3 because a push also logs an ejection of the old head.
+     3. Not `isInMergeQueue`, and the last ejection's `beforeCommit.oid` is the gated SHA with a `createdAt` other than step 1's: report it as step 3 does and stop. No repair: `gh pr checks` doesn't show the `merge_group` run.
+     4. Queue watch:
+        - Enter when still `OPEN`, `mergeStateStatus` not `DIRTY` or `BEHIND` (step 3 stops on those; a mid-run conflict can't merge), no check in the `pending` bucket, and either `isInMergeQueue`, or `autoMergeRequest` set with `reviewDecision` not `REVIEW_REQUIRED` or `CHANGES_REQUESTED`.
+        - Poll: at entry, `date +%s` is `<start>`. Each poll is one Bash call with a Bash timeout of 300000 ms: `sleep 120`, the re-read, then `date +%s` as `<now>`.
+        - After each poll: items 1-3; then not `isInMergeQueue` and no `autoMergeRequest` (taken out or turned off): report and stop; past the deadline: report and stop; no longer meeting the entry condition: item 5; otherwise poll again.
+        - Deadline: in the queue with `estimatedTimeToMerge` a non-negative integer (seconds), that poll's `<now>` + it + 900; in the queue otherwise, `<start>` + 3600; not yet in the queue, `<start>` + 300.
+        - At the deadline: report `mergeQueueEntry.position` and the estimate if queued, otherwise `mergeStateStatus` and `reviewDecision`; a re-run resumes.
+     5. Still `OPEN` otherwise (pending checks, review required, `mergeStateStatus` `DIRTY` or `BEHIND`, or neither queued nor auto-merge on): report why and stop; a re-run resumes.
+   - Every stop in this step says whether auto-merge is still on (if so, that it stays on unwatched and how to turn it off: `gh pr merge <n> --disable-auto`) and whether the PR is still in the merge queue.
 6. **Repair.** At most one per run (this `/shepherd-pr` invocation): if this run already repaired, report and stop.
    - Cause `codex` with `autoMergeRequest` set: `gh pr merge <n> --disable-auto` first.
    - Cause `checks` with no failed check in the `fail` bucket (only `cancel`): report that there's nothing to repair and stop.
