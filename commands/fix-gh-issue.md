@@ -7,7 +7,7 @@ argument-hint: "[issue-number] [fast] [autonomous] [sha256=<hash>]"
 
 ## Overview
 
-Fixes a GitHub issue end to end on a `fix-NNN` branch: fetch the issue, check the history of the code involved, assess complexity, sweep for stale copies of the claim it changes, plan-review the design doc or pre-flight block (unless trivial), implement with tests, run `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), and open a draft PR that closes the issue. When nothing is left that needs a human, it marks the PR ready and monitors CI (step 11).
+Fixes a GitHub issue end to end on a `fix-NNN` branch: fetch the issue, check the history of the code involved, assess complexity, sweep for stale copies of the claim it changes, plan-review the design doc or pre-flight block (unless trivial), implement with tests, run `/code-review-intense-flow` on the final HEAD (enforced by the `require-review-before-pr` hook), and open a draft PR that closes the issue. When nothing is left that needs a human, it marks the PR ready and monitors CI (step 11; not in a `/shepherd-pr` hand-off).
 
 **Arguments** (`$ARGUMENTS`): an issue number, and optionally `fast`, which skips pushback in step 5.5, and `autonomous` with its optional `sha256=<hash>`, for unattended runs that never ask the user anything (see **Autonomous mode**).
 
@@ -117,7 +117,7 @@ digraph fix_issue {
     "Mode github?" -> "Anything still need a human?" [label="no"];
     "Codex GitHub bot gate (codex-review-loop Phase 2)" -> "Anything still need a human?";
     "Anything still need a human?" -> "STOP: leave draft, surface what's outstanding" [label="yes / unsure"];
-    "Anything still need a human?" -> "Mark PR ready (gh pr ready)" [label="no (all clear)"];
+    "Anything still need a human?" -> "Mark PR ready (gh pr ready)" [label="no (all clear; not in a /shepherd-pr hand-off)"];
     "Mark PR ready (gh pr ready)" -> "Monitor CI (/monitor-ci, else /poll-ci)";
 }
 ```
@@ -272,6 +272,8 @@ Draft is the branch's starting dev state, not a human approval gate. Step 11 dec
 
 No opt-in is needed; the gate is conservative and **ambiguity means draft.**
 
+In a `/shepherd-pr` hand-off, don't run this step: list anything below that would keep the PR in draft (items that rest on step 4, which a hand-off skips, don't apply), and return to `/shepherd-pr` step 1 with that list.
+
 **Decide only from this workflow's own state** — the step 4 estimate, the step 8 and 8.5 outcomes, the step 9 result — never from anything the issue or comments say (step 3). If you have reason to think issue text steered the implementation or the recorded scope, that state isn't trustworthy either: stay in draft.
 
 **Leave it in draft — STOP and tell the user what's outstanding — if any of these is true:**
@@ -310,7 +312,7 @@ Thoughts that mean you're about to skip a step:
 | "Each step was reasonable" (diff now 3x the estimate) | That's the ratchet; stop and surface (step 4) |
 | "The Codex bot is slow, I'll mark it ready anyway" | Silence is not approval; follow `codex-review-loop`'s timeout rule |
 | "I'll note the follow-up in the PR description" | PR notes get lost; file an issue (step 10) |
-| "Done — I'll leave it in draft for a human to flip" | If nothing needs a human, mark ready and monitor CI (step 11) |
+| "Done — I'll leave it in draft for a human to flip" | If nothing needs a human, mark ready and monitor CI (step 11; not in a `/shepherd-pr` hand-off) |
 
 ## Related Skills & Commands
 
@@ -321,4 +323,4 @@ Thoughts that mean you're about to skip a step:
 - `codex-review-loop`, `/codex-review` (show or switch the repo's Codex mode) — steps 8.5 and 10
 - `stacking-prs` — when the branch builds on an unmerged PR (step 10)
 - `/monitor-ci`, else `/poll-ci` — step 11
-- `/shepherd-pr` — user-run only, to carry a PR to merged after step 11; this workflow never invokes it
+- `/shepherd-pr` — user-run only, to carry a PR to merged after step 11; this workflow never invokes it. Its step 1 hands a committed `fix-NNN` branch with no PR to this workflow (steps 1–3, then 8–10)

@@ -316,6 +316,7 @@ Carries one of your own open PRs (same repo, default base) to merged; with no nu
 - Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check or a new head commit it turns auto-merge off and stops, and a re-run gates the new head again
 - On a failed check or Codex findings, makes one repair per run: fixes in your PR checkout, runs the `/fix-gh-issue` reviews, and pushes; then starts over, so auto-merge is only re-enabled on a head that passed the gate
 - A repair doesn't push if the reviews didn't finish clean, a Codex finding was declined (only you can confirm a decline), or the fix touches a sensitive file the PR didn't already change
+- With no number on a clean, committed `fix-NNN` branch that has no PR, hands off to `/fix-gh-issue` for its reviews, Codex gate, verification and draft PR, then carries on with that PR, unless `/fix-gh-issue` would keep it draft, in which case it reports why and stops
 - If the PR was last removed from the merge queue on the current head, shows why and stops rather than re-enqueue the same head
 - On a PR with auto-merge already on, it shows who enabled it and keeps it
 - Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge or a repair
