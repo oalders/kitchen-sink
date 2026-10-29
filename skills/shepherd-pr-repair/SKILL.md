@@ -1,7 +1,7 @@
 ---
 name: shepherd-pr-repair
 description: Use only when /shepherd-pr step 6 invokes it in this conversation.
-version: 2.2.0
+version: 2.1.1
 ---
 
 # shepherd-pr repair
@@ -31,7 +31,7 @@ Steps:
      - a file on `/fix-gh-issue` step 11's sensitive-surface list (by name, or by content for the list's non-path items, or when unsure whether it is sensitive, e.g. auth logic not named as such), other than a lockfile whose manifest has no conflict. Such a lockfile: its path must pass step 1's ref character checks, otherwise stop; take the base side (`git checkout --ours -- '<file>'`; in a rebase `--ours` is the base), regenerate it with the tool's lock-only, no-scripts mode (e.g. `npm install --package-lock-only --ignore-scripts`), then `git add -- '<file>'` and `GIT_EDITOR=true git rebase --continue`; no such mode known (one that evaluates the manifest, running project code, e.g. `bundle lock` or a Python build backend, counts as none) or tool missing: stop.
      - anything it can't resolve with confidence (e.g. both sides changed the same logic incompatibly).
      - Each conflict stop runs `git rebase --abort` first and names the conflicted files; nothing on GitHub has changed.
-   - `rebase`, once the rebase completes: any stop from here on leaves the rebased branch local and unpushed: say so, and that `git reset --hard '<sha>'` drops it (a re-run's step 1 needs HEAD at `<sha>`). If `git diff 'origin/<default>...HEAD'` is empty (the base already has the PR's changes), stop. Run that test command; failing: stop.
+   - `rebase`, once the rebase completes: any stop from here on leaves the rebased branch local and unpushed: say so, and that `git reset --hard '<sha>'` drops it (the user's next `/shepherd-pr <n>` needs HEAD at `<sha>`). If `git diff 'origin/<default>...HEAD'` is empty (the base already has the PR's changes), stop. Run that test command; failing: stop.
 4. **Review.** Cause `rebase` only: skip to step 5 if `git diff 'origin/<default>...<sha>' | git patch-id --stable` equals `git diff 'origin/<default>...HEAD' | git patch-id --stable` (same PR content, as the `require-review-before-pr` hook judges it). Otherwise: `/code-review-intense-flow` through the Skill tool on the new HEAD, up to `kitchen-sink.reviewRounds` fix rounds (`/fix-gh-issue` step 8 item 7). In `local` or `github` mode, also run `codex-review-loop` Phase 1 (`local-review --base origin/<default>`), capped by `kitchen-sink.codexRounds`. No hook covers a push here, so don't skip it. Clean means the last review round had no open findings and, if run, Phase 1 passed outright (not a conditional pass, a cap hit or a tool error).
 5. **Show and push.**
    - Show `git diff --stat <sha>..HEAD` (for `rebase`, `'origin/<default>...HEAD'`, the PR diff: `<sha>..HEAD` includes the base's changes), marking paths on `/fix-gh-issue` step 11's sensitive-surface list, and the full diff of every marked path.
