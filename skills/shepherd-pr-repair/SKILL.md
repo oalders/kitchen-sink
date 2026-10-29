@@ -24,7 +24,7 @@ Steps:
    - `rebase`: none.
    - `codex`: `python3 <skill base dir>/codex_loop.py gh-threads --pr <n>` (the `codex-review-loop` skill's base directory). For each finding, take the numeric id from its `url`'s `#discussion_r<id>` and fetch the body with `gh api repos/{owner}/{repo}/pulls/comments/<id>`; never fetch the `url` itself.
 3. **Fix.**
-   - `checks`: first `timeout 30 python3 <skill base dir>/ci_remediation.py match --range 'origin/<default>...<sha>' --log <file>` (this skill's base directory), one `--log` per log file; the timeout bounds a user regex backtracking on attacker-controlled log text.
+   - `checks`: first `timeout 30 python3 <skill base dir>/ci_remediation.py match --range 'origin/<default>...<sha>' --log <file>` (this skill's base directory), one `--log` per log file; the timeout bounds a user regex backtracking on attacker-controlled log text (use `gtimeout` where `timeout` is missing, e.g. stock macOS).
      - `invalid`, or the timeout hit (exit 124): stop, naming the errors or the timeout.
      - `match` with a third-party failing status: stop (the entry can't fix or re-run a check outside this repo's Actions).
      - `match` otherwise: **infra**, below.
@@ -32,7 +32,7 @@ Steps:
    - **Infra** (`checks` with a `match`; no subagent, code change or push). First record `date -u +%Y-%m-%dT%H:%M:%SZ` as `<began>`.
      - The name is already in `<infra>`: stop (the same fix already ran on this head and didn't help).
      - A shell `run` (anything but `rerun-full`):
-       - Any log is traced: stop. A traced status's `target_url` can be set by anyone with status-write access, so it may trigger only `rerun-full`.
+       - Any log is traced: stop (a traced status may trigger only `rerun-full`).
        - Stop, naming the file, if `blocked_by` is non-empty (what it covers: `ci_remediation.py`'s docstring), or if the PR diff touches a file on `/fix-gh-issue` step 11's sensitive-surface list (by name, or by content for the list's non-path items, or when unsure whether it is sensitive).
        - Otherwise run, in the checkout, `sh -c "$(git config --local --get 'kitchen-sink.remediation.<name>.run')"` (the helper already checked `<name>` against `^[A-Za-z0-9][A-Za-z0-9-]*$`; read from git config, not the helper's JSON, so the command is never retyped) with a Bash timeout of 600000 ms. Timeout or non-zero exit: stop.
        - Then `git status --porcelain` must be empty and HEAD still `<sha>`; otherwise stop, saying what changed and that `git reset --hard '<sha>'` and `git clean` restore it.

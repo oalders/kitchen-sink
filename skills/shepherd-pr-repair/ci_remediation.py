@@ -4,9 +4,12 @@
 Entries are per-clone git config sections, set only by the user:
 
   [kitchen-sink "remediation.<name>"]
-      match = <Python regex, searched over the whole failed-run log>
+      match = <Python regex, re.MULTILINE, searched over the last 300 lines of each failed log>
       run   = rerun-full | <shell command>
       reads = <repo path the command executes; a trailing / means a directory>
+
+A directory `reads` without the trailing / is a file, so `tools` also blocks
+siblings such as `toolsx`: write `dir/` for directories.
 
 Subcommands (all print JSON on stdout):
 
@@ -23,11 +26,13 @@ Security model (the one authoritative statement): a shell `run` executes in the
 PR checkout, so the caller refuses it when `blocked_by` is non-empty. That lists
 every path `git diff BASE...SHA` changes that equals, is under, or shares a
 directory with a `reads` file (compared case-insensitively), plus every tracked
-symlink under a `reads` path at SHA (its target may lie outside `reads`). So
-`reads` must list every file the command executes, including ones tools resolve
-on their own (Makefile includes, `package.json` scripts, `PATH` entries such as
-`bin/`). Every infra fix ends with a full re-run, so the command must not call
-`gh run rerun` or trigger workflows.
+symlink under or above (an ancestor directory of) a `reads` path at SHA (its
+target may lie outside `reads`). So `reads` must list every file the command
+executes, including ones tools resolve on their own (Makefile includes,
+`package.json` scripts, `PATH` entries such as `bin/`). Every infra fix ends with a full re-run, so the command must not call
+`gh run rerun` or trigger workflows. A commit status's `target_url` can be set
+by anyone with status-write access, so a log traced from one may trigger only
+`rerun-full`.
 
 Log text is only searched, never executed or echoed into a command; the caller
 runs only the configured `run` value, read from git config itself.
@@ -155,15 +160,27 @@ def changed_paths(rng):
 
 
 def symlinks(reads, sha):
-    """Tracked symlinks under any reads path at sha."""
+    """Tracked symlinks under any reads path, or as one of its ancestor directories, at sha."""
     hits = []
     for value in reads:
         out = run(["git", "ls-tree", "-r", "-z", sha, "--", value.rstrip("/")]).stdout
-        for record in out.split("\0"):
-            meta, _, path = record.partition("\t")
-            if meta.startswith("120000 "):
-                hits.append(path)
+        hits += symlink_records(out)
+    # ls-tree -r finds nothing below a symlinked ancestor, so check each ancestor itself.
+    parts = [v.rstrip("/").split("/") for v in reads]
+    ancestors = sorted({"/".join(p[:i]) for p in parts for i in range(1, len(p))})
+    if ancestors:
+        out = run(["git", "ls-tree", "-z", sha, "--", *ancestors]).stdout
+        hits += [p for p in symlink_records(out) if p in ancestors]
     return hits
+
+
+def symlink_records(out):
+    paths = []
+    for record in out.split("\0"):
+        meta, _, path = record.partition("\t")
+        if meta.startswith("120000 "):
+            paths.append(path)
+    return paths
 
 
 def read_text(path):
@@ -194,10 +211,11 @@ def cmd_match(args):
         print(json.dumps({"status": "none"}))
         return 1
     entry = found[0]
-    sha = args.range.rpartition("...")[2]
-    if not sha:
+    base, sep, sha = args.range.rpartition("...")
+    if not (base and sep and sha):
         raise ToolError(f"--range {args.range!r} is not BASE...SHA")
-    hits = blocked_by(entry["reads"], changed_paths(args.range)) + symlinks(entry["reads"], sha)
+    # dict.fromkeys: a changed symlink would otherwise be listed twice.
+    hits = list(dict.fromkeys(blocked_by(entry["reads"], changed_paths(args.range)) + symlinks(entry["reads"], sha)))
     # run picks rerun-full vs shell; the caller still executes the git config value, not this copy.
     out = {"status": "match", "name": entry["name"], "run": entry["run"], "blocked_by": hits}
     print(json.dumps(out, indent=2))

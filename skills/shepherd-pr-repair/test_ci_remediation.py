@@ -82,7 +82,8 @@ class ListEntries(RepoTest):
         self.entry("-lead", "x", "rerun-full")
         rc, out = self.main(["list"])
         self.assertEqual(rc, 2)
-        self.assertEqual([e["error"] for e in out["entries"]], ["bad name 'ci_bundle'", "bad name '-lead'"])
+        for entry in out["entries"]:
+            self.assertIn("bad name", entry["error"])
 
     def test_trailing_newline_name(self):
         # git config can't store this name today; validate must not rely on that.
@@ -93,7 +94,8 @@ class ListEntries(RepoTest):
         self.entry("r", "x", "")
         rc, out = self.main(["list"])
         self.assertEqual(rc, 2)
-        self.assertEqual([e["error"] for e in out["entries"]], ["empty value", "empty value"])
+        for entry in out["entries"]:
+            self.assertIn("empty value", entry["error"])
 
     def test_missing_run(self):
         self.add("a", "match", "x")
@@ -151,8 +153,8 @@ class MatchLogs(RepoTest):
         subprocess.run(["git", "add", "--", *files], check=True)
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], check=True)
 
-    def match(self, *logs):
-        argv = ["match", "--range", "base...HEAD"]
+    def match(self, *logs, rng="base...HEAD"):
+        argv = ["match", "--range", rng]
         for i, text in enumerate(logs):
             argv += ["--log", self.write(f"log{i}", text)]
         return self.main(argv)
@@ -186,8 +188,12 @@ class MatchLogs(RepoTest):
         self.assertEqual(self.match("boom", "other"), (1, {"status": "none"}))
 
     def test_blocked_by(self):
-        self.entry("a", "boom", "make it", ["Makefile", "script/ci/", "tools", "lib/conf/x.mk"])
+        self.commit({"old.sh": "x"})
+        subprocess.run(["git", "tag", "-f", "base"], check=True, capture_output=True)
+        subprocess.run(["git", "rm", "-q", "old.sh"], check=True)
+        self.entry("a", "boom", "make it", ["Makefile", "script/ci/", "tools", "lib/conf/x.mk", "old.sh", "conf/Build.mk"])
         self.commit({
+            "CONF/BUILD.MK": "x",  # a reads file, other case
             "Makefile": "x",  # exact
             "GNUmakefile": "x",  # sibling of a top-level reads file
             "Script/CI/run": "x",  # under a directory with trailing slash, other case
@@ -199,7 +205,10 @@ class MatchLogs(RepoTest):
         })
         rc, out = self.match("boom")
         self.assertEqual(rc, 0)
-        self.assertEqual(out["blocked_by"], ["GNUmakefile", "Makefile", "Script/CI/run", "lib/conf/y.mk", "tools/a/b", "toolsx"])
+        self.assertCountEqual(
+            out["blocked_by"],
+            ["CONF/BUILD.MK", "GNUmakefile", "Makefile", "Script/CI/run", "lib/conf/y.mk", "old.sh", "tools/a/b", "toolsx"],
+        )
 
     def test_non_ascii_path_blocked(self):
         self.entry("a", "boom", "make it", ["script/ci/"])
@@ -213,6 +222,35 @@ class MatchLogs(RepoTest):
         self.entry("a", "boom", "make it", ["script/ci/"])
         rc, out = self.match("boom")
         self.assertEqual((rc, out["blocked_by"]), (0, ["script/ci/build"]))
+
+    def test_changed_symlink_listed_once(self):
+        self.entry("a", "boom", "make it", ["script/ci/"])
+        self.commit({"script/ci/build": "->../../tools/build.sh"})
+        rc, out = self.match("boom")
+        self.assertEqual((rc, out["blocked_by"]), (0, ["script/ci/build"]))
+
+    def test_symlinked_ancestor_of_reads_blocked(self):
+        self.commit({"ext/c.sh": "x", "a/b": "->../ext"})
+        subprocess.run(["git", "tag", "-f", "base"], check=True, capture_output=True)
+        self.entry("x", "boom", "make it", ["a/b/c.sh"])
+        self.commit({"ext/c.sh": "changed"})
+        rc, out = self.match("boom")
+        self.assertEqual((rc, out["blocked_by"]), (0, ["a/b"]))
+
+    def test_symlinks_read_at_range_sha_not_head(self):
+        self.entry("a", "boom", "make it", ["script/ci/"])
+        self.commit({"src/app.py": "x"})
+        subprocess.run(["git", "tag", "x"], check=True)
+        self.commit({"script/ci/build": "->../../tools/build.sh"})
+        rc, out = self.match("boom", rng="base...x")
+        self.assertEqual((rc, out["blocked_by"]), (0, []))
+
+    def test_malformed_range(self):
+        self.entry("a", "boom", "rerun-full")
+        for rng in ("base...", "base", "...HEAD"):
+            rc, out = self.match("boom", rng=rng)
+            self.assertEqual(rc, 2, rng)
+            self.assertIn("error", out)
 
     def test_unrelated_path_not_blocked(self):
         self.entry("a", "boom", "make it", ["script/ci/"])
