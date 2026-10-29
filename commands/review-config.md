@@ -20,7 +20,7 @@ Steps:
    - `codexTimeoutAction`: `proceed`, described as: a timeout passes the gate without a bot review, so the PR can be marked ready, and a `/fix-gh-issues` run with merging on may merge it. Mark **Default** (`stop`) as Recommended.
    - Numeric keys: one sample value that isn't the current one (`codexTimeoutMinutes` `60`, else `15`; `shepherdTimeoutMinutes` `240`, else `60`; rounds `5`, else `1`), so the question always has two options; its description says any other value goes in via Other.
 3. **Validate** each answer as a whole string: minutes `^[1-9][0-9]*$`, rounds `^[1-5]$`, action `^(stop|proceed)$`. On a mismatch, re-ask that question once; if it still doesn't match, stop without writing anything. Never write a value that hasn't passed.
-4. **Warn** if any key will change, then go on: `--local` lives in the clone's shared `.git/config`, so the change applies to every worktree of this clone, including runs already in progress.
+4. **Warn** if any key will change, then go on: `--local` lives in the clone's shared `.git/config`, so the change applies to every worktree of this clone, including runs already in progress (a running `/shepherd-pr` keeps the deadline it computed at start).
 5. **Write** only the keys whose answer changed:
    ```bash
    git config --local <key> '<value>'   # new value
