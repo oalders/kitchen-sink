@@ -54,6 +54,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/codex-review** | Shows or switches this repo's Codex review mode (`on` = local loop plus a mandatory `@codex review` bot gate, `local`, `off`, `default`) via `git config --local kitchen-sink.codexReview` |
 | **/review-config** | Walks you through this repo's Codex bot wait, timeout action and review round caps, and writes them with `git config --local` |
 | **/break-into-gh-issues** | Maybe split big issues into smaller ones—so you get a code review and not an intervention |
+| **/new-gh-issue** | Researches a problem and offers to file it as an issue—writing it down, not fixing it |
 | **/draft-pr** | Creates a draft PR that closes the GitHub issue inferred from your branch name |
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
 | **/fix-gh-issues** | Point your robot at the whole backlog, go to bed, and wake up to merged PRs |
@@ -263,6 +264,15 @@ Breaks down work into manageable GitHub issues:
 - Multi-issue with umbrella tracking for larger work
 - Creates labels if they don't exist
 - Links sub-issues back to umbrella with progress checklist
+
+#### /new-gh-issue
+
+Records a problem as a GitHub issue without implementing it:
+- Takes the problem from its argument, or from the conversation (e.g. a pasted transcript)
+- Researches the code involved and searches this repo's issues and PRs for duplicates; an open PR for the same problem stops it, and an open issue for it offers a comment there or a new issue anyway
+- Shows the draft (problem, proposal, open questions, existing labels only) and files nothing until you confirm
+- Never creates branches, commits or PRs
+- Only you can start it (`disable-model-invocation`)
 
 #### /draft-pr
 

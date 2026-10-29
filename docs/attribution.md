@@ -33,7 +33,7 @@ The email is always `noreply@anthropic.com`; the display name is the running mod
 
 ## PR-body line
 
-Every PR body — and every GitHub **issue body** — a skill creates ends with this line
+Every PR body — and every GitHub **issue body** or **issue comment** — a skill creates ends with this line
 (version = running model):
 
 ```
