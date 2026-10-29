@@ -58,7 +58,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/draft-pr** | Creates a draft PR that closes the GitHub issue inferred from your branch name |
 | **/fix-gh-issue** | Point your robot at a GitHub issue and let it start beeping and booping |
 | **/fix-gh-issues** | Point your robot at the whole backlog, go to bed, and wake up to merged PRs |
-| **/shepherd-pr** | Carries one of your own PRs (or a finished `fix-NNN` branch, via `/fix-gh-issue`) to merged without asking: checks the Codex gate, marks it ready, enables auto-merge, watches the checks and the merge queue, and repairs failed checks or Codex findings |
+| **/shepherd-pr** | Carries one of your own PRs (or a finished `fix-NNN` branch, via `/fix-gh-issue`) to merged without asking: rebases it when it conflicts or is behind, checks the Codex gate, marks it ready, enables auto-merge, watches the checks and the merge queue, and repairs failed checks or Codex findings |
 | **/shepherd-prs** | Runs `/shepherd-pr` over each of your own open PRs in this repo, one at a time, and reports a one-line status per PR |
 | **/triage-backlog** | Grooms open GitHub issues—finds completed work, updates task lists, and suggests labels, one issue at a time |
 
@@ -83,7 +83,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **code-review-flow** | Streamlined code review workflow that avoids permission prompts |
 | **fix-gh-issue-autonomous** | Unattended-run rules for `/fix-gh-issue autonomous`; `/fix-gh-issue` loads it on demand |
 | **fix-gh-issue-design-review** | How `/fix-gh-issue` reviews its design doc or pre-flight block (step 5.5); loaded on demand |
-| **shepherd-pr-repair** | How `/shepherd-pr` fixes a failed check or Codex findings, reviews the fix and pushes it; loaded on demand |
+| **shepherd-pr-repair** | How `/shepherd-pr` rebases a conflicting or behind PR, or fixes a failed check or Codex findings, reviews the result and pushes it; loaded on demand |
 | **implement-design-handoff** | Wires a design-system / component-export handoff into an app's real templates and CSS faithfully, forcing a property-by-property visual-parity check and protecting untouched surfaces |
 | **over-engineer-no-more** | Prevents your robot from building a spaceship when you asked for a bicycle |
 | **stacking-prs** | Decides which PRs to stack and which to open against the default branch, links stacks with `gh stack`, and tells you only the merge order |
@@ -311,6 +311,7 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 #### /shepherd-pr
 
 Carries one of your own open PRs (same repo, default base) to merged; with no number, the current branch's PR, or, on a committed `fix-NNN` branch with no PR, a draft it has `/fix-gh-issue` open. Running it is your consent: it asks no questions, and where it needs you it reports and stops. Each run reads the PR and picks up where it stands, so re-running is safe:
+- When the PR conflicts with or is behind the base, rebases it first, once per run: stops (aborting the rebase) on a sensitive or unsure conflict, regenerates a conflicted lockfile, stops on failing tests, reviews only if the PR diff changed, and force-pushes with a lease pinned to the head it read
 - In Codex `github` mode, gates on a clean bot review of the head commit: without one it posts (or reuses) your own `@codex review` trigger for that head and waits the configured bot wait, then honours `codexTimeoutAction`
 - Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then marks a draft ready (even if a `pull_request_target` workflow would then run) and enables auto-merge
 - Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check or a new head commit it turns auto-merge off and stops, and a re-run gates the new head again
@@ -326,12 +327,12 @@ Carries one of your own open PRs (same repo, default base) to merged; with no nu
 
 Sweeps your open PRs with `/shepherd-pr`:
 - Takes your own open PRs in this repo based on the default branch, drafts included, oldest number first
-- Runs them one at a time, so one PR's check watch (up to ~45 minutes) holds up the rest, and a merge can leave a later PR behind, which `/shepherd-pr` then reports and stops on
-- Follows `/shepherd-pr` for each, so it runs unattended, even under `/loop`: PRs are marked ready, auto-merged and repaired without asking; a repair is skipped unless you're on that PR's branch, and the PR is reported as needing `/shepherd-pr <n>` from its checkout
+- Runs them one at a time, so one PR's check watch (up to ~45 minutes) holds up the rest, and a merge can leave a later PR behind, which `/shepherd-pr` then rebases if you're on its branch
+- Follows `/shepherd-pr` for each, so it runs unattended, even under `/loop`: PRs are marked ready, auto-merged and repaired without asking; a rebase or repair is skipped unless you're on that PR's branch, and the PR is reported as needing `/shepherd-pr <n>` from its checkout
 - In Codex `github` mode it may also post up to two `@codex review` comments per PR head (the second only as a re-trigger), and doesn't wait on the bot: a PR whose window is still open is reported as waiting and judged on the next sweep
 - Only you can start it (`disable-model-invocation`)
 - Doesn't run `/shepherd-pr`'s queue watch: a queued PR is reported as in the merge queue, and one with only auto-merge on as auto-merge on and waiting
-- Ends with one status line per PR: merged, in the merge queue, auto-merge on and waiting, needs repair from its checkout, waiting on the Codex bot, left as is, or stopped with the reason
+- Ends with one status line per PR: merged, in the merge queue, auto-merge on and waiting, needs rebase or repair from its checkout, waiting on the Codex bot, left as is, or stopped with the reason
 
 #### /triage-backlog
 
