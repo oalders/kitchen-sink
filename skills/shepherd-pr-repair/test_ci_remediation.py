@@ -77,9 +77,23 @@ class ListEntries(RepoTest):
         [entry] = out["entries"]
         self.assertIn(fragment, entry["error"])
 
-    def test_bad_name(self):
+    def test_bad_names(self):
         self.entry("ci_bundle", "x", "rerun-full")
-        self.assertInvalid("bad name")
+        self.entry("-lead", "x", "rerun-full")
+        rc, out = self.main(["list"])
+        self.assertEqual(rc, 2)
+        self.assertEqual([e["error"] for e in out["entries"]], ["bad name 'ci_bundle'", "bad name '-lead'"])
+
+    def test_trailing_newline_name(self):
+        # git config can't store this name today; validate must not rely on that.
+        self.assertIn("bad name", cr.validate("a\n", {"match": ["x"], "run": ["rerun-full"]}))
+
+    def test_empty_values(self):
+        self.entry("m", "", "rerun-full")
+        self.entry("r", "x", "")
+        rc, out = self.main(["list"])
+        self.assertEqual(rc, 2)
+        self.assertEqual([e["error"] for e in out["entries"]], ["empty value", "empty value"])
 
     def test_missing_run(self):
         self.add("a", "match", "x")
@@ -100,9 +114,12 @@ class ListEntries(RepoTest):
         self.assertInvalid("needs at least one reads")
 
     def test_bad_reads_paths(self):
-        for value in ("", "/etc/passwd", "../x", "a/../b", "a/./b"):
-            with self.subTest(value=value):
-                self.assertIn("bad reads path", cr.validate("a", {"match": ["x"], "run": ["make"], "reads": [value]}))
+        for i, value in enumerate(("/etc/passwd", "../x", "a/../b", "a/./b", "./")):
+            self.entry(f"e{i}", "x", "make", [value])
+        rc, out = self.main(["list"])
+        self.assertEqual(rc, 2)
+        for entry in out["entries"]:
+            self.assertIn("bad reads path", entry["error"])
 
     def test_bad_regex(self):
         self.entry("a", "(", "rerun-full")
@@ -119,60 +136,88 @@ class ListEntries(RepoTest):
 
 
 class MatchLogs(RepoTest):
+    def setUp(self):
+        super().setUp()
+        self.commit({"README": "x"})
+        subprocess.run(["git", "tag", "base"], check=True)
+
+    def commit(self, files):
+        for path, target in files.items():
+            os.makedirs(os.path.dirname(os.path.join(self.dir, path)) or self.dir, exist_ok=True)
+            if target.startswith("->"):
+                os.symlink(target[2:], os.path.join(self.dir, path))
+            else:
+                self.write(path, target)
+        subprocess.run(["git", "add", "--", *files], check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], check=True)
+
+    def match(self, *logs):
+        argv = ["match", "--range", "base...HEAD"]
+        for i, text in enumerate(logs):
+            argv += ["--log", self.write(f"log{i}", text)]
+        return self.main(argv)
+
     def test_invalid_entry_fails_lookup(self):
         self.entry("good", "boom", "rerun-full")
         self.entry("bad", "(", "rerun-full")
-        rc, out = self.main(["match", "--log", self.write("l", "boom")])
-        self.assertEqual(rc, 2)
-        self.assertEqual(out["status"], "invalid")
+        rc, out = self.match("boom")
+        self.assertEqual((rc, out["status"]), (2, "invalid"))
+
+    def test_no_entries_is_none(self):
+        self.assertEqual(self.match("boom"), (1, {"status": "none"}))
 
     def test_first_entry_in_config_order_wins(self):
         self.entry("first", "^boom$", "rerun-full")
         self.entry("second", "boom", "rerun-full")
-        rc, out = self.main(["match", "--log", self.write("l", "a\nboom\nb")])
+        rc, out = self.match("a\nboom\nb")
         self.assertEqual((rc, out["status"], out["name"]), (0, "match", "first"))
 
     def test_all_logs_same_entry(self):
         self.entry("a", "boom", "rerun-full")
-        logs = ["--log", self.write("l1", "boom 1"), "--log", self.write("l2", "boom 2")]
-        rc, out = self.main(["match", *logs])
-        self.assertEqual(rc, 0)
-        self.assertEqual(out, {"status": "match", "name": "a", "run": "rerun-full", "reads": [], "blocked_by": []})
+        self.assertEqual(self.match("boom 1", "boom 2"), (0, {"status": "match", "name": "a", "run": "rerun-full", "blocked_by": []}))
 
     def test_mixed_entries_is_none(self):
         self.entry("a", "boom", "rerun-full")
         self.entry("b", "bang", "rerun-full")
-        rc, out = self.main(["match", "--log", self.write("l1", "boom"), "--log", self.write("l2", "bang")])
-        self.assertEqual((rc, out), (1, {"status": "none", "unmatched": [], "names": ["a", "b"]}))
+        self.assertEqual(self.match("boom", "bang"), (1, {"status": "none"}))
 
     def test_unmatched_log_is_none(self):
         self.entry("a", "boom", "rerun-full")
-        l2 = self.write("l2", "other")
-        rc, out = self.main(["match", "--log", self.write("l1", "boom"), "--log", l2])
-        self.assertEqual((rc, out), (1, {"status": "none", "unmatched": [l2], "names": ["a"]}))
+        self.assertEqual(self.match("boom", "other"), (1, {"status": "none"}))
 
     def test_blocked_by(self):
         self.entry("a", "boom", "make it", ["Makefile", "script/ci/", "tools", "lib/conf/x.mk"])
-        changed = {
-            "./Makefile": True,  # exact, after ./ normalisation
-            "GNUmakefile": True,  # sibling of a top-level reads file
-            "script/ci/run": True,  # under a directory with trailing slash
-            "tools/a/b": True,  # under a directory without trailing slash
-            "lib/conf/y.mk": True,  # sibling of a nested reads file
-            "lib/other.py": False,
-            "script/cid": False,
-            "toolsx": True,  # top-level sibling of "tools" read as a file
-        }
-        path = self.write("changed", "\n".join(changed) + "\n")
-        rc, out = self.main(["match", "--log", self.write("l", "boom"), "--changed", path])
+        self.commit({
+            "Makefile": "x",  # exact
+            "GNUmakefile": "x",  # sibling of a top-level reads file
+            "Script/CI/run": "x",  # under a directory with trailing slash, other case
+            "tools/a/b": "x",  # under a directory without trailing slash
+            "lib/conf/y.mk": "x",  # sibling of a nested reads file
+            "lib/other.py": "x",
+            "script/cid": "x",
+            "toolsx": "x",  # top-level sibling of "tools" read as a file
+        })
+        rc, out = self.match("boom")
         self.assertEqual(rc, 0)
-        expected = [cr.normalise(p) for p, hit in changed.items() if hit]
-        self.assertEqual(out["blocked_by"], expected)
+        self.assertEqual(out["blocked_by"], ["GNUmakefile", "Makefile", "Script/CI/run", "lib/conf/y.mk", "tools/a/b", "toolsx"])
+
+    def test_non_ascii_path_blocked(self):
+        self.entry("a", "boom", "make it", ["script/ci/"])
+        self.commit({"script/ci/caf\u00e9 \"q\".sh": "x"})
+        rc, out = self.match("boom")
+        self.assertEqual((rc, out["blocked_by"]), (0, ["script/ci/caf\u00e9 \"q\".sh"]))
+
+    def test_symlink_under_reads_blocked(self):
+        self.commit({"tools/build.sh": "x", "script/ci/build": "->../../tools/build.sh"})
+        subprocess.run(["git", "tag", "-f", "base"], check=True, capture_output=True)
+        self.entry("a", "boom", "make it", ["script/ci/"])
+        rc, out = self.match("boom")
+        self.assertEqual((rc, out["blocked_by"]), (0, ["script/ci/build"]))
 
     def test_unrelated_path_not_blocked(self):
         self.entry("a", "boom", "make it", ["script/ci/"])
-        path = self.write("changed", "src/app.py\nscript/other\n")
-        rc, out = self.main(["match", "--log", self.write("l", "boom"), "--changed", path])
+        self.commit({"src/app.py": "x", "script/other": "x"})
+        rc, out = self.match("boom")
         self.assertEqual((rc, out["blocked_by"]), (0, []))
 
 
