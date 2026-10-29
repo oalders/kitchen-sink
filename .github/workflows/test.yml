@@ -1,0 +1,21 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 hooks/test_require_review_before_pr.py
+      - run: python3 hooks/test_suggest_review_after_commit.py
+      - run: python3 skills/codex-review-loop/test_codex_loop.py
