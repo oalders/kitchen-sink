@@ -255,7 +255,7 @@ Shows or switches the per-clone Codex review mode used by the `codex-review-loop
 - `local`: local loop only; `off`: skip Codex; `default`: unset (`off`)
 - Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
 - The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30) from the `@codex review` trigger, in `codex-review-loop` and `/shepherd-pr`; on timeout, `kitchen-sink.codexTimeoutAction` `stop` (default) keeps the PR in draft and `proceed` passes with a note in the PR body, e.g. `git config --local kitchen-sink.codexTimeoutAction proceed`
-- Run `/review-config` to see or change the timeout and round keys, and `/shepherd-pr`'s `kitchen-sink.shepherdTimeoutMinutes`
+- Run `/review-config` to see or change the timeout, round and `/shepherd-pr` deadline keys
 
 #### /break-into-gh-issues
 
@@ -311,12 +311,12 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 #### /shepherd-pr
 
 Carries one of your own open PRs (same repo, default base) to merged; with no number, the current branch's PR, or, on a committed `fix-NNN` branch with no PR, a draft it has `/fix-gh-issue` open. Running it is your consent: it asks no questions, and where it needs you it reports and stops. It keeps going (waiting two minutes between passes, printing a one-line status each pass) until the PR merges, a stop that needs you, or `kitchen-sink.shepherdTimeoutMinutes` (default 180) runs out; each run reads the PR and picks up where it stands, so re-running is safe:
-- When the PR conflicts with or is behind the base, rebases it first, once per head: stops (aborting the rebase) on a sensitive or unsure conflict, regenerates a conflicted lockfile, stops on failing tests, reviews only if the PR diff changed, and force-pushes with a lease pinned to the head it read
+- When the PR conflicts with or is behind the base, rebases it first (a repair): stops (aborting the rebase) on a sensitive or unsure conflict, regenerates a conflicted lockfile, stops on failing tests, reviews only if the PR diff changed, and force-pushes with a lease pinned to the head it read
 - In Codex `github` mode, gates on a clean bot review of the head commit: without one it posts (or reuses) your own `@codex review` trigger for that head and waits the configured bot wait, then honours `codexTimeoutAction`
 - Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then marks a draft ready (even if a `pull_request_target` workflow would then run) and enables auto-merge
 - Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check it turns auto-merge off and repairs it, and if every failure was cancelled or timed out it re-runs those Actions runs once per head instead; a new head it didn't push, auto-merge turned off by you, or a required review stops it, and its report gives you `/shepherd-pr <n>` to re-run (for a failing check it couldn't repair or re-run, with the head unchanged, the `gh run rerun` commands to try first)
 - With every check green, keeps watching the merge queue (or auto-merge) until the PR merges or is ejected, reporting an ejection's reason and the finished checks that didn't succeed; the deadline follows GitHub's merge-time estimate, with fixed fallbacks
-- On a failed check or Codex findings, repairs it, at most once per head and three repairs per run: fixes in your PR checkout, runs the `/fix-gh-issue` reviews, and pushes; then starts over, so auto-merge is only re-enabled on a head that passed the gate
+- On a failed check or Codex findings, repairs it, at most three repairs (rebases included) per run: fixes in your PR checkout, runs the `/fix-gh-issue` reviews, and pushes; then starts over, so auto-merge is only re-enabled on a head that passed the gate
 - A repair doesn't push if the reviews didn't finish clean, a Codex finding was declined (only you can confirm a decline), or the fix touches a sensitive file the PR didn't already change
 - With no number on a clean, committed `fix-NNN` branch that has no PR, hands off to `/fix-gh-issue` for its reviews, Codex gate, verification and draft PR, then carries on with that PR; if `/fix-gh-issue` would keep it draft, it reports why and stops, and re-running `/shepherd-pr <n>` marks it ready despite them
 - If the PR was last removed from the merge queue on the current head, shows why and stops rather than re-enqueue the same head
@@ -331,7 +331,7 @@ Sweeps your open PRs with `/shepherd-pr`:
 - Follows `/shepherd-pr` for each, so it runs unattended, even under `/loop`: PRs are marked ready, auto-merged and repaired without asking; a rebase or repair is skipped unless you're on that PR's branch, and the PR is reported as needing `/shepherd-pr <n>` from its checkout
 - In Codex `github` mode it may also post up to two `@codex review` comments per PR head (the second only as a re-trigger), and doesn't wait on the bot: a PR whose window is still open is reported as waiting and judged on the next sweep
 - Only you can start it (`disable-model-invocation`)
-- Makes one pass per PR, without `/shepherd-pr`'s waits, deadline or queue watch: a queued PR is reported as in the merge queue, and one with only auto-merge on as auto-merge on and waiting
+- Makes one wait-free pass per PR, without `/shepherd-pr`'s waits, deadline or queue watch: a queued PR is reported as in the merge queue, and one with only auto-merge on as auto-merge on and waiting
 - Ends with one status line per PR: merged, in the merge queue, auto-merge on and waiting, needs rebase or repair from its checkout, waiting on the Codex bot, left as is, or stopped with the reason
 
 #### /triage-backlog
