@@ -23,7 +23,7 @@ Steps:
    - End the sweep on a failed `git fetch`, or when two consecutive PRs each stop on a failed `gh` command or `codex_loop.py` exit 2; any other outcome resets the count. Not failures: `gh pr checks` exiting non-zero, `timeout` exiting 124, `git grep` finding no match.
    - Its one-repair limit counts per PR.
    - In its step 2, run every trigger wait, a re-trigger's included, in the foreground with `--timeout 0`, not `run_in_background`. `pending`: report "waiting on the Codex bot (window ends <window_ends>)" and go on to the next PR; it isn't a failure for the count above.
-   - In its step 5, don't enter the queue watch: report "in the merge queue" (or "auto-merge on and waiting") and go on to the next PR; it isn't a failure for the count above.
+   - In its step 5, don't enter the queue watch: report "in the merge queue" if `isInMergeQueue`, otherwise "auto-merge on and waiting", and go on to the next PR; it isn't a failure for the count above.
    - In its step 6, after its disable-auto and cancel-only bullets, before it invokes the repair skill: if `git branch --show-current` isn't that PR's `headRefName` (from its step 1), don't repair; report that it needs a repair from its checkout (`/shepherd-pr <n>` there) and whether auto-merge is off, then go on to the next PR.
    - If context was compacted, re-read the file before the next PR.
 3. **Report.** One line per PR: its number and outcome in your own words (e.g. merged, in the merge queue, auto-merge on and waiting, marked ready, auto-merge disabled, left as is, needs repair from its checkout (plus "auto-merge off" if so), waiting on the Codex bot (window ends <window_ends>), stopped and why). Never quote PR titles, branch names or bot text.
