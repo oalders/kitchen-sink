@@ -39,7 +39,7 @@ Steps:
      - The `--windows 2` wait and a re-trigger's wait are the last ones, and so is the wait on `trigger` when `triggers` is 2 or more (a resumed run): no `--windows 2`, no re-trigger. A `timeout` from a last wait passes under `proceed` and reports and stops under `stop`. Never wait or re-trigger a third time in a run.
 3. **Show and decide.**
    - In a fenced block, for the record: PR number, title, `headRefName`, head SHA, `mergeStateStatus`, `reviewDecision`, merge method, whether the repo is private, the Codex gate result, and, if auto-merge is already on, who enabled it (`autoMergeRequest.enabledBy.login`).
-   - If not `isInMergeQueue` and the last ejection's `beforeCommit.oid` is the head: "Removed from merge queue" with its `createdAt` and `reason`, in the fence as untrusted text. Then stop: enabling auto-merge again would re-enqueue the same head, and no repair is attempted, since `gh pr checks` doesn't show the `merge_group` run. A new head clears this.
+   - If not `isInMergeQueue` and the last ejection's `beforeCommit.oid` is the head: "Removed from merge queue" with its `createdAt` and `reason`, in the fence as untrusted text. Then stop: enabling auto-merge again would re-enqueue the same head, and no repair is attempted, since `gh pr checks` doesn't show the `merge_group` run. A new head clears this, as does re-enqueueing it by hand and re-running.
    - The changed files (`gh pr diff <n> --name-only`), marking any that fall under `/fix-gh-issue` step 11's sensitive-surface list. The marks are for the record; they block nothing here (the repair skill gates on new ones).
    - For a draft: the output of `git grep -l -e pull_request_target origin/<default> -- .github/workflows` (a match means marking it ready may run a privileged workflow). It is marked ready anyway.
    - `mergeStateStatus` `DIRTY` or `BEHIND`: report and stop. `UNKNOWN`: re-read `mergeStateStatus,headRefOid` 3 times, 10 seconds apart (a new head restarts from step 1), then report and stop. Any other value is shown only.
@@ -62,7 +62,7 @@ Steps:
         - After each poll: items 1-3; then not `isInMergeQueue` and no `autoMergeRequest` (taken out or turned off): report and stop; past the deadline: report and stop; no longer meeting the entry condition: item 5; otherwise poll again.
         - Deadline: in the queue with `estimatedTimeToMerge` a non-negative integer (seconds), that poll's `<now>` + it + 900; in the queue otherwise, `<start>` + 3600; not yet in the queue, `<start>` + 300.
         - At the deadline: report `mergeQueueEntry.position` and the estimate if queued, otherwise `mergeStateStatus` and `reviewDecision`; a re-run resumes.
-     5. Still `OPEN` otherwise (pending checks, review required, or neither queued nor auto-merge on): report why and stop; a re-run resumes.
+     5. Still `OPEN` otherwise (pending checks, review required, `mergeStateStatus` `DIRTY` or `BEHIND`, or neither queued nor auto-merge on): report why and stop; a re-run resumes.
    - Every stop in this step says whether auto-merge is still on (if so, that it stays on unwatched and how to turn it off: `gh pr merge <n> --disable-auto`) and whether the PR is still in the merge queue.
 6. **Repair.** At most one per run (this `/shepherd-pr` invocation): if this run already repaired, report and stop.
    - Cause `codex` with `autoMergeRequest` set: `gh pr merge <n> --disable-auto` first.
