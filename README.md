@@ -316,7 +316,7 @@ Works through open GitHub issues one at a time, unattended, so you can start it 
 
 #### /shepherd-pr
 
-Carries one of your own open PRs (same repo, default base) to merged; with no number, the current branch's PR, or, on a committed `fix-NNN` branch with no PR, a draft it has `/fix-gh-issue` open. Running it is your consent: it asks no questions, and where it needs you it reports and stops. It keeps going (waiting two minutes after a resumable stop, printing a one-line status each pass) until the PR merges, a stop that needs you, or `kitchen-sink.shepherdTimeoutMinutes` (default 180) runs out; each run reads the PR and picks up where it stands, so re-running is safe:
+Carries one of your own open PRs (same repo, default base) to merged; with no number, the current branch's PR, or, on a committed `fix-NNN` branch with no PR, a draft it has `/fix-gh-issue` open. Running it is your consent: it asks no questions, and where it needs you it reports and stops. It keeps going (waiting two minutes after a resumable stop and printing a one-line status each pass) until the PR merges, a stop that needs you, or `kitchen-sink.shepherdTimeoutMinutes` (default 180) runs out; each run reads the PR and picks up where it stands, so re-running is safe:
 - When the PR conflicts with or is behind the base, rebases it first (a repair): stops (aborting the rebase) on a sensitive or unsure conflict, regenerates a conflicted lockfile, stops on failing tests, reviews only if the PR diff changed, and force-pushes with a lease pinned to the head it read
 - In Codex `github` mode, gates on a clean bot review of the head commit: without one it posts (or reuses) your own `@codex review` trigger for that head and waits the configured bot wait, then honours `codexTimeoutAction`
 - Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then marks a draft ready (even if a `pull_request_target` workflow would then run) and enables auto-merge
@@ -327,6 +327,7 @@ Carries one of your own open PRs (same repo, default base) to merged; with no nu
 - A repair doesn't push if the reviews didn't finish clean, a Codex finding was declined (only you can confirm a decline), or the fix touches a sensitive file the PR didn't already change
 - With no number on a clean, committed `fix-NNN` branch that has no PR, hands off to `/fix-gh-issue` for its reviews, Codex gate, verification and draft PR, then carries on with that PR; if `/fix-gh-issue` would keep it draft, it reports why and stops, and re-running `/shepherd-pr <n>` marks it ready despite them
 - If the PR was last removed from the merge queue on the current head, re-enqueues it once per head when the failed queue runs match a remediation entry or are judged infrastructure (by the read-only `ci-log-triage` agent); otherwise it stops with the failed checks, their log tails and the re-enqueue command
+- Once it knows the PR, a `gh` call failing on a GitHub 5xx, secondary rate limit, GraphQL timeout or network error is a resumable stop, except turning auto-merge off or re-running checks, which stay stops that need you
 - On a PR with auto-merge already on, it shows who enabled it and keeps it
 - Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge or a repair
 
