@@ -103,7 +103,7 @@ class ListEntries(RepoTest):
         self.assertInvalid("exactly one match")
 
     def test_unknown_field(self):
-        # A leftover key (run here; reads is handled alike) is flagged, not silently ignored.
+        # A leftover key is flagged, not silently ignored.
         self.entry("a", "x")
         self.add("a", "run", "make it")
         self.assertInvalid("unknown field 'run'")
