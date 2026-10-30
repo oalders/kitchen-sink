@@ -4,7 +4,7 @@
 Entries are per-clone git config sections, set only by the user:
 
   [kitchen-sink "remediation.<name>"]
-      match = <Python regex, re.MULTILINE, searched over the last 300 lines of each failed log>
+      match = <Python regex, re.MULTILINE, searched over each failed log's tail>
 
 A match's only action is a full re-run of the head's workflow runs; any other
 field makes the entry invalid.
@@ -15,11 +15,11 @@ Subcommands (all print JSON on stdout):
                             PATH, a scratch config being checked before it is
                             written).
   match --log FILE [--log FILE ...]
-                            The one entry every log matches (each log takes its
-                            first matching entry in config order; review-config
-                            appends new ones last). Any invalid entry fails the
-                            whole lookup. Each log is searched whole: the caller
-                            passes its last 300 lines.
+                            The first entry in config order whose regex matches
+                            every log (review-config appends new ones last).
+                            Any invalid entry or unreadable log fails the whole
+                            lookup. Each log is searched whole: the caller
+                            passes its last 300 lines, at most 64 KiB.
 
 Log text is only searched, never executed or echoed into a command.
 
@@ -109,15 +109,13 @@ def cmd_match(args):
     if errors:
         print(json.dumps({"status": "invalid", "errors": errors}))
         return 2
-    found = []
-    for log in args.log:
-        text = read_text(log)
-        found.append(next((e for e in entries if re.search(e["match"], text, re.MULTILINE)), None))
-    if None in found or len({e["name"] for e in found}) != 1:
-        print(json.dumps({"status": "none"}))
-        return 1
-    print(json.dumps({"status": "match", "name": found[0]["name"]}))
-    return 0
+    texts = [read_text(log) for log in args.log]
+    for e in entries:
+        if all(re.search(e["match"], text, re.MULTILINE) for text in texts):
+            print(json.dumps({"status": "match", "name": e["name"]}))
+            return 0
+    print(json.dumps({"status": "none"}))
+    return 1
 
 
 def main(argv=None):

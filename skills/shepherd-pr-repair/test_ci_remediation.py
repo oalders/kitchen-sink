@@ -98,10 +98,6 @@ class ListEntries(RepoTest):
         self.add("a", "run", "make it")
         self.assertInvalid("unknown field 'run'")
 
-    def test_missing_match(self):
-        self.add("a", "reads", "Makefile")
-        self.assertInvalid("unknown field 'reads'")
-
     def test_bad_regex(self):
         self.entry("a", "(")
         self.assertInvalid("bad match regex")
@@ -140,7 +136,12 @@ class MatchLogs(RepoTest):
         self.entry("a", "boom")
         self.assertEqual(self.match("boom 1", "boom 2"), (0, {"status": "match", "name": "a"}))
 
-    def test_mixed_entries_is_none(self):
+    def test_entry_covering_every_log_wins(self):
+        self.entry("a", "boom")
+        self.entry("b", "boom|bang")
+        self.assertEqual(self.match("boom", "bang"), (0, {"status": "match", "name": "b"}))
+
+    def test_no_entry_covers_every_log_is_none(self):
         self.entry("a", "boom")
         self.entry("b", "bang")
         self.assertEqual(self.match("boom", "bang"), (1, {"status": "none"}))
