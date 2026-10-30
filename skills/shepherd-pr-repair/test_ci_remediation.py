@@ -103,7 +103,7 @@ class ListEntries(RepoTest):
         self.assertInvalid("exactly one match")
 
     def test_unknown_field(self):
-        # Covers leftover run/reads keys: flagged rather than silently ignored.
+        # A leftover key (run here; reads is handled alike) is flagged, not silently ignored.
         self.entry("a", "x")
         self.add("a", "run", "make it")
         self.assertInvalid("unknown field 'run'")
@@ -111,6 +111,15 @@ class ListEntries(RepoTest):
     def test_bad_regex(self):
         self.entry("a", "(")
         self.assertInvalid("bad match regex")
+
+    def test_empty_log_match(self):
+        self.entry("caret", "^")
+        self.entry("star", "x*")
+        rc, out = self.main(["list"])
+        self.assertEqual(rc, 2)
+        self.assertEqual([e["name"] for e in out["entries"]], ["caret", "star"])
+        for entry in out["entries"]:
+            self.assertIn("must not match an empty log", entry["error"])
 
     def test_file_option_reads_scratch_config(self):
         scratch = os.path.join(self.dir, "scratch")

@@ -68,9 +68,11 @@ def validate(name, fields):
     if not fields["match"][0]:
         return "empty value"
     try:
-        re.compile(fields["match"][0], re.MULTILINE)
+        rx = re.compile(fields["match"][0], re.MULTILINE)
     except re.error as exc:
         return f"bad match regex: {exc}"
+    if rx.search(""):
+        return "match must not match an empty log"
     return None
 
 
