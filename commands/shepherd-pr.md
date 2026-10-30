@@ -84,7 +84,7 @@ Steps:
    - For cause `rebase` (entered from step 1, before step 2 has run), first run step 2's `codex_loop.py mode` command for the Codex mode it passes (exit 2: stop, terminal).
    - Every cause: count the repair and print the status line, then invoke `kitchen-sink:shepherd-pr-repair` through the Skill tool and follow it, passing `<n>`, `headRefName`, the gated `headRefOid`, the cause (`checks`, `codex` or `rebase`), the Codex mode, `<default>` and `infra` from the last status line. It ends by:
      - returning with the new head (its step 7): print the status line with that head (auto-merge `off by this run`), then step 1 (no wait), so the new head goes through the gate again;
-     - returning without a new head (an infra fix, already counted as a repair): append the entry name to `infra`, print the status line (auto-merge as step 1 last read it), and stop (resumable); or
+     - returning without a new head (an infra fix, already counted as a repair): append the entry name to `infra`, print the status line (auto-merge as in the last status line), and stop (resumable); or
      - stopping (terminal, on its own guards).
 
      A stop ends the run, even when step 1 or 2 invoked the repair: don't go on to step 2 or 3; report the stop and whether auto-merge is off.
