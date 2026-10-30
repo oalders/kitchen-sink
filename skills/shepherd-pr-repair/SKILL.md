@@ -1,6 +1,7 @@
 ---
 name: shepherd-pr-repair
 description: Use only when /shepherd-pr step 6 invokes it in this conversation.
+user-invocable: false
 version: 2.3.0
 ---
 
