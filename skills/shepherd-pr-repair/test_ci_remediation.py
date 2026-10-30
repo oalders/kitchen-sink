@@ -56,13 +56,14 @@ class ListEntries(RepoTest):
         self.assertEqual(self.main(["list"]), (0, {"entries": []}))
 
     def test_valid_entries(self):
-        self.entry("ci-bundle", "bundle .* is missing")
-        self.entry("evidence", "no evidence")
+        # Config order, not alphabetical: review-config relies on new entries listing last.
+        self.entry("zeta", "bundle .* is missing")
+        self.entry("alpha", "no evidence")
         rc, out = self.main(["list"])
         self.assertEqual(rc, 0)
         self.assertEqual(
             out["entries"],
-            [{"name": "ci-bundle", "match": "bundle .* is missing"}, {"name": "evidence", "match": "no evidence"}],
+            [{"name": "zeta", "match": "bundle .* is missing"}, {"name": "alpha", "match": "no evidence"}],
         )
 
     def assertInvalid(self, fragment):
@@ -76,7 +77,8 @@ class ListEntries(RepoTest):
         self.entry("-lead", "x")
         self.entry("a.b", "x")
         rc, out = self.main(["list"])
-        self.assertEqual((rc, len(out["entries"])), (2, 3))
+        self.assertEqual(rc, 2)
+        self.assertEqual([e["name"] for e in out["entries"]], ["ci_bundle", "-lead", "a.b"])
         for entry in out["entries"]:
             self.assertIn("bad name", entry["error"])
 
