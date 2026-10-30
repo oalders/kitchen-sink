@@ -72,7 +72,7 @@ Steps:
         - After each poll: items 1-3; then not `isInMergeQueue` and no `autoMergeRequest` (taken out or turned off): report and stop (terminal: the user dequeued it or turned auto-merge off); the run's deadline check (Rules); past this watch's deadline: stop (resumable); no longer meeting the entry condition: item 5; otherwise poll again.
         - Deadline: in the queue with `estimatedTimeToMerge` a non-negative integer (seconds), that poll's `<now>` + it + 900; in the queue otherwise, `<start>` + 3600; not yet in the queue, `<start>` + 300.
         - At this watch's deadline, the reason gives `mergeQueueEntry.position` and the estimate if queued, otherwise `mergeStateStatus` and `reviewDecision`.
-     5. Still `OPEN` otherwise: stop with the reason, the first match winning:
+     5. Still `OPEN` otherwise, the first match winning:
         - `reviewDecision` `REVIEW_REQUIRED` or `CHANGES_REQUESTED`: terminal (a reviewer must act; auto-merge stays on unwatched).
         - `mergeStateStatus` `DIRTY` while `isInMergeQueue`: terminal (the queue will eject it; a person resolves the conflict).
         - `mergeStateStatus` `DIRTY` or `BEHIND`, not queued: print the reason and go to step 1 without waiting; step 1 rebases it (rebase return).
