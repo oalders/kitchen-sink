@@ -98,6 +98,12 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **tune-precious** | Migrates a Perl repo from `Code::TidyAll` to `precious` (or sets up `precious` from scratch) — config, `.perltidyrc`, `dist.ini`, CI lint job |
 | **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
 
+### Agents
+
+| Agent | Description |
+|-------|-------------|
+| **ci-log-triage** | Read-only classifier `/shepherd-pr` dispatches to judge whether merge-queue failure logs are infrastructure; not for direct use |
+
 ### Hooks
 
 Hooks live in `hooks/hooks.json` at the plugin root.
@@ -315,12 +321,12 @@ Carries one of your own open PRs (same repo, default base) to merged; with no nu
 - In Codex `github` mode, gates on a clean bot review of the head commit: without one it posts (or reuses) your own `@codex review` trigger for that head and waits the configured bot wait, then honours `codexTimeoutAction`
 - Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then marks a draft ready (even if a `pull_request_target` workflow would then run) and enables auto-merge
 - Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check it turns auto-merge off and repairs it, and if every failure was cancelled or timed out it re-runs those Actions runs in full once per head instead; a new head it didn't push, auto-merge turned off by you, or a required review stops it, and its report gives you `/shepherd-pr <n>` to re-run (for a failing check it couldn't repair or rerun, with the head unchanged, the full `gh run rerun` commands to try first)
-- With every check green, keeps watching the merge queue (or auto-merge) until the PR merges or is ejected, reporting an ejection's reason and the finished checks that didn't succeed; each watch's deadline follows GitHub's merge-time estimate, with fixed fallbacks, and hitting it only pauses the run, which goes on until `kitchen-sink.shepherdTimeoutMinutes`
+- With every check green, keeps watching the merge queue (or auto-merge) until the PR merges or is ejected; each watch's deadline follows GitHub's merge-time estimate, with fixed fallbacks, and hitting it only pauses the run, which goes on until `kitchen-sink.shepherdTimeoutMinutes`
 - On a failed check or Codex findings, repairs it, at most three repairs (rebases included) per run: fixes in your PR checkout, runs the `/fix-gh-issue` reviews, and pushes; then starts over, so auto-merge is only re-enabled on a head that passed the gate
-- Infra fixes: before a code fix, a failed check's logs are matched against your clone's remediation entries (`kitchen-sink.remediation.<name>.match`, a regex, set with `/review-config`); when one entry matches every log, it runs no subagent and pushes nothing, but re-runs the head's failed `pull_request` runs, in full. Once per entry per head per run, sharing the three-repair cap
+- Infra fixes: before a code fix, a failed check's logs are matched against your clone's remediation entries (`kitchen-sink.remediation.<name>.match`, a regex, set with `/review-config`); when one entry matches every log, it runs no subagent and pushes nothing, but re-runs the head's failed `pull_request` runs, in full (a match also lets it re-enqueue a head after a merge-queue ejection). Once per entry per head per run, sharing the three-repair cap
 - A repair doesn't push if the reviews didn't finish clean, a Codex finding was declined (only you can confirm a decline), or the fix touches a sensitive file the PR didn't already change
 - With no number on a clean, committed `fix-NNN` branch that has no PR, hands off to `/fix-gh-issue` for its reviews, Codex gate, verification and draft PR, then carries on with that PR; if `/fix-gh-issue` would keep it draft, it reports why and stops, and re-running `/shepherd-pr <n>` marks it ready despite them
-- If the PR was last removed from the merge queue on the current head, shows why and stops rather than re-enqueue the same head
+- If the PR was last removed from the merge queue on the current head, re-enqueues it once per head when the failed queue runs match a remediation entry or are judged infrastructure (by the read-only `ci-log-triage` agent); otherwise it stops with the failed checks, their log tails and the re-enqueue command
 - On a PR with auto-merge already on, it shows who enabled it and keeps it
 - Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge or a repair
 
@@ -333,7 +339,7 @@ Sweeps your open PRs with `/shepherd-pr`:
 - In Codex `github` mode it may also post up to two `@codex review` comments per PR head (the second only as a re-trigger), and doesn't wait on the bot: a PR whose window is still open is reported as waiting and judged on the next sweep
 - Only you can start it (`disable-model-invocation`)
 - Makes one pass per PR, without `/shepherd-pr`'s resumable wait, deadline or queue watch (its check watch still runs): a queued PR is reported as in the merge queue, and one with only auto-merge on as auto-merge on and waiting
-- Ends with one status line per PR: merged, in the merge queue, auto-merge on and waiting, checks re-run, infra fix applied and checks re-run, checks still pending, needs rebase or repair from its checkout, waiting on the Codex bot, left as is, or stopped with the reason
+- Ends with one status line per PR: merged, in the merge queue, auto-merge on and waiting, re-enqueued after a merge-queue ejection, checks re-run, infra fix applied and checks re-run, checks still pending, needs rebase or repair from its checkout, waiting on the Codex bot, left as is, or stopped with the reason
 
 #### /triage-backlog
 
