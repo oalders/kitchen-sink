@@ -74,14 +74,22 @@ class ListEntries(RepoTest):
     def test_bad_names(self):
         self.entry("ci_bundle", "x")
         self.entry("-lead", "x")
+        self.entry("a.b", "x")
         rc, out = self.main(["list"])
-        self.assertEqual((rc, len(out["entries"])), (2, 2))
+        self.assertEqual((rc, len(out["entries"])), (2, 3))
         for entry in out["entries"]:
             self.assertIn("bad name", entry["error"])
 
     def test_trailing_newline_name(self):
         # git config can't store this name today; validate must not rely on that.
         self.assertIn("bad name", cr.validate("a\n", {"match": ["x"]}))
+
+    def test_bare_key(self):
+        path = self.write("bare", '[kitchen-sink "remediation.a"]\n\tmatch\n')
+        rc, out = self.main(["list", "--file", path])
+        self.assertEqual(rc, 2)
+        [entry] = out["entries"]
+        self.assertIn("empty value", entry["error"])
 
     def test_empty_match(self):
         self.entry("m", "")
@@ -128,18 +136,14 @@ class MatchLogs(RepoTest):
         self.assertEqual(self.match("boom"), (1, {"status": "none"}))
 
     def test_first_entry_in_config_order_wins(self):
-        self.entry("first", "^boom$")
-        self.entry("second", "boom")
-        self.assertEqual(self.match("a\nboom\nb"), (0, {"status": "match", "name": "first"}))
-
-    def test_all_logs_same_entry(self):
-        self.entry("a", "boom")
-        self.assertEqual(self.match("boom 1", "boom 2"), (0, {"status": "match", "name": "a"}))
+        self.entry("zeta", "^boom$")
+        self.entry("alpha", "boom")
+        self.assertEqual(self.match("a\nboom\nb"), (0, {"status": "match", "name": "zeta"}))
 
     def test_entry_covering_every_log_wins(self):
-        self.entry("a", "boom")
-        self.entry("b", "boom|bang")
-        self.assertEqual(self.match("boom", "bang"), (0, {"status": "match", "name": "b"}))
+        self.entry("z-narrow", "boom")
+        self.entry("a-wide", "boom|bang")
+        self.assertEqual(self.match("boom", "bang"), (0, {"status": "match", "name": "a-wide"}))
 
     def test_no_entry_covers_every_log_is_none(self):
         self.entry("a", "boom")

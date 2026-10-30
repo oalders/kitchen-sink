@@ -13,7 +13,7 @@ Show and change the per-repo review settings that `codex-review-loop`, `/fix-gh-
 | `kitchen-sink.reviewRounds` | `1`–`5` | `3` |
 | `kitchen-sink.shepherdTimeoutMinutes` | positive integer | `180` |
 
-A remediation entry is the section `kitchen-sink.remediation.<name>`: one `match` key (a Python regex, searched with `re.MULTILINE`, so `^`/`$` are per line, over the last 300 lines, at most 64 KiB, of each failed log). When one entry matches every failed log of the head (the first such in config order), `/shepherd-pr` re-runs the head's workflow runs in full instead of attempting a code fix. Any other key in the section makes the entry invalid.
+A remediation entry is the section `kitchen-sink.remediation.<name>`: one `match` key (a Python regex, searched with `re.MULTILINE`, so `^`/`$` are per line, over the last 300 lines, at most 64 KiB, of each failed log). When one entry matches every failed log of the head (the first such in config order), `/shepherd-pr` re-runs the head's failed `pull_request` runs (all completed ones when a log was traced from a failing commit status) in full instead of attempting a code fix. Anchor `match` to specific infra error text (e.g. `^npm ERR! network`, not `network`): the PR's own log output can trip a loose regex. Any other key in the section makes the entry invalid.
 
 Steps:
 
