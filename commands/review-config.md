@@ -3,7 +3,7 @@ description: Use when the user wants to view or change this repo's Codex bot wai
 disable-model-invocation: true
 ---
 
-Show and change the per-repo review settings that `codex-review-loop`, `/fix-gh-issue` and `/shepherd-pr` read. They are per-clone git config keys written with `--local`, so they are never committed; skills only read them. The Codex mode itself is set with `/codex-review`. This command also manages the remediation entries `/shepherd-pr`'s repair skill matches against failed-check logs before attempting a code fix.
+Show and change the per-repo review settings that `codex-review-loop`, `/fix-gh-issue` and `/shepherd-pr` read. They are per-clone git config keys written with `--local`, so they are never committed; skills only read them. The Codex mode itself is set with `/codex-review`.
 
 | Key | Values | Default |
 |-----|--------|---------|
@@ -13,7 +13,7 @@ Show and change the per-repo review settings that `codex-review-loop`, `/fix-gh-
 | `kitchen-sink.reviewRounds` | `1`–`5` | `3` |
 | `kitchen-sink.shepherdTimeoutMinutes` | positive integer | `180` |
 
-A remediation entry is the section `kitchen-sink.remediation.<name>`: one `match` key (a Python regex, searched with `re.MULTILINE`, so `^`/`$` are per line, over the last 300 lines, at most 64 KiB, of each failed log). When one entry matches every failed log of the head (the first such in config order), `/shepherd-pr` re-runs the head's failed or cancelled `pull_request` runs (all completed ones when a log was traced from a failing commit status) in full instead of attempting a code fix. Anchor `match` to specific infra error text (e.g. `^npm ERR! network`, not `network`): the PR's own log output can trip a loose regex. Any other key in the section makes the entry invalid.
+A remediation entry is the section `kitchen-sink.remediation.<name>`: one `match` key (a Python regex, searched with `re.MULTILINE`, so `^`/`$` are per line, over the last 300 lines, at most 64 KiB, of each failed log). When one entry matches every failed log of the head (the first such in config order), `/shepherd-pr` re-runs the head's failed or cancelled `pull_request` runs in full instead of attempting a code fix. Anchor `match` to specific infra error text (e.g. `^npm ERR! network`, not `network`): the PR's own log output can trip a loose regex. Any other key in the section makes the entry invalid.
 
 Steps:
 
