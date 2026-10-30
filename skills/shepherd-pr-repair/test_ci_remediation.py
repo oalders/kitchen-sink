@@ -142,6 +142,8 @@ class MatchLogs(RepoTest):
         self.entry("bad", "(")
         rc, out = self.match("boom")
         self.assertEqual((rc, out["status"]), (2, "invalid"))
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertTrue(out["errors"][0].startswith("bad:"))
 
     def test_no_entries_is_none(self):
         self.assertEqual(self.match("boom"), (1, {"status": "none"}))
@@ -164,6 +166,7 @@ class MatchLogs(RepoTest):
     def test_unmatched_log_is_none(self):
         self.entry("a", "boom")
         self.assertEqual(self.match("boom", "other"), (1, {"status": "none"}))
+        self.assertEqual(self.match("other", "boom"), (1, {"status": "none"}))
 
     def test_unreadable_log_is_error(self):
         self.entry("a", "boom")
