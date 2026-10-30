@@ -75,7 +75,7 @@ Steps:
      5. Still `OPEN` otherwise: stop with the reason, the first match winning:
         - `reviewDecision` `REVIEW_REQUIRED` or `CHANGES_REQUESTED`: terminal (a reviewer must act; auto-merge stays on unwatched).
         - `mergeStateStatus` `DIRTY` while `isInMergeQueue`: terminal (the queue will eject it; a person resolves the conflict).
-        - `mergeStateStatus` `DIRTY` or `BEHIND`, not queued: resumable (step 1 rebases).
+        - `mergeStateStatus` `DIRTY` or `BEHIND`, not queued: print the reason and go to step 1 without waiting (it rebases; waiting won't clear a conflict).
         - A check in the `pending` bucket: resumable.
         - Neither queued nor auto-merge on: resumable if "off by this run" (step 4 re-enables it), otherwise terminal (the user turned it off or dequeued it).
 6. **Repair.** Cap, counted in the status line: at most 3 repairs (rebase, check or Codex) per run, checked first for each repair (for cause `checks`, after the flaky-rerun bullet; never for the rerun); a fourth: report and stop (terminal: repairs aren't converging; a person looks). The flaky rerun below is one per head and doesn't count toward the 3: it increments only the rerun counter.
