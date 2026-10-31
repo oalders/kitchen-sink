@@ -102,7 +102,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 
 | Agent | Description |
 |-------|-------------|
-| **ci-log-triage** | Read-only classifier `/shepherd-pr` dispatches to judge whether merge-queue failure logs are infrastructure; not for direct use |
+| **ci-log-triage** | Read-only classifier `/shepherd-pr` dispatches to judge whether merge-queue failure logs, or the logs of runs still failing after a rerun, are infrastructure; not for direct use |
 
 ### Hooks
 
@@ -320,7 +320,7 @@ Carries one of your own open PRs (same repo, default base) to merged; with no nu
 - When the PR conflicts with or is behind the base, rebases it first (a repair): stops (aborting the rebase) on a sensitive or unsure conflict, regenerates a conflicted lockfile, stops on failing tests, reviews only if the PR diff changed, and force-pushes with a lease pinned to the head it read
 - In Codex `github` mode, gates on a clean bot review of the head commit: without one it posts (or reuses) your own `@codex review` trigger for that head and waits the configured bot wait, then honours `codexTimeoutAction`
 - Shows the PR's merge state, review decision and changed files (flagging sensitive ones), then marks a draft ready (even if a `pull_request_target` workflow would then run) and enables auto-merge
-- Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check it turns auto-merge off and repairs it, and if every failure was cancelled or timed out it re-runs those Actions runs in full once per head instead; a new head it didn't push, auto-merge turned off by you, or a required review stops it, and its report gives you `/shepherd-pr <n>` to re-run (for a failing check it couldn't repair or rerun, with the head unchanged, the full `gh run rerun` commands to try first)
+- Enables auto-merge with `--match-head-commit` (enqueues with a merge queue), never merges directly, then watches `gh pr checks`; on a failed check it turns auto-merge off and repairs it, and if every failure was cancelled or timed out it re-runs those Actions runs in full instead (one rerun per head, plus one more when the logs are judged infrastructure); a new head it didn't push, auto-merge turned off by you, or a required review stops it, and its report gives you `/shepherd-pr <n>` to re-run (for a failing check it couldn't repair or rerun, with the head unchanged, the full `gh run rerun` commands to try first)
 - With every check green, keeps watching the merge queue (or auto-merge) until the PR merges or is ejected; each watch's deadline follows GitHub's merge-time estimate, with fixed fallbacks, and hitting it only pauses the run, which goes on until `kitchen-sink.shepherdTimeoutMinutes`
 - On a failed check or Codex findings, repairs it, at most three repairs (rebases included) per run: fixes in your PR checkout, runs the `/fix-gh-issue` reviews, and pushes; then starts over, so auto-merge is only re-enabled on a head that passed the gate
 - Infra fixes: before a code fix, a failed check's logs are matched against your clone's remediation entries (`kitchen-sink.remediation.<name>.match`, a regex, set with `/review-config`); when one entry matches every log, it runs no subagent and pushes nothing, but re-runs the head's failed `pull_request` runs, in full (a match also lets it re-enqueue a head after a merge-queue ejection). Once per entry per head per run, sharing the three-repair cap
