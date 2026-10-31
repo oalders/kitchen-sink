@@ -98,7 +98,7 @@ Steps:
    - Every cause: count the repair and print the status line, then invoke `kitchen-sink:shepherd-pr-repair` through the Skill tool and follow it, passing `<n>`, `headRefName`, the gated `headRefOid`, the cause (`checks`, `codex` or `rebase`), the Codex mode, `<default>` and `infra` from the last status line. It ends by:
      - returning with the new head (its step 7): print the status line with that head (auto-merge `off by this run`), then step 1 (no wait), so the new head goes through the gate again;
      - returning without a new head (an infra fix, already counted as a repair): append the entry name to `infra`, print the status line (auto-merge as in the last status line), and stop (resumable);
-     - stopping "(resumable)" (a transient `gh` failure in its step 2): print again the status line printed when this repair was counted, with `repairs` one lower, then stop (resumable); or
+     - stopping "(resumable)" (a transient `gh` failure in its step 2): print again the status line printed just before invoking the skill, with `repairs` one lower, then stop (resumable); or
      - stopping (terminal, on its own guards).
 
      No skill stop goes straight on to step 2 or 3, even when step 1 or 2 invoked the repair: a terminal one ends the run, reporting the stop and whether auto-merge is off; a resumable one follows the Rules.
