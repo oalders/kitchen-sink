@@ -37,7 +37,7 @@ This change replaces the "counters lost" terminal stop in the status-line Rule (
 | `infra` | `-` | Used only by the repair skill (unreachable at the cap) and by Infra rerun, which the `attempt` bound limits. |
 | `requeued` | `-` | Safe because a recovered run never re-enqueues after an ejection (see Auto-merge). |
 | `deadline` | anchored | `<earliest>`: the earliest of the current head's check-suite `created_at` (step 3's lookup, run once on the recovered pass), or with no suites the PR's `createdAt`, plus `kitchen-sink.shepherdTimeoutMinutes`. A recovered run can't push, so the anchor, and therefore the deadline, stays the same across repeated compactions. The deadline is checked right after the recovered line; if it has passed, the deadline report ends the run before step 3 can enable auto-merge. In `/shepherd-prs` it stays `deadline n/a`, with no check. |
-| auto-merge | `on` or `off`, never `off by this run` | See Auto-merge. Later passes set `off by this run` as usual after the run's own `--disable-auto`. |
+| auto-merge | `on`, or `off by this run` when it proceeds while off | See Auto-merge. `off by this run` keeps step 3's guard: auto-merge isn't enabled over a failing or cancelled check. |
 
 In `/shepherd-prs`, a PR's first pass starts normally, never as a recovery.
 
@@ -47,7 +47,7 @@ In `/shepherd-prs`, a PR's first pass starts normally, never as a recovery.
   - A person turning auto-merge off on this head causes this stop.
   - So does this run's own `--disable-auto` before a rerun of a failing check.
   - The reason names the compaction: "status line lost after compaction; auto-merge was turned off on this head, possibly by this run, and the run can't tell who did it; run `/shepherd-pr <n>`".
-- Otherwise, proceed: auto-merge was never on, or was turned off before the head was pushed, for example by this run's own repair. Step 3 then enables it as usual, with `--match-head-commit`.
+- Otherwise, proceed as `off by this run`: auto-merge was never on, or was turned off before the head was pushed, for example by this run's own repair. Step 3's guard then keeps it off while a check is failing or cancelled; otherwise step 3 enables it as usual, with `--match-head-commit`.
 - A queue ejection is a terminal stop for the rest of a recovered run: step 3's ejection handling stops when the last status line is `recovered`, which covers step 1 and step 5 item 3. A recovered run never re-enqueues after an ejection. It can still re-enable auto-merge after its own `--disable-auto` (step 5 item 2, a rerun, then step 4); that is intended.
 
 **Known looseness, accepted.**
