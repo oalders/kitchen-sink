@@ -20,7 +20,7 @@ After compaction, if no status line from this run is visible, `/shepherd-pr` sto
 
 ## Design
 
-This change replaces the "counters lost" terminal stop in the status-line Rule (`commands/shepherd-pr.md`, Rules). Recovery applies only when this run had already printed a status line before the compaction. Both trigger cases recover instead of stopping: no status line visible, and a line that isn't clearly this run's own.
+This change replaces the "counters lost" terminal stop in the status-line Rule (`commands/shepherd-pr.md`, Rules). After any compaction with no usable status line visible (none, or one that isn't clearly this run's own), the run goes to step 1 at once, before any other step, and that pass recovers. A run that never printed a line is treated the same: misclassifying fails safe, since a recovered run can do less, not more.
 
 **Recovery abandons work in progress.** Any repair-skill work in progress is abandoned and nothing is pushed. If the PR branch is checked out (`git branch --show-current` is `headRefName`) and HEAD isn't `headRefOid`, or the tree is dirty, stop (terminal). The report says what is local, using the repair skill's `git reset --hard '<sha>'` wording. The same check catches a head someone else pushed while the line was lost; that case is left to the issue's 37/74 row.
 
@@ -33,8 +33,8 @@ This change replaces the "counters lost" terminal stop in the status-line Rule (
 | `repairs` | `3/3` | No further repairs, rebases included. Anything that needs one becomes step 6's cap stop, whose report then notes that the counters were reset after compaction. |
 | `rerun` | `0` | Bounded across runs by GitHub's run `attempt` (Rerun needs ≤ 1, Infra rerun ≤ 2). A new run on the same head can allow one more Rerun, which looser limits accept. |
 | `infra` | `-` | Used only by the repair skill (unreachable at the cap) and by Infra rerun, which the `attempt` bound limits. |
-| `requeued` | `-` | Safe because a recovered pass never re-enqueues (see Auto-merge). |
-| `deadline` | anchored | The earliest of the current head's check-suite `created_at` (step 3's lookup), plus `kitchen-sink.shepherdTimeoutMinutes`. A recovered run can't push, so the head, and therefore the deadline, stays the same across repeated compactions. If the deadline has already passed, the deadline report fires at the first resumable wait. In `/shepherd-prs` it stays `deadline n/a`. |
+| `requeued` | `-` | Safe because a recovered run never re-enqueues (see Auto-merge). |
+| `deadline` | anchored | The earliest of the current head's check-suite `created_at` (step 3's lookup), plus `kitchen-sink.shepherdTimeoutMinutes`. A recovered run can't push, so the head, and therefore the deadline, stays the same across repeated compactions. With no suites it falls back to `date +%s`, which each recovered pass restarts. The deadline is checked right after the recovered line; if it has passed, the deadline report ends the run before step 3 can enable auto-merge. In `/shepherd-prs` it stays `deadline n/a`. |
 | auto-merge | `on` or `off`, never `off by this run` | See Auto-merge. Later passes set `off by this run` as usual after the run's own `--disable-auto`. |
 
 In `/shepherd-prs`, a PR's first pass is never a recovery. It starts normally.
@@ -44,9 +44,9 @@ In `/shepherd-prs`, a PR's first pass is never a recovery. It starts normally.
 - If a disable event is the head's, stop (terminal). The test for "the head's" is step 3's: the event is the head's unless it is earlier than the earliest check-suite `created_at` for the head.
   - A person turning auto-merge off on this head causes this stop.
   - So does this run's own `--disable-auto` before a rerun of a failing check.
-  - The reason names the compaction: "counters lost after compaction; auto-merge was turned off on this head and the run can't tell who did it; run `/shepherd-pr <n>`".
+  - The reason names the compaction: "status line lost after compaction; auto-merge was turned off on this head and the run can't tell who did it; run `/shepherd-pr <n>`".
 - Otherwise, proceed: auto-merge was never on, or was turned off before the head was pushed, for example by this run's own repair. Step 3 then enables it as usual, with `--match-head-commit`.
-- A queue ejection on the recovered pass is a terminal stop. Step 1's "head was ejected" exception doesn't apply, so a recovered pass never re-enqueues.
+- A queue ejection is a terminal stop for the rest of a recovered run: step 3's ejection handling stops when the last status line is `recovered`, which covers step 1 and step 5 item 3. A recovered run never re-enqueues.
 
 **Known looseness, accepted.**
 - A head someone else pushed is caught only when the PR branch is checked out locally. Otherwise it gets the Codex gate, and the run doesn't stop for it.
