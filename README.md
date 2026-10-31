@@ -329,6 +329,7 @@ Carries one of your own open PRs (same repo, default base) to merged; with no nu
 - If the PR was last removed from the merge queue on the current head, re-enqueues it once per head when the failed queue runs match a remediation entry or are judged infrastructure (by the read-only `ci-log-triage` agent); otherwise it stops with the failed checks, their log tails and the re-enqueue command
 - Once it knows the PR, a `gh` call (the Codex gate's polling and a repair's evidence gathering included) failing on a GitHub 5xx, secondary rate limit, GraphQL timeout or network error is a resumable stop, except turning auto-merge off or re-running checks, which stay stops that need you
 - On a PR with auto-merge already on, it shows who enabled it and keeps it
+- If context compaction loses its status line, it carries on watch-only: no more repairs or re-enqueues, its deadline anchored to the head's push, and it stops rather than re-enable auto-merge turned off on this head
 - Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge or a repair
 
 #### /shepherd-prs
