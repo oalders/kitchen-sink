@@ -4,45 +4,57 @@ Issue #151, the line-17 row.
 
 ## Intent
 
-After compaction, if no status line from this run is visible, `/shepherd-pr` stops terminally ("counters lost"), so a long run dies only because its context was compacted. The tool is meant to be autonomous and helpful without doing damage. Looser limits after compaction are fine (user decision). Pushing code and turning auto-merge back on are not.
+After compaction, if no status line from this run is visible, `/shepherd-pr` stops terminally ("counters lost"), so a long run dies only because its context was compacted. The tool is meant to be autonomous and helpful without doing damage. Looser limits after compaction are fine (user decision). Pushing code, and turning auto-merge back on after someone else turned it off, are not.
 
 ## Goals, non-goals and anti-goals
 
 - **Goal:** after the counters are lost, the run carries on watching checks and the merge queue until the PR merges or a stop needs a person.
 - **Non-goal:** restoring the exact counters. That rules out a state file and rebuilding them from GitHub.
-- **Anti-goal:** a recovered run that pushes a repair, or re-enables auto-merge that someone may have turned off. Either would happen with no limit when compaction repeats.
+- **Anti-goal:** a recovered run that pushes a repair, or that re-enables auto-merge someone may have turned off. Either would happen with no limit when compaction repeats.
 
 ## Approaches
 
-- **A. Watch-only restart (chosen).** Print a fresh status line marked recovered, with no repairs left, and never re-enable auto-merge. This is the smallest change, and it stays bounded however many times compaction happens.
+- **A. Watch-only restart (chosen).** Print a fresh status line marked recovered, with no repairs left, and never re-enable auto-merge after someone else turned it off. This is the smallest change, and it can't push however many times compaction happens.
 - **B. Restart with one repair left (`2/3`), as the issue suggested.** Rejected. Repairs use a lot of context, so compaction tends to follow them, and repair → compaction → repair would repeat with no bound.
 - **C. Save the status line to a file under `.git` and read it back.** Rejected. It keeps every limit exact, but it adds a write on every print, plus handling for stale files and concurrent runs, and the user accepted looser limits.
 
 ## Design
 
-This change replaces the "counters lost" terminal stop in the status-line Rule (`commands/shepherd-pr.md`, Rules). Both trigger cases recover instead of stopping: no status line visible, and a line that isn't clearly this run's own.
+This change replaces the "counters lost" terminal stop in the status-line Rule (`commands/shepherd-pr.md`, Rules). Recovery applies only when this run had already printed a status line before the compaction. Both trigger cases recover instead of stopping: no status line visible, and a line that isn't clearly this run's own.
 
-**Recovered status line.** Step 1 prints a fresh line before going on, with these fields:
+**Recovery abandons work in progress.** Any repair-skill work in progress is abandoned and nothing is pushed. If the PR branch is checked out (`git branch --show-current` is `headRefName`) and HEAD isn't `headRefOid`, or the tree is dirty, stop (terminal). The report says what is local, using the repair skill's `git reset --hard '<sha>'` wording. The same check catches a head someone else pushed while the line was lost; that case is left to the issue's 37/74 row.
+
+**The recovered pass.** This is the one pass of step 1 that prints the recovered line. Later passes follow the normal step 1 rules against the last line. The `recovered` marker is carried on later lines only so that the report can say what happened.
+
+**Recovered status line.** The fields:
 
 | Field | Value | Reason |
 |---|---|---|
-| `repairs` | `3/3` | No further repairs (rebases included). Anything that needs one becomes step 6's existing cap stop. |
-| `rerun` | `0` | Already bounded across runs by GitHub's run `attempt` (the Rerun bullet requires `attempt` ≤ 1, Infra rerun ≤ 2). |
-| `infra` | `-` | Used only by the repair skill (unreachable at the cap) and the Infra rerun, whose `attempt` bound applies. |
-| `requeued` | `-` | Already bounded across runs, because step 3 re-enqueues only when no other removal is the head's. |
-| `deadline` | fresh | Computed from the config key as at the start of a run. |
-| auto-merge | `on`, or `off` (never `off by this run`) | See below. |
+| `repairs` | `3/3` | No further repairs, rebases included. Anything that needs one becomes step 6's cap stop, whose report then notes that the counters were reset after compaction. |
+| `rerun` | `0` | Bounded across runs by GitHub's run `attempt` (Rerun needs ≤ 1, Infra rerun ≤ 2). A new run on the same head can allow one more Rerun, which looser limits accept. |
+| `infra` | `-` | Used only by the repair skill (unreachable at the cap) and by Infra rerun, which the `attempt` bound limits. |
+| `requeued` | `-` | Safe because a recovered pass never re-enqueues (see Auto-merge). |
+| `deadline` | anchored | The earliest of the current head's check-suite `created_at` (step 3's lookup), plus `kitchen-sink.shepherdTimeoutMinutes`. A recovered run can't push, so the head, and therefore the deadline, stays the same across repeated compactions. If the deadline has already passed, the deadline report fires at the first resumable wait. In `/shepherd-prs` it stays `deadline n/a`. |
+| auto-merge | `on` or `off`, never `off by this run` | See Auto-merge. Later passes set `off by this run` as usual after the run's own `--disable-auto`. |
 
-The line is marked `recovered` so that the report says what happened.
+In `/shepherd-prs`, a PR's first pass is never a recovery. It starts normally.
 
-**Auto-merge.** If, on a recovered pass, auto-merge is off and the PR isn't `isInMergeQueue`, the run stops (terminal). It can't tell who turned auto-merge off, and only the user re-running `/shepherd-pr <n>` may turn it back on. This uses the existing "the user turned it off" stop.
+**Auto-merge.** On the recovered pass, if auto-merge is off and the PR isn't `isInMergeQueue`:
+- Add `AUTO_MERGE_DISABLED_EVENT` to step 1's timeline query.
+- If a disable event is the head's, stop (terminal). The test for "the head's" is step 3's: the event is the head's unless it is earlier than the earliest check-suite `created_at` for the head.
+  - A person turning auto-merge off on this head causes this stop.
+  - So does this run's own `--disable-auto` before a rerun of a failing check.
+  - The reason names the compaction: "counters lost after compaction; auto-merge was turned off on this head and the run can't tell who did it; run `/shepherd-pr <n>`".
+- Otherwise, proceed: auto-merge was never on, or was turned off before the head was pushed, for example by this run's own repair. Step 3 then enables it as usual, with `--match-head-commit`.
+- A queue ejection on the recovered pass is a terminal stop. Step 1's "head was ejected" exception doesn't apply, so a recovered pass never re-enqueues.
 
 **Known looseness, accepted.**
-- A head pushed by someone else between the lost line and the recovery isn't caught by step 1's "someone else pushed it" test. The run treats it like a fresh user re-run: it still goes through the Codex gate and `--match-head-commit`.
-- The deadline restarts.
+- A head someone else pushed is caught only when the PR branch is checked out locally. Otherwise it gets the Codex gate, and the run doesn't stop for it.
+- The Codex gate is re-checked on the recovered pass. GitHub's trigger count still bounds it.
+- A rebase or repair needed after recovery ends at the cap stop.
 
 ## Left to the builder
 
-- Exact wording and where the recovery sits in the Rules and step 1.
-- The README and `/shepherd-prs` lines that mention the counters-lost stop.
-- A minor version bump in all three version fields.
+- Exact wording, and where the recovery sits in the Rules and step 1.
+- `/shepherd-prs` line 24, and a new bullet in the README's `/shepherd-pr` section. No existing README line mentions the counters-lost stop.
+- A minor version bump (2.66.0) in all three version fields.
