@@ -220,6 +220,8 @@ Write them as part of implementation, not as review remediation:
 
    Findings declined with a cited reason (a commit SHA, or "no caller produces X") are listed under "Declined findings" in the PR body; they are not pushback.
 3. Fix all surviving Critical, Important, and Minor findings. If a Minor one seems wrong or counterproductive, push back rather than blindly implement — but default to fixing, since that's usually cheaper than a follow-up issue.
+
+   **Fix the class, not the instance.** Before committing a fix, name the state or assumption the finding broke, then check the sibling code paths that share it and the states your fix newly makes reachable. Fix or test those in the same commit, so the next round doesn't find them one at a time. Step 2's filters still apply: a sibling needs a real trigger.
 4. **Over 500 lines of diff**: fix Critical and Important in the branch; file GitHub issues for Minor ones. This absolute threshold is separate from step 4's relative ~3x tripwire, which catches the small change that grew.
 5. Commit the fixes with a message referencing the review, ending with a blank line and the `Co-authored-by` trailer from `docs/attribution.md` (display name = the running model), e.g. `Co-authored-by: Claude <running model> <noreply@anthropic.com>`.
 6. Re-invoke `/code-review-intense-flow` via the Skill tool on the new HEAD. Dispatching the same reviewers yourself doesn't count; the `require-review-before-pr` hook won't record it. Never skip it: fixes introduce new issues, and every lens (accessibility, OWASP, SEO) must see the new code.
@@ -230,6 +232,7 @@ Write them as part of implementation, not as review remediation:
 Runs on both implementation paths; Codex reviews independently:
 
 - Run `python3 <codex-review-loop dir>/codex_loop.py mode`. On `off`, skip; otherwise follow `codex-review-loop` Phase 1 (local review/fix loop) before pushing. Exit `2`: STOP and report; never skip silently.
+- Apply step 8's "Fix the class, not the instance" rule to Codex findings too.
 - Codex's round cap is `kitchen-sink.codexRounds`, not step 8's. A hit cap or a Codex finding declined without user confirmation counts as "needs a human" in step 11.
 
 #### 9. Verify fix
