@@ -485,7 +485,7 @@ Caps every job in `.github/workflows/*.y*ml` below GitHub's 360-minute default, 
 - Sizes each job's timeout from its recent successful run history
 - Jobs with too little history get a marked default that a later run tightens
 - Never changes a user-set `timeout-minutes`; reports ones far above the measured value as drift
-- Skips reusable-workflow jobs; one commit; re-running is a no-op
+- Skips reusable-workflow jobs; one commit; re-running is a no-op until a marked default has enough history to tighten
 
 #### tune-perl-ci
 
@@ -498,7 +498,7 @@ Seven idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions wor
 - Replaces each `install-with-cpm`/`install-with-cpanm` step with `setup-cpm@v1` + an explicit `cpm install` run step (`version: compat` pins cpm for Perls ≤ 5.22)
 - Drops pre-5.24 macOS/Windows matrix cells
 - Finishes by setting `timeout-minutes` on every job via `tune-gh-actions-timeouts`
-- Each transform lands as its own commit; re-running is a no-op
+- Each transform lands as its own commit; re-running is a no-op apart from tightening marked timeout defaults
 
 #### tune-precious
 

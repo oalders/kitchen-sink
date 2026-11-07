@@ -20,7 +20,7 @@ version: 1.5.0
 
 Then, as a final step, set `timeout-minutes` on every job via `kitchen-sink:tune-gh-actions-timeouts`.
 
-**Core principle:** modernize the workflow without changing intent. Each transform lands as its own commit so any single change is revertable. Re-running the skill on an already-tuned workflow is a no-op.
+**Core principle:** modernize the workflow without changing intent. Each transform lands as its own commit so any single change is revertable. Re-running the skill on an already-tuned workflow is a no-op, except that the timeouts step tightens marked defaults once they have enough history.
 
 ## Dispatch this skill to a subagent
 
