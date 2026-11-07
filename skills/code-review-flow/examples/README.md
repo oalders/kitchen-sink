@@ -163,9 +163,15 @@ trap 'rm -rf "$WORKDIR"' EXIT
 # No body — summary included — may be a double-quoted shell word or a bare literal in the jq program.
 cat > "$WORKDIR/summary.md" <<'BODY'
 Automated review — inline findings below. Un-anchorable findings + the overall assessment go here.
+
+---
+🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
 BODY
 cat > "$WORKDIR/b1.md" <<'BODY'
 **[Important]** No handling for invalid distance formats.
+
+---
+🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
 BODY
 
 # Build review.json with jq — only the SHA is an --arg; the summary and every finding body come

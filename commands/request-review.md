@@ -227,7 +227,8 @@ gh pr list --head $(git branch --show-current) --json number,url
    or a double-quoted shell word, not even a short fixed boilerplate body; only the head SHA
    (`--arg commit "$HEAD_SHA"`, from `gh pr view`) uses `--arg`. Use `event: "COMMENT"` for this posting step — the
    approve/no-approve decision below is applied separately as its own gate. Per `docs/attribution.md`,
-   the review `body` ends with the attribution footer (model version, resolved at runtime).
+   the summary `body` and each inline `comments[].body` end with the attribution footer (model
+   version, resolved at runtime).
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash

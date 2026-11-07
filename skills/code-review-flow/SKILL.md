@@ -93,7 +93,7 @@ the canonical inline-review protocol; `/code-review-intense-flow` and `/request-
 it. `gh pr comment` / `gh pr review --body` can only post PR-level text — line-anchored comments
 are reachable only through the REST API via `gh api`.
 
-**Attribution:** the review **summary `body`** (not each individual inline finding) must end with
+**Attribution:** the review **summary `body`** and **each inline `comments[].body`** must end with
 the attribution footer from `docs/attribution.md`, using the model version resolved at runtime.
 
 ### Inline review protocol
@@ -116,9 +116,9 @@ the attribution footer from `docs/attribution.md`, using the model version resol
      "body": "Automated review — inline findings below. <un-anchorable findings / overall assessment here>\n\n---\n🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>",
      "comments": [
        { "path": "go/web/foo.go", "line": 42, "side": "RIGHT",
-         "body": "**[Important]** This nil check can move above the loop." },
+         "body": "**[Important]** This nil check can move above the loop.\n\n---\n🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>" },
        { "path": "go/web/bar.go", "start_line": 10, "start_side": "RIGHT", "line": 14, "side": "RIGHT",
-         "body": "**[Minor]** This block can be simplified." }
+         "body": "**[Minor]** This block can be simplified.\n\n---\n🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>" }
      ]
    }
    ```
@@ -155,9 +155,15 @@ the attribution footer from `docs/attribution.md`, using the model version resol
    BODY
    cat > "$WORKDIR/b1.md" <<'BODY'
    **[Important]** This nil check can move above the loop.
+
+   ---
+   🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
    BODY
    cat > "$WORKDIR/b2.md" <<'BODY'
    **[Minor]** This block can be simplified.
+
+   ---
+   🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
    BODY
 
    # Assemble with jq. Only the SHA is an --arg; the summary and every finding body come in raw
