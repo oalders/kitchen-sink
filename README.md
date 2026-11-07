@@ -93,7 +93,8 @@ claude plugin marketplace add oalders/kitchen-sink &&
 |-------|-------------|
 | **perl-review** | Flags Perl code that strays from your project standards — quoting, core-module use, URL building, test hygiene — reading a living rules doc you edit freely |
 | **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown; optionally auto-merges minor/patch PRs |
-| **tune-perl-ci** | Seven idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI |
+| **tune-gh-actions-timeouts** | Sets `timeout-minutes` on every GitHub Actions job, sized from recent successful run durations |
+| **tune-perl-ci** | Seven idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI, then job timeouts |
 | **tune-precious** | Migrates a Perl repo from `Code::TidyAll` to `precious` (or sets up `precious` from scratch) — config, `.perltidyrc`, `dist.ini`, CI lint job |
 | **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
 
@@ -478,6 +479,15 @@ Groups Dependabot minor/patch updates per ecosystem (majors stay individual) and
 - Sets `cooldown.default-days: 7` to absorb release-day churn
 - Optional, opt-in per repo: a workflow that auto-merges minor/patch Dependabot PRs once required checks pass
 
+#### tune-gh-actions-timeouts
+
+Caps every job in `.github/workflows/*.y*ml` below GitHub's 360-minute default, so a hung step can't burn six hours of Actions minutes:
+- Samples the last 20 successful default-branch runs per workflow; matrix legs group to their job, slowest leg wins
+- `timeout = ceil_to_5(max(longest * 2, longest + 10))`
+- Under 5 samples: a marked default (15, or 30 for matrix jobs) that a later run tightens
+- Never changes a user-set `timeout-minutes`; reports ones ≥ 3× the measured value as drift
+- Skips reusable-workflow jobs; one commit; re-running is a no-op
+
 #### tune-perl-ci
 
 Seven idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions workflows under `.github/workflows/`:
@@ -488,6 +498,7 @@ Seven idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions wor
 - Adds a workflow-level `concurrency:` cancel-in-progress block
 - Replaces each `install-with-cpm`/`install-with-cpanm` step with `setup-cpm@v1` + an explicit `cpm install` run step (`version: compat` pins cpm for Perls ≤ 5.22)
 - Drops pre-5.24 macOS/Windows matrix cells
+- Finishes by setting `timeout-minutes` on every job via `tune-gh-actions-timeouts`
 - Each transform lands as its own commit; re-running is a no-op
 
 #### tune-precious
@@ -497,7 +508,7 @@ Lands [`precious`](https://github.com/houseabsolute/precious) as the canonical t
 - Consolidates the perltidy profile to the hidden `.perltidyrc` and strips `-b`
 - Deletes `Code::TidyAll` config (`.tidyallrc`, `tidyall.ini`, `.tidyall.d/` ignore line)
 - Edits `dist.ini` to drop `Test::TidyAll` and its prereqs via `PluginRemover` + `[RemovePrereqs]`
-- Adds a `.github/workflows/lint.yml` job running `precious lint` — incrementally (`--git-diff-from` the PR base) on pull requests, `--all` on every other event
+- Adds a `.github/workflows/lint.yml` job running `precious lint` — incrementally (`--git-diff-from` the PR base) on pull requests, `--all` on every other event, with a default `timeout-minutes`
 
 Handles three modes: migrate (tidyall present), greenfield (no precious yet), tune (precious already configured). Each transform commits separately; re-running on a tuned repo is a no-op.
 

@@ -1,0 +1,133 @@
+---
+name: tune-gh-actions-timeouts
+description: Use when a GitHub Actions job has no `timeout-minutes`, when auditing or hardening any repo's `.github/workflows/`, when a hung CI job burned hours of Actions minutes, or when another tuning skill (tune-perl-ci, tune-precious) needs a job's timeout value.
+version: 1.0.0
+---
+
+# Tune GitHub Actions Timeouts
+
+## Overview
+
+**Sets a job-level `timeout-minutes` on every job in `.github/workflows/*.y*ml`, sized from recent successful run durations.**
+
+**Core principle:** a job without `timeout-minutes` gets GitHub's 360-minute default, so one hung step can burn six hours of Actions minutes. Cap every job at a value measured from its own history, never touch a value the user chose, and re-running is a no-op.
+
+This skill is the only home of the heuristic (sample size, formula, defaults, marker comment). Other skills point here rather than restating it.
+
+## Dispatch this skill to a subagent
+
+When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not sample runs or edit workflows inline in the caller's context.**
+
+Why:
+- Each workflow costs one `gh run list` plus up to 20 `gh run view` calls, then an edit and a YAML check per file. That is a lot of `Bash`/`Edit` traffic the caller doesn't need.
+- The caller only needs the summary line and the commit SHA.
+
+How to dispatch:
+- Brief the subagent with this SKILL.md as its working spec — pass the path or invoke the skill from inside the subagent.
+- Tell the subagent the working directory and, optionally, the list of workflow paths to restrict to.
+- Require the subagent to report back only: the summary line and the commit SHA (or "no changes").
+- If verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
+
+A caller already running inside a subagent (e.g. `tune-perl-ci`) follows this skill inline — subagents can't dispatch further subagents.
+
+If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
+
+## When to Use
+
+- User asks to tune, harden, or audit a repo's GitHub Actions workflows
+- A job has no `timeout-minutes`
+- A hung job ran until GitHub's 360-minute default killed it
+- A job carries the default marker comment and has since built up run history
+
+**Skip when:**
+- There is no `.github/workflows/` directory, or no workflow defines `jobs:`
+
+## Scope
+
+Every `.github/workflows/*.y*ml`, Perl or not. If the caller passes a list of workflow paths, operate only on those.
+
+Within each file, every job under `jobs:` — except jobs that call a reusable workflow (`jobs.<id>.uses`). GitHub rejects `timeout-minutes` on those; count them as skipped.
+
+## Sampling run history
+
+Resolve the default branch: `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`.
+
+Per workflow, list the last 20 successful runs on the default branch (successful default-branch runs leave out cancelled and short-circuited PR runs), then read each run's jobs:
+
+```bash
+gh run list --workflow '<file>' --branch '<default>' --status success --limit 20 --json databaseId
+gh run view '<id>' --json jobs --jq '.jobs[] | {name, conclusion, startedAt, completedAt}'
+```
+
+- Count only job entries with `conclusion == "success"` — jobs skipped by `if:` report a near-zero duration.
+- A `gh run list` error or empty result (workflow not on the default branch yet, or PR-only triggers) means no history: every job in that file gets the default. Don't stop.
+
+**Map job entries to job keys.** `gh` reports display names, not keys:
+
+1. Strip a trailing ` (…)` matrix suffix from the entry name.
+2. Match the result against each job's `name:`, treating `${{ … }}` expressions as wildcards; fall back to matching the job key.
+3. Group every matrix leg under its job and take the slowest leg per run.
+
+A job with no matching entries has no history.
+
+## Computing the timeout
+
+From the longest observed duration in minutes across a job's samples:
+
+```
+timeout = ceil_to_5(max(longest * 2, longest + 10))
+```
+
+Doubling covers runner variance and slow macOS/Windows legs; the `+10` keeps short jobs from hitting the cap by chance (and makes 10 the minimum).
+
+**Fewer than 5 successful samples → default:** `30` if the job has `strategy.matrix`, else `15`. Write it with this exact trailing comment so a later run can tighten it:
+
+```yaml
+    timeout-minutes: 15   # default, not measured; see tune-gh-actions-timeouts
+```
+
+## Algorithm
+
+For each in-scope workflow, for each job:
+
+1. **Skip reusable-workflow callers** (`uses:` at job level).
+2. **Existing `timeout-minutes` with the marker comment:** if the job now has ≥ 5 samples, replace the value with the computed one and drop the comment (tightened). Otherwise leave it.
+3. **Existing `timeout-minutes` without the marker:** never change it — the user chose it. If it's an integer ≥ 3× the computed value (and the job has ≥ 5 samples), report it as drift. Leave `${{ … }}` expression values alone.
+4. **No `timeout-minutes`:** insert the computed value (measured) or the marked default, as a job-level key directly after `runs-on:` (as in the `tune-dependabot-config` auto-merge template). Never set per-step timeouts — a job-level cap is enough.
+
+Edit as text — insert or replace the one line, matching the job's indentation. Never round-trip through `yaml.dump`: it strips comments, including the marker.
+
+Then verify (below), stage every changed file, and make **one** commit: `workflow: set timeout-minutes on every job`. No diff → no commit. The commit ends with a blank line then the `Co-authored-by` trailer from `docs/attribution.md` (display name = the running model).
+
+## Verification
+
+After editing, before committing, for every changed file:
+
+1. `python3 -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))' <file>` exits 0.
+2. Every job under `jobs:` without `uses:` has `timeout-minutes`.
+3. Every value this run wrote is an integer.
+
+On failure, stop and surface it, leaving files unstaged. Do not auto-revert — that hides bugs in the skill.
+
+Report: "Set timeout-minutes on N jobs (X measured, Y default), tightened T marked defaults; skipped R reusable-workflow jobs; drift: <job: existing vs computed, …>" plus the commit SHA.
+
+## Common Mistakes
+
+| Mistake | Why it's wrong | Fix |
+|---|---|---|
+| Lowering a user's existing `timeout-minutes` | They chose it; a long cap may cover a release or slow-runner case you can't see | Report ≥ 3× drift; change only values carrying the marker comment |
+| Setting `timeout-minutes` on a `jobs.<id>.uses` job | GitHub rejects the workflow | Skip reusable-workflow callers |
+| Counting skipped or failed job entries | `if:`-skipped jobs report ~0 duration and drag the max down; failed runs may have hung | Count only `conclusion == "success"` |
+| Sampling PR runs | Cancelled and short-circuited runs understate real duration | Sample `--status success` on the default branch only |
+| Taking one leg as the job's duration | Matrix legs vary; macOS/Windows are often slowest | Group legs under the job; use the slowest |
+| Writing a default without the marker comment | A later run can't tell it from a user's choice, so it never gets tightened | Always append `# default, not measured; see tune-gh-actions-timeouts` |
+| Rewriting the file with `yaml.dump` | Strips comments (the marker included) and reflows the file | Insert or replace the single line as text |
+| Adding per-step `timeout-minutes` | More lines to maintain for no extra protection | Job-level only |
+| Stopping when a workflow has no run history | New or PR-only workflows are exactly where a default matters | Use the default and continue |
+
+## Related
+
+- `kitchen-sink:tune-perl-ci` — applies this skill to every Perl workflow as its final step.
+- `kitchen-sink:tune-precious` — its T5 `lint.yml` template ships the marked default; this skill measures it later.
+- `kitchen-sink:tune-dependabot-config` — its auto-merge job's fixed `timeout-minutes: 5` is a user-chosen value this skill leaves alone.
+- GitHub docs: [`jobs.<job_id>.timeout-minutes`](https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions#jobsjob_idtimeout-minutes).
