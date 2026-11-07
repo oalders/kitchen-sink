@@ -232,7 +232,8 @@ gh pr list --head $(git branch --show-current) --json number,url
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash
-   # Same mktemp -d workdir as the review POST in step 1.
+   WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"
+   trap 'rm -rf "$WORKDIR"' EXIT
    cat > "$WORKDIR/approve.md" <<'BODY'
    Code review passed. All checks look good.
 
@@ -320,6 +321,7 @@ $ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "$WORKDIR/
 ✓ Review posted to PR #123
 
 Step 7: Approve PR (review passed — request-review approves on a passing review)
+$ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"; trap 'rm -rf "$WORKDIR"' EXIT
 $ cat > "$WORKDIR/approve.md" <<'BODY'
 Code review passed. All checks look good.
 
