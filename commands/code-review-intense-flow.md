@@ -185,7 +185,7 @@ Same protocol as `/code-review-flow`:
   inline anchored comment and un-anchorable findings in the summary `body`. Specialist findings
   already carry a lens tag and mostly a `file:line`, so they anchor naturally. Per that protocol
   and `docs/attribution.md`, the summary `body` and each inline `comments[].body` end with the
-  attribution footer (model version, resolved at runtime), e.g.:
+  attribution footer (model version, resolved at runtime) after a blank line, e.g.:
   ```
   ---
   🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>

@@ -42,7 +42,7 @@ Every PR body — and every GitHub **issue body** or **issue comment** — a ski
 
 ## Review footer
 
-Every body a skill posts in a review ends with this footer (version = running model):
+Every review-related body a skill posts ends with this footer (version = running model):
 
 - the **summary/review `body`**
 - **each inline `comments[].body`** in a batched review, since a reader sees it apart from the summary

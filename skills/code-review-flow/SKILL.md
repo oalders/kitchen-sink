@@ -227,7 +227,8 @@ the attribution footer from `docs/attribution.md`, using the model version resol
    `trap 'rm -rf "$WORKDIR"' EXIT`), pulling the summary AND every finding body in via `--rawfile`
    (never a literal for either); don't inline a heredoc into jq and don't use a fixed temp path.
 6. **Replies vs. new threads.** To follow up on an existing thread, POST to
-   `pulls/<n>/comments/{comment_id}/replies` rather than opening a new one.
+   `pulls/<n>/comments/{comment_id}/replies` rather than opening a new one. The reply body ends
+   with the footer from `docs/attribution.md`, like every other review body.
 
 ## Fixing Review Issues
 
