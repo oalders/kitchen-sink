@@ -1,7 +1,7 @@
 ---
 name: tune-perl-ci
 description: Use when modernizing, tuning, or hardening a Perl project's GitHub Actions CI, when a workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`/`install-with-cpanm` and looks stale, or when a Dist::Zilla starter template's CI workflow is a few years old.
-version: 1.4.2
+version: 1.5.0
 ---
 
 # Tune Perl CI
@@ -18,7 +18,9 @@ version: 1.4.2
 6. Install deps with `setup-cpm` + a `cpm install` run step
 7. Drop macOS + Windows tests for Perls < 5.24
 
-**Core principle:** modernize the workflow without changing intent. Each transform lands as its own commit so any single change is revertable. Re-running the skill on an already-tuned workflow is a no-op.
+Then, as a final step, set `timeout-minutes` on every job via `kitchen-sink:tune-gh-actions-timeouts`.
+
+**Core principle:** modernize the workflow without changing intent. Each transform lands as its own commit so any single change is revertable. Re-running the skill on an already-tuned workflow is a no-op, except that the timeouts step tightens marked defaults once they have enough history.
 
 ## Dispatch this skill to a subagent
 
@@ -26,12 +28,12 @@ When this skill is invoked, dispatch the work to a `general-purpose` subagent vi
 
 Why:
 - Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across seven transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
-- The caller only needs the final summary line (`Applied N transforms across M files in K commits`) and the list of commit SHAs. Everything else is intermediate state.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the seven transforms' commits; the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
-- Brief the subagent with this SKILL.md as its working spec — pass the path to the file or invoke the skill from inside the subagent.
+- Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
 - Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
-- Require the subagent to report back only: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
+- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms with reason, and the timeouts step's report and SHA.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -309,6 +311,12 @@ test_macos:
         - "5.34"
 ```
 
+## Final step: job timeouts
+
+**What:** after the seven transforms, apply `kitchen-sink:tune-gh-actions-timeouts` to every in-scope (Perl-detected) workflow and no others — not only the ones a transform changed, so an already-tuned repo still gets timeouts. The "no Perl workflows found" early exit skips this step too. Follow it inline (this skill already runs in a subagent), passing the in-scope paths.
+
+**Why:** a job without `timeout-minutes` gets GitHub's 360-minute default. The sizing heuristic lives in that skill only.
+
 ## Algorithm
 
 ```
@@ -322,7 +330,11 @@ test_macos:
         for transform t (see Verification). On failure, stop with a clear
         message; leave files unstaged for inspection.
      e. Stage the changed files and commit with `workflow: <transform description>`.
-3. Report summary: "Applied N transforms across M files in K commits".
+3. Apply tune-gh-actions-timeouts inline to every in-scope file (its own
+   verification and single commit).
+4. Report summary: "Applied N transforms across M files in K commits"
+   (K counts the seven transforms' commits only), then the timeouts
+   step's report and SHA on their own lines.
 ```
 
 Each transform produces at most one commit (across all in-scope files). Transforms that produce no diff for any file produce no commit.
@@ -338,6 +350,7 @@ Suggested commit subjects:
 | 5 | `workflow: add concurrency block to cancel superseded runs` |
 | 6 | `workflow: install deps with setup-cpm + cpm install` |
 | 7 | `workflow: drop macOS/Windows tests for Perls < 5.24` |
+| timeouts | `workflow: set timeout-minutes on every job` |
 
 ## Default branch resolution
 
@@ -547,6 +560,7 @@ After **each** transform's edit, before committing:
 | 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
 | 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm@v1` step with `version: compat` (and the `v1` tag resolves via `gh api`); no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
+| timeouts | see `tune-gh-actions-timeouts` Verification |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
 
@@ -571,6 +585,7 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 ## Related
 
 - `kitchen-sink:tune-dependabot-config` — the sister skill (Dependabot config harden).
+- `kitchen-sink:tune-gh-actions-timeouts` — the final step; owns the `timeout-minutes` heuristic.
 - Reference PR: [libwww-perl/HTTP-Daemon#80](https://github.com/libwww-perl/HTTP-Daemon/pull/80) — exact transforms applied to a real Dist::Zilla project.
 - GitHub docs: [`workflow.concurrency`](https://docs.github.com/en/actions/using-jobs/using-concurrency).
 - GitHub docs: [`matrix.fail-fast`](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs#handling-failures).
