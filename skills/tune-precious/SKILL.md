@@ -37,7 +37,7 @@ Why:
 - The caller only needs the final summary line (`Applied N transforms across M files in K commits`) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
-- Brief the subagent with this SKILL.md as its working spec — pass the path to the file or invoke the skill from inside the subagent.
+- Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
 - Tell the subagent the working directory.
 - Require the subagent to report back only: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
@@ -421,19 +421,19 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 - `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort + typos are Rust/Go); skips compile time. The input is `projects:` (newline-delimited list of `owner/repo` slugs passed to `ubi --project`). Always pass `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` under `with:` — ubi pulls binaries through the GitHub releases API, and without an authenticated token the unauthenticated rate limit fails the install step intermittently.
 - `setup-cpm@v1` installs `cpm`, and the explicit `cpm install -g` run step installs the two CPAN tools precious shells out to.
 - A single recent stable Perl is enough for the lint job; nothing in this job exercises older Perls.
-- `timeout-minutes: 15` with the marker comment caps a hung lint run below GitHub's 360-minute default; `tune-gh-actions-timeouts` later replaces it with a measured value.
+- The `timeout-minutes` line carries the default marker defined in `tune-gh-actions-timeouts`; write the comment verbatim so that skill can later tighten the value.
 - `branches: [<default>]` + workflow-level `concurrency:` block — same conventions as `tune-perl-ci`. Resolve the default branch with the `git symbolic-ref` command shown above and substitute before writing the file.
 
 **Lint job and build jobs:** the generated `lint.yml` is a standalone workflow with no build job, so the `precious` job declares no `needs:`. If you instead add a precious-lint job to a workflow that already contains a build job, that lint job **must** declare `needs: <build-job>` — running lint against a tree whose build is already failing wastes a runner and clutters the failure signal.
 
 **Idempotency:** if `.github/workflows/lint.yml` already exists, parse it and classify the lint step:
 
-- **Already the gated form** (an `event_name == "pull_request"` branch running `--git-diff-from`, with an `--all` else arm): leave the lint step alone — no-op.
+- **Already the gated form** (an `event_name == "pull_request"` branch running `--git-diff-from`, with an `--all` else arm): leave the lint step alone.
 - **Plain unconditional `precious lint --all`** (the shape earlier versions of this skill emitted): this is now **drift, not canonical.** Upgrade it in place to the gated `github.event_name` pattern above, preserving the rest of the workflow, and commit. If you cannot edit it safely without disturbing surrounding customisation, surface the drift line (`T5: lint step runs unconditional 'precious lint --all'; upgrade to the event_name-gated incremental pattern`) and skip rather than guess.
 - **A ref-gated incremental pattern** (`if [ "${{ github.ref }}" = … ]` choosing between `--all` and `--git-diff-from`): flag as drift — this is the merge-queue-breaking shape (`base_ref` is empty outside `pull_request`). Upgrade it to gate on `github.event_name`, or surface the drift line and skip if it's entangled with other customisation.
 - **Any other shape** (e.g. installs precious from source, per-tool steps): surface the drift and skip — do not overwrite a hand-rolled workflow.
 
-For the gated form and the two upgradeable shapes, also add the template's marked `timeout-minutes: 15` line to the `precious` job if it has none. Leave an existing `timeout-minutes` alone.
+For the gated form and the two upgradeable shapes, also add the template's marked `timeout-minutes: 15` line after the `precious` job's `runs-on:` if it has none, in T5's commit. Leave an existing `timeout-minutes` alone.
 
 **Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds the GHA context to `env:` (`EVENT_NAME` / `BASE_REF`) rather than interpolating `${{ … }}` into `run:`, and its incremental arm fetches `origin/$BASE_REF` before diffing against it; the `checkout` step sets `fetch-depth: 0`; the `precious` job sets `timeout-minutes`; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
 

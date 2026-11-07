@@ -31,7 +31,7 @@ Why:
 - The caller only needs the final summary line (`Applied N transforms across M files in K commits`) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
-- Brief the subagent with this SKILL.md as its working spec — pass the path to the file or invoke the skill from inside the subagent.
+- Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
 - Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
 - Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms with reason, and the timeouts step's summary line and SHA.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
@@ -313,7 +313,7 @@ test_macos:
 
 ## Final step: job timeouts
 
-**What:** after the seven transforms, apply `kitchen-sink:tune-gh-actions-timeouts` to every in-scope workflow — not only the ones a transform changed, so an already-tuned repo still gets timeouts. Follow it inline (this skill already runs in a subagent), passing the in-scope paths.
+**What:** after the seven transforms, apply `kitchen-sink:tune-gh-actions-timeouts` to every in-scope (Perl-detected) workflow and no others — not only the ones a transform changed, so an already-tuned repo still gets timeouts. The "no Perl workflows found" early exit skips this step too. Follow it inline (this skill already runs in a subagent), passing the in-scope paths.
 
 **Why:** a job without `timeout-minutes` gets GitHub's 360-minute default. The sizing heuristic lives in that skill only.
 
@@ -542,7 +542,6 @@ Things to notice in the after-state:
 - Both `install-with-cpm` steps became a `setup-cpm@v1` step (`version: compat`) followed by an explicit `cpm install -g` run step that carries the old step's `name:`; the old `sudo:` key was dropped (the perl-tester container runs as root and the macOS Perl is user-local) and the matrix-conditional `version:` expression is gone — `version: compat` pins old Perls upstream.
 - `test_linux` keeps `--with-develop` in its `cpm install`, but `test_macos` (a macOS-only job) dropped it — develop-phase prereqs are author/release tooling the cross-platform matrix never exercises and often fail to build on hosted macOS/Windows runners.
 - `test_macos.matrix.perl-version` lost `"5.20"` (transform 7) but `test_linux.matrix.perl-version` keeps `"5.10"` — transform 7 leaves Linux container jobs alone.
-- Not shown: the final step then gives every job a `timeout-minutes`, per `tune-gh-actions-timeouts`.
 
 ## Verification
 

@@ -482,10 +482,9 @@ Groups Dependabot minor/patch updates per ecosystem (majors stay individual) and
 #### tune-gh-actions-timeouts
 
 Caps every job in `.github/workflows/*.y*ml` below GitHub's 360-minute default, so a hung step can't burn six hours of Actions minutes:
-- Samples the last 20 successful default-branch runs per workflow; matrix legs group to their job, slowest leg wins
-- `timeout = ceil_to_5(max(longest * 2, longest + 10))`
-- Under 5 samples: a marked default (15, or 30 for matrix jobs) that a later run tightens
-- Never changes a user-set `timeout-minutes`; reports ones ≥ 3× the measured value as drift
+- Sizes each job's timeout from its recent successful run history
+- Jobs with too little history get a marked default that a later run tightens
+- Never changes a user-set `timeout-minutes`; reports ones far above the measured value as drift
 - Skips reusable-workflow jobs; one commit; re-running is a no-op
 
 #### tune-perl-ci
