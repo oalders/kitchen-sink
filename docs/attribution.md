@@ -42,12 +42,14 @@ Every PR body — and every GitHub **issue body** or **issue comment** — a ski
 
 ## Review footer
 
-Every body a skill posts in a review ends with this footer (version = running model): the
-**summary/review `body`**, **each inline `comments[].body`** in a batched review, every **standalone
-thread reply** (`pulls/{pr}/comments/{comment_id}/replies`), and every **PR conversation comment**. A
-reader sees an inline comment on its own, apart from the summary, and the `gh` wrapper refuses inline
-bodies without the footer. Always put a blank line before `---`; text directly above it renders as a
-heading:
+Every body a skill posts in a review ends with this footer (version = running model):
+
+- the **summary/review `body`**
+- **each inline `comments[].body`** in a batched review, since a reader sees it apart from the summary
+- every **standalone thread reply** (`pulls/{pr}/comments/{comment_id}/replies`)
+- every **PR conversation comment**
+
+Always put a blank line before `---`; text directly above it renders as a heading:
 
 ```
 ---

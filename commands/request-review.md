@@ -232,7 +232,14 @@ gh pr list --head $(git branch --show-current) --json number,url
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash
-   gh pr review <pr-number> --approve --body "Code review passed. All checks look good."
+   # Same mktemp -d workdir as the review POST in step 1.
+   cat > "$WORKDIR/approve.md" <<'BODY'
+   Code review passed. All checks look good.
+
+   ---
+   🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
+   BODY
+   gh pr review <pr-number> --approve --body-file "$WORKDIR/approve.md"
    ```
 
 3. **If review requires fixes (Ready to merge? With fixes/No):**
@@ -313,7 +320,13 @@ $ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "$WORKDIR/
 ✓ Review posted to PR #123
 
 Step 7: Approve PR (review passed — request-review approves on a passing review)
-$ gh pr review 123 --approve --body "Code review passed. All checks look good."
+$ cat > "$WORKDIR/approve.md" <<'BODY'
+Code review passed. All checks look good.
+
+---
+🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
+BODY
+$ gh pr review 123 --approve --body-file "$WORKDIR/approve.md"
 ✓ PR #123 approved
 
 Step 8: Address any minor feedback (if applicable)
