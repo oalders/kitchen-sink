@@ -42,26 +42,29 @@ Every PR body — and every GitHub **issue body** or **issue comment** — a ski
 
 ## Review footer
 
-Every review body a skill posts to a PR ends with this footer (version = running model). It goes on the
-**summary/review body**, not on each individual inline finding within a batched review. A **standalone
-reply** a skill posts to an existing review thread (e.g. via `pulls/{pr}/comments/{comment_id}/replies`
-or a PR conversation comment) is its own body, not an inline finding inside a batched review, so it
-**does** end with this footer:
+Every review-related body a skill posts ends with this footer (version = running model):
+
+- the **summary/review `body`**
+- **each inline `comments[].body`** in a batched review, since a reader sees it apart from the summary
+- every **standalone thread reply** (`pulls/{pr}/comments/{comment_id}/replies`)
+- every **PR conversation comment**
+
+Always put a blank line before `---`; text directly above it renders as a heading:
 
 ```
 ---
 🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 4.8
 ```
 
-**Shell safety:** never build the review body — the diff-derived findings *or* the attribution footer
-alongside them — with a double-quoted shell word or a bare literal inside a single-quoted `jq` program.
-The findings are derived from diff text, so they can carry backticks or `$(...)`/`$var` that a
-double-quoted word command-
-substitutes; in a single-quoted `jq` literal an apostrophe anywhere in the body (e.g. an assessment
-saying "doesn't") breaks the quoting, after which trailing content — backticks included — is
-shell-interpreted. Instead, author the JSON body directly with a file-writing tool (no shell at all —
-the preferred path), or emit it through a single-quoted heredoc (`<<'BODY'`) + `--rawfile`/`--body-file`.
-See `code-review-flow`'s inline-review protocol for the full apostrophe/backtick threat model.
+**Shell safety:** never build any review body (the summary or a `comments[].body`) — the diff-derived
+findings *or* the attribution footer alongside them — with a double-quoted shell word or a bare literal
+inside a single-quoted `jq` program. The findings are derived from diff text, so they can carry
+backticks or `$(...)`/`$var` that a double-quoted word command-substitutes; in a single-quoted `jq`
+literal an apostrophe anywhere in the body (e.g. an assessment saying "doesn't") breaks the quoting,
+after which trailing content — backticks included — is shell-interpreted. Instead, author the JSON body
+directly with a file-writing tool (no shell at all — the preferred path), or emit it through a
+single-quoted heredoc (`<<'BODY'`) + `--rawfile`/`--body-file`. See `code-review-flow`'s inline-review
+protocol for the full apostrophe/backtick threat model.
 
 The same discipline applies to the **commit trailer** and **PR-body line**, not just the footer: never
 place any attribution string in a double-quoted word that would expand `$`/backticks, and — because the

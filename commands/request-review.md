@@ -227,11 +227,20 @@ gh pr list --head $(git branch --show-current) --json number,url
    or a double-quoted shell word, not even a short fixed boilerplate body; only the head SHA
    (`--arg commit "$HEAD_SHA"`, from `gh pr view`) uses `--arg`. Use `event: "COMMENT"` for this posting step — the
    approve/no-approve decision below is applied separately as its own gate. Per `docs/attribution.md`,
-   the review `body` ends with the attribution footer (model version, resolved at runtime).
+   the summary `body` and each inline `comments[].body` end with the attribution footer (model
+   version, resolved at runtime).
 
 2. **If review passes (Ready to merge? Yes):**
    ```bash
-   gh pr review <pr-number> --approve --body "Code review passed. All checks look good."
+   WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"
+   trap 'rm -rf "$WORKDIR"' EXIT
+   cat > "$WORKDIR/approve.md" <<'BODY'
+   Code review passed. All checks look good.
+
+   ---
+   🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
+   BODY
+   gh pr review <pr-number> --approve --body-file "$WORKDIR/approve.md"
    ```
 
 3. **If review requires fixes (Ready to merge? With fixes/No):**
@@ -312,7 +321,14 @@ $ gh api repos/{owner}/{repo}/pulls/123/reviews --method POST --input "$WORKDIR/
 ✓ Review posted to PR #123
 
 Step 7: Approve PR (review passed — request-review approves on a passing review)
-$ gh pr review 123 --approve --body "Code review passed. All checks look good."
+$ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/review.XXXXXX")"; trap 'rm -rf "$WORKDIR"' EXIT
+$ cat > "$WORKDIR/approve.md" <<'BODY'
+Code review passed. All checks look good.
+
+---
+🤖 Review by [Claude Code](https://claude.com/claude-code) · <running model version>
+BODY
+$ gh pr review 123 --approve --body-file "$WORKDIR/approve.md"
 ✓ PR #123 approved
 
 Step 8: Address any minor feedback (if applicable)
