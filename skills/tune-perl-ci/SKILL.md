@@ -28,12 +28,12 @@ When this skill is invoked, dispatch the work to a `general-purpose` subagent vi
 
 Why:
 - Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across seven transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
-- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the seven transforms' commits; the timeouts commit is reported on its own line) and the list of commit SHAs. Everything else is intermediate state.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the seven transforms' commits; the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
 - Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
-- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms with reason, and the timeouts step's summary line and SHA.
+- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms with reason, and the timeouts step's report and SHA.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -334,7 +334,7 @@ test_macos:
    verification and single commit).
 4. Report summary: "Applied N transforms across M files in K commits"
    (K counts the seven transforms' commits only), then the timeouts
-   step's summary line and SHA on their own line.
+   step's report and SHA on their own lines.
 ```
 
 Each transform produces at most one commit (across all in-scope files). Transforms that produce no diff for any file produce no commit.

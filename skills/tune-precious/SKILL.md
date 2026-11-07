@@ -25,7 +25,7 @@ version: 1.7.0
 |---|---|---|
 | Migrate | Repo has `.tidyallrc`, `tidyall.ini`, or `[Test::TidyAll]` in `dist.ini` | All six transforms apply |
 | Greenfield | Perl repo, no tidyall config, no `precious.toml` | T1 + T2 (consolidate any visible `perltidyrc`) + T5 + T6 |
-| Tune | `precious.toml` already exists | All transforms run as no-ops, except T5 adds `timeout-minutes` to a `lint.yml` that lacks it; surfaces drift between current config and canonical recipe |
+| Tune | `precious.toml` already exists | All transforms run as no-ops; surfaces drift between current config and canonical recipe |
 | Typos-only | No Perl files, but `typos.toml` / `_typos.toml` / `.typos.toml` is present | T1 (typos block only) + T5; T2/T3/T4 are no-ops |
 
 ## Dispatch this skill to a subagent
@@ -428,14 +428,14 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 
 **Idempotency:** if `.github/workflows/lint.yml` already exists, parse it and classify the lint step:
 
-- **Already the gated form** (an `event_name == "pull_request"` branch running `--git-diff-from`, with an `--all` else arm): leave the lint step alone.
+- **Already the gated form** (an `event_name == "pull_request"` branch running `--git-diff-from`, with an `--all` else arm): leave it alone — no-op.
 - **Plain unconditional `precious lint --all`** (the shape earlier versions of this skill emitted): this is now **drift, not canonical.** Upgrade it in place to the gated `github.event_name` pattern above, preserving the rest of the workflow, and commit. If you cannot edit it safely without disturbing surrounding customisation, surface the drift line (`T5: lint step runs unconditional 'precious lint --all'; upgrade to the event_name-gated incremental pattern`) and skip rather than guess.
 - **A ref-gated incremental pattern** (`if [ "${{ github.ref }}" = … ]` choosing between `--all` and `--git-diff-from`): flag as drift — this is the merge-queue-breaking shape (`base_ref` is empty outside `pull_request`). Upgrade it to gate on `github.event_name`, or surface the drift line and skip if it's entangled with other customisation.
 - **Any other shape** (e.g. installs precious from source, per-tool steps): surface the drift and skip — do not overwrite a hand-rolled workflow.
 
-For the gated form, and for an upgradeable shape T5 actually upgrades, also add the template's marked `timeout-minutes: 15` line after the `runs-on:` of the job that runs `precious lint` if it has none, in T5's commit. Leave an existing `timeout-minutes` alone. When T5 skips the file (any other shape, or an upgrade too entangled to make safely), it adds no timeout either; `tune-gh-actions-timeouts` covers that job.
+T5 writes `timeout-minutes` only in a freshly written `lint.yml`; it never adds or changes one in an existing file — `tune-gh-actions-timeouts` sets that from run history.
 
-**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds the GHA context to `env:` (`EVENT_NAME` / `BASE_REF`) rather than interpolating `${{ … }}` into `run:`, and its incremental arm fetches `origin/$BASE_REF` before diffing against it; the `checkout` step sets `fetch-depth: 0`; if T5 wrote or edited the file, the job running `precious lint` sets `timeout-minutes`; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
+**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds the GHA context to `env:` (`EVENT_NAME` / `BASE_REF`) rather than interpolating `${{ … }}` into `run:`, and its incremental arm fetches `origin/$BASE_REF` before diffing against it; the `checkout` step sets `fetch-depth: 0`; if T5 wrote the file fresh, the `precious` job sets `timeout-minutes`; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
 
 ### 6. Add `.githooks/pre-commit` hook for `precious lint`
 
@@ -709,7 +709,7 @@ After **each** transform, before committing:
 | 2 | `grep -E '(^\|\s)(-b\|--backup-and-modify-in-place)(\s\|$)' .perltidyrc` returns nothing; `git ls-files perltidyrc` returns nothing |
 | 3 | `git ls-files \| grep -E '(^\|/)tidyall'` returns nothing; `.gitignore` has no `tidyall` line |
 | 4 | `dzil build --no-tgz` exits 0; `grep -E '(Code::TidyAll\|Test::Vars\|Pod::Wordlist\|Parallel::ForkManager)' <DistName>-*/META.json` returns nothing |
-| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds `EVENT_NAME`/`BASE_REF` via `env:` (no `${{ … }}` in `run:`), has a `--git-diff-from origin/$BASE_REF` PR arm and an `--all` else arm, and `checkout` uses `fetch-depth: 0`; if T5 wrote or edited the file, the job running `precious lint` sets `timeout-minutes`; every `uses:` ref resolves to an existing tag |
+| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds `EVENT_NAME`/`BASE_REF` via `env:` (no `${{ … }}` in `run:`), has a `--git-diff-from origin/$BASE_REF` PR arm and an `--all` else arm, and `checkout` uses `fetch-depth: 0`; if T5 wrote the file fresh, the `precious` job sets `timeout-minutes`; every `uses:` ref resolves to an existing tag |
 | 6 | `sh -n .githooks/pre-commit` exits 0; `[ -x .githooks/pre-commit ]`; `grep -q 'precious lint' .githooks/pre-commit`; if a `make init` target was added, it runs `git config core.hooksPath .githooks`; if `dist.ini` exists, `dzil build --no-tgz` exits 0 and `find <DistName>-*/ -path '*/.githooks/pre-commit'` returns nothing |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
