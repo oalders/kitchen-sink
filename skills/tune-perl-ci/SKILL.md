@@ -28,7 +28,7 @@ When this skill is invoked, dispatch the work to a `general-purpose` subagent vi
 
 Why:
 - Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across seven transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
-- The caller only needs the final summary line (`Applied N transforms across M files in K commits`) and the list of commit SHAs. Everything else is intermediate state.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the seven transforms' commits; the timeouts commit is reported on its own line) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
@@ -332,8 +332,9 @@ test_macos:
      e. Stage the changed files and commit with `workflow: <transform description>`.
 3. Apply tune-gh-actions-timeouts inline to every in-scope file (its own
    verification and single commit).
-4. Report summary: "Applied N transforms across M files in K commits",
-   followed by the timeouts step's summary line.
+4. Report summary: "Applied N transforms across M files in K commits"
+   (K counts the seven transforms' commits only), then the timeouts
+   step's summary line and SHA on their own line.
 ```
 
 Each transform produces at most one commit (across all in-scope files). Transforms that produce no diff for any file produce no commit.
