@@ -55,7 +55,8 @@ heading:
 ```
 
 **Shell safety:** never build any review body (the summary or a `comments[].body`) — the
-diff-derived findings *or* the attribution footer alongside them — with a double-quoted shell word or a bare literal inside a single-quoted `jq` program.
+diff-derived findings *or* the attribution footer alongside them — with a double-quoted shell word
+or a bare literal inside a single-quoted `jq` program.
 The findings are derived from diff text, so they can carry backticks or `$(...)`/`$var` that a
 double-quoted word command-
 substitutes; in a single-quoted `jq` literal an apostrophe anywhere in the body (e.g. an assessment
