@@ -42,11 +42,11 @@ Codex's own sandbox (bubblewrap) can't start inside an outer sandbox such as non
 - **Never set this key yourself, and never set, change, or fake `NONO_CAP_FILE`** (for example by prefixing a command with `NONO_CAP_FILE=...`). Whether to bypass Codex's sandbox is the user's decision.
 - When `outer_sandbox.enabled` is true, say so in your report to the user and in the PR body: Codex ran with its own sandbox bypassed (give the `source`).
 
-If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap error), `local-review` exits `2`. That is a tool error: STOP and report it. It is never a pass. If the error suggests enabling the bypass, relay that to the user; never run the `git config` command yourself. The one exception: if the error says Codex panicked (exit 101), re-run that same `local-review` once. A repeat failure, or a second panic later in the run, is STOP and report.
+If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap error), `local-review` exits `2`. That is a tool error: STOP and report it. It is never a pass. If the error suggests enabling the bypass, relay that to the user; never run the `git config` command yourself.
 
 ## Phase 1: Local loop (before pushing)
 
-1. Run the review with `python3 "$CL" local-review --base origin/<default-branch>`. It takes a few minutes, so run it in the caller's context, not inside an implementation subagent.
+1. Run the review with `python3 "$CL" local-review --base origin/<default-branch>`. It takes a few minutes, so run it in the caller's context, not inside an implementation subagent. If it exits `2` with `a Codex panic` in `error`, re-run it once; that is the only re-run in the whole run, across all rounds. If the re-run exits non-zero, or a later `local-review` panics, STOP and report.
 2. If `clean` is true, Phase 1 is done. Note any `advisory` (P3) items in the PR body.
 3. Otherwise, triage each finding in `blocking` using `superpowers:receiving-code-review`:
    - **Fix it** if the input, state, or call path it describes can actually occur. A subagent applies the fixes and commits them with the attribution trailer. Its brief says: name the state or assumption each finding broke, then fix or test the sibling code paths that share it and the states the fix newly makes reachable, in the same commit. Each one needs a real trigger.
