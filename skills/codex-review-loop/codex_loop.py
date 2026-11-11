@@ -263,7 +263,7 @@ def cmd_local_review(args):
     if proc.returncode:
         msg = f"{' '.join(cmd)} exited {proc.returncode}"
         if proc.returncode == 101:
-            msg += " (a Codex panic, see openai/codex#55242)"
+            msg += " (a Codex panic, see openai/codex#55242; re-run once)"
         raise ToolError(f"{msg}: {log[-4096:]} (log: {log_path})")
     with open(out_path, encoding="utf-8") as fh:
         text = fh.read()
