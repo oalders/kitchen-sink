@@ -306,16 +306,17 @@ with open(os.path.join(here, "argv.json"), "w") as fh:
     json.dump(sys.argv[1:], fh)
 with open(os.path.join(here, "fds.json"), "w") as fh:
     json.dump([stat.S_ISREG(os.fstat(fd).st_mode) for fd in (1, 2)], fh)
-panic = os.path.join(here, "panic.txt")
-if os.path.exists(panic):
-    with open(panic) as fh:
-        sys.stderr.write(fh.read())
-    sys.exit(101)
-with open(os.path.join(here, "summary.txt")) as fh:
-    summary = fh.read()
+def control(name, default):
+    path = os.path.join(here, name)
+    if not os.path.exists(path):
+        return default
+    with open(path) as fh:
+        return fh.read()
+sys.stderr.write(control("stderr.txt", ""))
 args = sys.argv[1:]
 with open(args[args.index("-o") + 1], "w") as fh:
-    fh.write(summary)
+    fh.write(control("summary.txt", ""))
+sys.exit(int(control("exit.txt", "0")))
 """
 
 
@@ -336,8 +337,7 @@ class LocalReviewIntegration(unittest.TestCase):
         os.chmod(codex, 0o755)
 
     def run_review(self, summary, under_nono):
-        with open(os.path.join(self.tmp.name, "summary.txt"), "w") as fh:
-            fh.write(summary)
+        self.write_control("summary.txt", summary)
         env = {"PATH": self.tmp.name + os.pathsep + os.environ.get("PATH", ""), "TMPDIR": self.tmp.name}
         env["NONO_CAP_FILE"] = write_cap_file(self.tmp.name) if under_nono else ""
         out = io.StringIO()
@@ -363,15 +363,25 @@ class LocalReviewIntegration(unittest.TestCase):
         self.assertIn("already on (source: nono)", out["error"])
         self.assertIn(cl.BYPASS_FLAG, argv)
 
+    def write_control(self, name, content):
+        with open(os.path.join(self.tmp.name, name), "w") as fh:
+            fh.write(content)
+
+    def test_bwrap_failure_in_log_is_tool_error(self):
+        self.write_control("stderr.txt", f"{cl.BWRAP_MARKER}: no permissions\n")
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
+        self.assertEqual(rc, 2)
+        self.assertIn("could not inspect the diff", out["error"])
+
     def test_panic_reports_log_tail(self):
-        with open(os.path.join(self.tmp.name, "panic.txt"), "w") as fh:
-            fh.write("HEAD-OF-OUTPUT\n" + "x" * 70000 + "\nthread 'main' panicked: EAGAIN\n")
+        self.write_control("stderr.txt", "HEAD-OF-OUTPUT\n" + "x" * 70000 + "\nthread 'main' panicked: EAGAIN\n")
+        self.write_control("exit.txt", "101")
         rc, out, _ = self.run_review("", False)
         with open(os.path.join(self.tmp.name, "fds.json")) as fh:
             self.assertEqual(json.load(fh), [True, True])
         self.assertEqual(rc, 2)
         self.assertIn("thread 'main' panicked: EAGAIN", out["error"])
-        self.assertIn("panic", out["error"])
+        self.assertIn("a Codex panic", out["error"])
         self.assertRegex(out["error"], r"log: \S+codex-review-\S+\.log\)")
         self.assertNotIn("HEAD-OF-OUTPUT", out["error"])
         self.assertNotIn("produced no output", out["error"])
