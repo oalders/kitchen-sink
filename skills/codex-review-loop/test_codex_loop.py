@@ -300,10 +300,17 @@ class NonoDetected(unittest.TestCase):
 
 
 FAKE_CODEX = """#!{python}
-import json, os, sys
+import json, os, stat, sys
 here = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(here, "argv.json"), "w") as fh:
     json.dump(sys.argv[1:], fh)
+with open(os.path.join(here, "fds.json"), "w") as fh:
+    json.dump([stat.S_ISREG(os.fstat(fd).st_mode) for fd in (1, 2)], fh)
+panic = os.path.join(here, "panic.txt")
+if os.path.exists(panic):
+    with open(panic) as fh:
+        sys.stderr.write(fh.read())
+    sys.exit(101)
 with open(os.path.join(here, "summary.txt")) as fh:
     summary = fh.read()
 args = sys.argv[1:]
@@ -355,6 +362,19 @@ class LocalReviewIntegration(unittest.TestCase):
         self.assertIn("could not inspect the diff", out["error"])
         self.assertIn("already on (source: nono)", out["error"])
         self.assertIn(cl.BYPASS_FLAG, argv)
+
+    def test_panic_reports_log_tail(self):
+        with open(os.path.join(self.tmp.name, "panic.txt"), "w") as fh:
+            fh.write("HEAD-OF-OUTPUT\n" + "x" * 70000 + "\nthread 'main' panicked: EAGAIN\n")
+        rc, out, _ = self.run_review("", False)
+        with open(os.path.join(self.tmp.name, "fds.json")) as fh:
+            self.assertEqual(json.load(fh), [True, True])
+        self.assertEqual(rc, 2)
+        self.assertIn("thread 'main' panicked: EAGAIN", out["error"])
+        self.assertIn("panic", out["error"])
+        self.assertRegex(out["error"], r"log: \S+codex-review-\S+\.log\)")
+        self.assertNotIn("HEAD-OF-OUTPUT", out["error"])
+        self.assertNotIn("produced no output", out["error"])
 
     def test_clean_review_under_nono_passes_bypass(self):
         rc, out, argv = self.run_review(CLEAN_OUTPUT, True)
