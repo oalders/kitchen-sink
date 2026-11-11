@@ -251,19 +251,23 @@ def cmd_local_review(args):
     fd, out_path = tempfile.mkstemp(prefix="codex-review-", suffix=".txt", dir=out_dir)
     os.close(fd)
     cmd = review_command(codex, args.base, out_path, args.title, sandbox["enabled"])
-    log_fd, log_path = tempfile.mkstemp(prefix="codex-review-", suffix=".log", dir=out_dir)
-    # A file, not a pipe: Codex can panic writing large output to a pipe (openai/codex#55242).
-    with os.fdopen(log_fd, "w") as fh:
-        try:
-            proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, timeout=args.timeout)
-        except subprocess.TimeoutExpired as exc:
-            raise ToolError(f"codex review timed out after {args.timeout}s (log: {log_path})") from exc
-    with open(log_path, encoding="utf-8", errors="replace") as fh:
-        log = fh.read()
+    for attempt in range(2):
+        log_fd, log_path = tempfile.mkstemp(prefix="codex-review-", suffix=".log", dir=out_dir)
+        # A file, not a pipe: Codex can panic writing large output to a pipe (openai/codex#55242).
+        with os.fdopen(log_fd, "w") as fh:
+            try:
+                proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, timeout=args.timeout)
+            except subprocess.TimeoutExpired as exc:
+                raise ToolError(f"codex review timed out after {args.timeout}s (log: {log_path})") from exc
+        with open(log_path, encoding="utf-8", errors="replace") as fh:
+            log = fh.read()
+        # Exit 101 is a Codex panic, often transient, so it gets exactly one retry.
+        if proc.returncode != 101 or attempt:
+            break
     if proc.returncode:
         msg = f"{' '.join(cmd)} exited {proc.returncode}"
         if proc.returncode == 101:
-            msg += " (a Codex panic, see openai/codex#55242)"
+            msg += " (a Codex panic, see openai/codex#55242; retried once)"
         raise ToolError(f"{msg}: {log[-4096:]} (log: {log_path})")
     with open(out_path, encoding="utf-8") as fh:
         text = fh.read()

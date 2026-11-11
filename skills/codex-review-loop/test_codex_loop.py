@@ -302,6 +302,9 @@ class NonoDetected(unittest.TestCase):
 FAKE_CODEX = """#!{python}
 import json, os, stat, sys
 here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "calls.txt"), "a") as fh:
+    fh.write("call\\n")
+calls = sum(1 for _ in open(os.path.join(here, "calls.txt")))
 with open(os.path.join(here, "argv.json"), "w") as fh:
     json.dump(sys.argv[1:], fh)
 with open(os.path.join(here, "fds.json"), "w") as fh:
@@ -316,7 +319,8 @@ sys.stderr.write(control("stderr.txt", ""))
 args = sys.argv[1:]
 with open(args[args.index("-o") + 1], "w") as fh:
     fh.write(control("summary.txt", ""))
-sys.exit(int(control("exit.txt", "0")))
+codes = control("exit.txt", "0").split()  # one exit code per call; the last repeats
+sys.exit(int(codes[min(calls, len(codes)) - 1]))
 """
 
 
@@ -349,6 +353,10 @@ class LocalReviewIntegration(unittest.TestCase):
             argv = json.load(fh)
         return rc, json.loads(out.getvalue()), argv
 
+    def calls(self):
+        with open(os.path.join(self.tmp.name, "calls.txt")) as fh:
+            return len(fh.readlines())
+
     def test_blocked_review_is_tool_error(self):
         rc, out, argv = self.run_review(BLOCKED_OUTPUT, False)
         self.assertEqual(rc, 2)
@@ -372,6 +380,7 @@ class LocalReviewIntegration(unittest.TestCase):
         rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
         self.assertEqual(rc, 2)
         self.assertIn("could not inspect the diff", out["error"])
+        self.assertEqual(self.calls(), 1)
 
     def test_panic_reports_log_tail(self):
         self.write_control("stderr.txt", "HEAD-OF-OUTPUT\n" + "x" * 70000 + "\nthread 'main' panicked: EAGAIN\n")
@@ -385,6 +394,14 @@ class LocalReviewIntegration(unittest.TestCase):
         self.assertRegex(out["error"], r"log: \S+codex-review-\S+\.log\)")
         self.assertNotIn("HEAD-OF-OUTPUT", out["error"])
         self.assertNotIn("produced no output", out["error"])
+        self.assertEqual(self.calls(), 2)
+
+    def test_panic_then_success_is_retried(self):
+        self.write_control("exit.txt", "101 0")
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out["clean"])
+        self.assertEqual(self.calls(), 2)
 
     def test_clean_review_under_nono_passes_bypass(self):
         rc, out, argv = self.run_review(CLEAN_OUTPUT, True)
