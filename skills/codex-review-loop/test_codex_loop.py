@@ -300,15 +300,27 @@ class NonoDetected(unittest.TestCase):
 
 
 FAKE_CODEX = """#!{python}
-import json, os, sys
+import json, os, stat, sys
 here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "calls.txt"), "a") as fh:
+    fh.write("call\\n")
+calls = sum(1 for _ in open(os.path.join(here, "calls.txt")))
 with open(os.path.join(here, "argv.json"), "w") as fh:
     json.dump(sys.argv[1:], fh)
-with open(os.path.join(here, "summary.txt")) as fh:
-    summary = fh.read()
+with open(os.path.join(here, "fds.json"), "w") as fh:
+    json.dump([stat.S_ISREG(os.fstat(fd).st_mode) for fd in (1, 2)], fh)
+def control(name, default):
+    path = os.path.join(here, name)
+    if not os.path.exists(path):
+        return default
+    with open(path) as fh:
+        return fh.read()
+sys.stderr.write(control("stderr.txt", ""))
 args = sys.argv[1:]
 with open(args[args.index("-o") + 1], "w") as fh:
-    fh.write(summary)
+    fh.write(control("summary.txt", ""))
+codes = control("exit.txt", "0").split()  # one exit code per call; the last repeats
+sys.exit(int(codes[min(calls, len(codes)) - 1]))
 """
 
 
@@ -329,8 +341,7 @@ class LocalReviewIntegration(unittest.TestCase):
         os.chmod(codex, 0o755)
 
     def run_review(self, summary, under_nono):
-        with open(os.path.join(self.tmp.name, "summary.txt"), "w") as fh:
-            fh.write(summary)
+        self.write_control("summary.txt", summary)
         env = {"PATH": self.tmp.name + os.pathsep + os.environ.get("PATH", ""), "TMPDIR": self.tmp.name}
         env["NONO_CAP_FILE"] = write_cap_file(self.tmp.name) if under_nono else ""
         out = io.StringIO()
@@ -341,6 +352,10 @@ class LocalReviewIntegration(unittest.TestCase):
         with open(os.path.join(self.tmp.name, "argv.json")) as fh:
             argv = json.load(fh)
         return rc, json.loads(out.getvalue()), argv
+
+    def calls(self):
+        with open(os.path.join(self.tmp.name, "calls.txt")) as fh:
+            return len(fh.readlines())
 
     def test_blocked_review_is_tool_error(self):
         rc, out, argv = self.run_review(BLOCKED_OUTPUT, False)
@@ -355,6 +370,47 @@ class LocalReviewIntegration(unittest.TestCase):
         self.assertIn("could not inspect the diff", out["error"])
         self.assertIn("already on (source: nono)", out["error"])
         self.assertIn(cl.BYPASS_FLAG, argv)
+
+    def write_control(self, name, content):
+        with open(os.path.join(self.tmp.name, name), "w") as fh:
+            fh.write(content)
+
+    def test_bwrap_failure_in_log_is_tool_error(self):
+        self.write_control("stderr.txt", f"{cl.BWRAP_MARKER}: no permissions\n")
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
+        self.assertEqual(rc, 2)
+        self.assertIn("could not inspect the diff", out["error"])
+        self.assertEqual(self.calls(), 1)
+
+    def test_panic_reports_log_tail(self):
+        self.write_control("stderr.txt", "HEAD-OF-OUTPUT\n" + "x" * 70000 + "\nthread 'main' panicked: EAGAIN\n")
+        self.write_control("exit.txt", "101")
+        rc, out, _ = self.run_review("", False)
+        with open(os.path.join(self.tmp.name, "fds.json")) as fh:
+            self.assertEqual(json.load(fh), [True, True])
+        self.assertEqual(rc, 2)
+        self.assertIn("thread 'main' panicked: EAGAIN", out["error"])
+        self.assertIn("a Codex panic", out["error"])
+        self.assertRegex(out["error"], r"log: \S+codex-review-\S+\.log\)")
+        self.assertNotIn("HEAD-OF-OUTPUT", out["error"])
+        self.assertNotIn("produced no output", out["error"])
+        self.assertLess(len(out["error"]), 6000)
+        self.assertEqual(self.calls(), 2)
+
+    def test_other_failure_is_not_retried(self):
+        self.write_control("exit.txt", "1")
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
+        self.assertEqual(rc, 2)
+        self.assertIn("exited 1", out["error"])
+        self.assertNotIn("a Codex panic", out["error"])
+        self.assertEqual(self.calls(), 1)
+
+    def test_panic_then_success_is_retried(self):
+        self.write_control("exit.txt", "101 0")
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out["clean"])
+        self.assertEqual(self.calls(), 2)
 
     def test_clean_review_under_nono_passes_bypass(self):
         rc, out, argv = self.run_review(CLEAN_OUTPUT, True)
