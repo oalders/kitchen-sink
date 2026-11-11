@@ -394,7 +394,15 @@ class LocalReviewIntegration(unittest.TestCase):
         self.assertRegex(out["error"], r"log: \S+codex-review-\S+\.log\)")
         self.assertNotIn("HEAD-OF-OUTPUT", out["error"])
         self.assertNotIn("produced no output", out["error"])
+        self.assertLess(len(out["error"]), 6000)
         self.assertEqual(self.calls(), 2)
+
+    def test_other_failure_is_not_retried(self):
+        self.write_control("exit.txt", "1")
+        rc, out, _ = self.run_review("", False)
+        self.assertEqual(rc, 2)
+        self.assertNotIn("a Codex panic", out["error"])
+        self.assertEqual(self.calls(), 1)
 
     def test_panic_then_success_is_retried(self):
         self.write_control("exit.txt", "101 0")

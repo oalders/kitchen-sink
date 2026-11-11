@@ -46,7 +46,7 @@ If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap erro
 
 ## Phase 1: Local loop (before pushing)
 
-1. Run the review with `python3 "$CL" local-review --base origin/<default-branch>`. It takes a few minutes, so run it in the caller's context, not inside an implementation subagent. It already retries a Codex panic once itself, so never re-run it.
+1. Run the review with `python3 "$CL" local-review --base origin/<default-branch>`. It takes a few minutes, so run it in the caller's context, not inside an implementation subagent. It already retries a Codex panic once itself: if it still exits `2`, STOP and report; don't re-run it.
 2. If `clean` is true, Phase 1 is done. Note any `advisory` (P3) items in the PR body.
 3. Otherwise, triage each finding in `blocking` using `superpowers:receiving-code-review`:
    - **Fix it** if the input, state, or call path it describes can actually occur. A subagent applies the fixes and commits them with the attribution trailer. Its brief says: name the state or assumption each finding broke, then fix or test the sibling code paths that share it and the states the fix newly makes reachable, in the same commit. Each one needs a real trigger.
