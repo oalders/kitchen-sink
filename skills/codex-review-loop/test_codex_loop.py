@@ -399,8 +399,9 @@ class LocalReviewIntegration(unittest.TestCase):
 
     def test_other_failure_is_not_retried(self):
         self.write_control("exit.txt", "1")
-        rc, out, _ = self.run_review("", False)
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
         self.assertEqual(rc, 2)
+        self.assertIn("exited 1", out["error"])
         self.assertNotIn("a Codex panic", out["error"])
         self.assertEqual(self.calls(), 1)
 
