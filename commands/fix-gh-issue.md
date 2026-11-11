@@ -231,7 +231,7 @@ Write them as part of implementation, not as review remediation:
 
 Runs on both implementation paths; Codex reviews independently:
 
-- Run `python3 <codex-review-loop dir>/codex_loop.py mode`. On `off`, skip; otherwise follow `codex-review-loop` Phase 1 (local review/fix loop) before pushing. Exit `2`: STOP and report; never skip silently.
+- Run `python3 <codex-review-loop dir>/codex_loop.py mode`. On `off`, skip; otherwise follow `codex-review-loop` Phase 1 (local review/fix loop) before pushing. Exit `2` from `mode`: STOP and report; never skip silently.
 - Codex's round cap is `kitchen-sink.codexRounds`, not step 8's. A hit cap or a Codex finding declined without user confirmation counts as "needs a human" in step 11.
 
 #### 9. Verify fix
