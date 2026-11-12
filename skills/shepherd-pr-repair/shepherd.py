@@ -40,6 +40,8 @@ CALL_TIMEOUT = 60
 hard_end = None  # set by main()
 RESUMABLE_WAIT = 120
 POLL = 15
+GH_WAIT_MARGIN = 35  # a `gh-wait` slice ends this long before the budget: its last poll and sleep run past --timeout
+MIN_SLICE = 30
 UNKNOWN_WAIT = 30
 EVIDENCE_PREFIX = "shepherd-evidence-"
 QUEUE_QUERY = (
@@ -499,7 +501,8 @@ def wait_unknown(state, head, budget_end):
     raise Resumable()
 
 
-def codex_mode():
+def codex_info():
+    """`codex_loop.py mode`: the mode and the bot's wait in minutes."""
     try:
         proc = run([sys.executable, CODEX_LOOP, "mode"], check=False)
         out = json.loads(proc.stdout) if proc.returncode == 0 else None
@@ -508,7 +511,12 @@ def codex_mode():
         raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", str(e)]) from None
     if mode not in ("off", "local", "github"):
         raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", proc.stdout, proc.stderr])
-    return mode
+    minutes = (out.get("bot_wait") or {}).get("minutes")
+    return {"mode": mode, "minutes": minutes if isinstance(minutes, int) else None}
+
+
+def codex_mode():
+    return codex_info()["mode"]
 
 
 def repair_action(state, cause, evidence_dir=None):
@@ -534,8 +542,99 @@ def hand_out(state, action):
 # Steps 2-6, filled in by later tasks; each returns an action or None to go on.
 
 
+def gh_wait(state, head, timeout, trigger=None, windows=1):
+    """`codex_loop.py gh-wait`: its JSON result, or a Stop, or a GhError for a failed `gh` inside it."""
+    cmd = [sys.executable, CODEX_LOOP, "gh-wait", "--pr", str(state["pr"]), "--sha", head, "--timeout", str(timeout)]
+    cmd += ["--interval", str(POLL)]
+    if trigger:
+        cmd += ["--trigger-comment", trigger, "--windows", str(windows)]
+    proc = run(cmd, check=False, timeout=max(CALL_TIMEOUT, timeout + 30))
+    try:
+        out = json.loads(proc.stdout)
+    except ValueError:
+        out = None
+    if proc.returncode == 2 or not isinstance(out, dict) or "status" not in out:
+        error = out.get("error") if isinstance(out, dict) else None
+        failed = re.match(r"gh .* failed \((\d+)\): (.*)", error, re.S) if isinstance(error, str) else None
+        if failed:  # a `gh` call inside gh-wait: resumable or terminal as any failed `gh`
+            raise GhError(["gh"], int(failed[1]), failed[2])
+        raise Stop("STOP_CODEX_ERROR", True, ["`codex_loop.py gh-wait` failed:", proc.stdout, proc.stderr])
+    return out
+
+
+def post_trigger(state, head):
+    """The one comment this script posts; returns its id."""
+    body = f"@codex review\n\nReview of {head}\n\n🤖 Review by [Claude Code](https://claude.com/claude-code) · {state['model']}"
+    tmp = tempfile.mkdtemp()
+    try:
+        path = os.path.join(tmp, "codex-trigger.md")
+        with open(path, "w") as f:
+            f.write(body)
+        url = run(["gh", "pr", "comment", str(state["pr"]), "--body-file", path]).stdout.strip()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    found = re.search(r"issuecomment-([0-9]+)$", url)
+    if not found:
+        raise Stop("STOP_CODEX_TRIGGER", True, ["`gh pr comment` printed no comment id:", url])
+    return found[1]
+
+
+def codex_pass(state, head, gate, note):
+    state["codex_passed"].append(head)
+    gate["note"] = note
+
+
 def codex_gate(state, snap, budget_end):
-    return None
+    """Step 2. None: passed (or skipped); else an action. A wait longer than the budget is sliced across calls."""
+    head = snap["pr"]["headRefOid"]
+    if head in state["codex_passed"]:
+        return None
+    gate = state.get("codex")
+    if not gate or gate["head"] != head:
+        gate = state["codex"] = {"head": head, "trigger": None, "windows": 1, "final": False, "note": None}
+    info = codex_info()
+    if info["mode"] != "github":
+        return codex_pass(state, head, gate, f"Codex gate not checked (mode `{info['mode']}`)")
+    while True:
+        if gate["trigger"] is None:
+            result = gh_wait(state, head, 0)  # a check of existing reviews
+        else:
+            seconds = int(budget_end - time.time()) - GH_WAIT_MARGIN
+            if seconds < MIN_SLICE:
+                raise OutOfBudget()
+            result = gh_wait(state, head, seconds, gate["trigger"], gate["windows"])
+        status = result.get("status")
+        if status == "clean":
+            return codex_pass(state, head, gate, "Codex gate: clean")
+        if status == "findings":
+            if snap["pr"]["autoMergeRequest"] is not None:
+                run(["gh", "pr", "merge", str(state["pr"]), "--disable-auto"])
+                snap["pr"]["autoMergeRequest"] = None
+            return repair_action(state, "codex")
+        if status == "pending":
+            return {"action": "next"}
+        if status != "timeout":
+            raise Stop("STOP_CODEX_ERROR", True, ["`codex_loop.py gh-wait` returned:", json.dumps(result)])
+        if gate["trigger"] is None:  # no review of this head yet: wait on its trigger, or post one
+            gate["final"] = result.get("triggers", 0) >= 2  # a resumed run's last wait
+            gate["trigger"] = result.get("trigger") and str(result["trigger"]) or post_trigger(state, head)
+            continue
+        if not gate["final"]:
+            if result.get("acknowledged"):  # the bot is reviewing: one more window
+                gate.update(windows=2, final=True)
+                continue
+            if result.get("action") == "stop" and result.get("triggers") == 1:
+                gate.update(trigger=post_trigger(state, head), windows=1, final=True)
+                continue
+        if result.get("action") == "proceed":
+            minutes = info["minutes"]
+            window = f"{minutes * gate['windows']} min" if minutes else "the bot window"
+            return codex_pass(state, head, gate, f"Codex gate: no review within {window}; passed by codexTimeoutAction=proceed")
+        raise Stop(
+            "STOP_CODEX_TIMEOUT", True,
+            ["The Codex bot hasn't reviewed this head; a silent bot is not approval.",
+             "Run /shepherd-pr again once it has, or to re-trigger."],
+        )  # fmt: skip
 
 
 def show_and_act(state, snap):

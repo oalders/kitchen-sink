@@ -88,6 +88,8 @@ class Env(unittest.TestCase):
         reply = self.replies[key]
         if isinstance(reply, list):  # a sequence: one reply per call, the last one repeats
             reply = reply.pop(0) if len(reply) > 1 else reply[0]
+        if callable(reply):  # sees the command, e.g. to read a file the script deletes afterwards
+            reply = reply(cmd)
         if isinstance(reply, Exception):
             raise reply
         rc, out, err = reply if isinstance(reply, tuple) else (0, reply, "")
@@ -405,7 +407,7 @@ def queue(nodes=(), queued=False):
     return json.dumps({"data": {"repository": {"pullRequest": pull}}})
 
 
-class Next(Env):
+class NextBase(Env):
     """A live run on PR 7 at gated head SHA; the later steps (Tasks 4-6) are stubs, and `watch` ends each pass."""
 
     def setUp(self):
@@ -456,6 +458,8 @@ class Next(Env):
         with open(out["report"]) as f:
             return f.read()
 
+
+class Next(NextBase):
     def test_next_missing_or_ended(self):
         self.assert_stop(self.main("next")[1], "STOP_NO_RUN")
         self.live(ended=True)
@@ -729,6 +733,170 @@ class Next(Env):
         self.assertEqual(state["evidence_dir"], second)
         sh.drop_evidence(state)
         self.assertFalse(os.path.exists(second))
+
+class Codex(NextBase):
+    """Step 2 in `github` mode; `gh-wait` replies are sequences, the last one repeating."""
+
+    GHWAIT = " ".join([sys.executable, sh.CODEX_LOOP, "gh-wait --pr 7 --sha " + SHA])
+
+    def setUp(self):
+        super().setUp()
+        self.live(model="Opus 5.5")
+        self.replies[CODEX_MODE] = json.dumps({"mode": "github", "bot_wait": {"minutes": 30, "action": "stop"}})
+        self.bodies = []
+
+    def waits(self, *results):
+        self.replies[self.GHWAIT] = [(0 if r["status"] == "clean" else 1, json.dumps(r), "") for r in results]
+
+    def comments(self, *ids):
+        urls = [f"https://github.com/o/r/pull/7#issuecomment-{i}\n" for i in ids]
+
+        def post(cmd):
+            with open(cmd[cmd.index("--body-file") + 1]) as f:
+                self.bodies.append(f.read())
+            return urls[len(self.bodies) - 1]
+
+        self.replies["gh pr comment 7 --body-file"] = post
+
+    def posts(self):
+        return [c for c in self.calls if c.startswith("gh pr comment")]
+
+    def gh_waits(self):
+        return [c.split(f"--sha {SHA} ")[1] for c in self.calls if " gh-wait " in c]
+
+    def timeout(self, trigger=None, triggers=0, ack=False, action="stop"):
+        return {"status": "timeout", "trigger": trigger, "triggers": triggers, "acknowledged": ack, "action": action}
+
+    def test_codex_mode_not_github(self):
+        self.replies[CODEX_MODE] = json.dumps({"mode": "local", "bot_wait": {"minutes": 30, "action": "stop"}})
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        state = sh.load_state(7)
+        self.assertEqual(state["codex_passed"], [SHA])
+        self.assertEqual(state["codex"]["note"], "Codex gate not checked (mode `local`)")
+        self.assertEqual(self.gh_waits(), [])
+
+    def test_codex_clean(self):
+        self.waits({"status": "clean"})
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.gh_waits(), [f"--timeout 0 --interval 15"])
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+        self.assertEqual(self.posts(), [])
+        self.main("next")  # a head that passed isn't gated again
+        self.assertEqual(len(self.gh_waits()), 1)
+
+    def test_codex_trigger_posted_once(self):
+        self.comments(555)
+        self.waits(self.timeout(), {"status": "clean"})
+        self.main("next")
+        self.assertEqual(len(self.posts()), 1)
+        self.assertEqual(
+            self.bodies, [f"@codex review\n\nReview of {SHA}\n\n🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 5.5"]
+        )
+        self.assertEqual(self.gh_waits()[1], f"--timeout {540 - sh.GH_WAIT_MARGIN} --interval 15 --trigger-comment 555 --windows 1")
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+
+    def test_codex_wait_sliced(self):
+        self.comments(555)
+        self.waits(self.timeout(), {"status": "pending", "acknowledged": False, "window_ends": "2026-11-12T10:00:00Z"}, {"status": "clean"})
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(sh.load_state(7)["codex_passed"], [])
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+        self.assertEqual(len(self.posts()), 1)
+        self.assertIn("--trigger-comment 555", self.gh_waits()[2])
+        self.assertEqual(len(self.gh_waits()), 3)
+
+    def test_codex_wait_needs_room(self):
+        self.comments(555)
+        check = (1, json.dumps(self.timeout()), "")
+
+        def late(cmd):  # the check and the trigger take most of the budget
+            self.clock += 520
+            return check
+
+        self.replies[self.GHWAIT] = late
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(len(self.gh_waits()), 1)  # no room for a wait
+        self.assertEqual(sh.load_state(7)["codex"]["trigger"], "555")
+
+    def test_codex_proceed_acknowledged(self):
+        self.replies[CODEX_MODE] = json.dumps({"mode": "github", "bot_wait": {"minutes": 30, "action": "proceed"}})
+        self.comments(555)
+        self.waits(self.timeout(), self.timeout(555, 1, True, "proceed"), self.timeout(555, 1, True, "proceed"))
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(len([w for w in self.gh_waits() if "--windows 2" in w]), 1)
+        self.assertEqual(len(self.gh_waits()), 3)
+        state = sh.load_state(7)
+        self.assertEqual(state["codex_passed"], [SHA])
+        self.assertEqual(state["codex"]["note"], "Codex gate: no review within 60 min; passed by codexTimeoutAction=proceed")
+
+    def test_codex_proceed_unacknowledged_passes(self):
+        self.comments(555)
+        self.waits(self.timeout(), self.timeout(555, 1, False, "proceed"))
+        self.main("next")
+        self.assertEqual(len(self.gh_waits()), 2)
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+
+    def test_codex_stop_retrigger(self):
+        self.comments(555, 556)
+        self.waits(self.timeout(), self.timeout(555, 1), self.timeout(556, 2))
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_CODEX_TIMEOUT")
+        self.assertEqual(len(self.posts()), 2)  # never a third
+        self.assertIn("--trigger-comment 556 --windows 1", self.gh_waits()[2])
+        self.assertEqual(len(self.gh_waits()), 3)
+        self.assertEqual(sh.load_state(7)["codex_passed"], [])
+
+    def test_codex_stop_acknowledged_widens(self):
+        self.comments(555)
+        self.waits(self.timeout(), self.timeout(555, 1, True), self.timeout(555, 1, True))
+        self.assert_stop(self.main("next")[1], "STOP_CODEX_TIMEOUT")
+        self.assertIn("--trigger-comment 555 --windows 2", self.gh_waits()[2])
+        self.assertEqual(len(self.posts()), 1)
+
+    def test_codex_resumed_run_waits_once(self):
+        self.waits(self.timeout(555, 2), self.timeout(555, 2))
+        self.assert_stop(self.main("next")[1], "STOP_CODEX_TIMEOUT")
+        self.assertEqual(self.posts(), [])
+        self.assertIn("--trigger-comment 555 --windows 1", self.gh_waits()[1])
+        self.assertEqual(len(self.gh_waits()), 2)
+
+    def test_codex_findings_repair(self):
+        self.waits({"status": "findings"})
+        self.replies["gh pr merge 7 --disable-auto"] = ""
+        out = self.main("next")[1]
+        self.assertEqual({k: out[k] for k in ("action", "cause", "head", "codex_mode")}, {"action": "repair", "cause": "codex", "head": SHA, "codex_mode": "github"})
+        self.assertIn("gh pr merge 7 --disable-auto", self.calls)
+        state = sh.load_state(7)
+        self.assertEqual((state["repairs"], state["automerge"], state["codex_passed"]), (1, "off-by-run", []))
+
+    def test_codex_findings_without_automerge(self):
+        self.waits({"status": "findings"})
+        self.replies["gh pr view 7"] = pr_full(autoMergeRequest=None)
+        self.live(automerge="off", model="X")
+        self.assertEqual(self.main("next")[1]["cause"], "codex")
+        self.assertNotIn("gh pr merge 7 --disable-auto", self.calls)
+
+    def test_codex_gh_error_resumable(self):
+        err = (2, json.dumps({"error": "gh api repos/o/r/pulls/7/reviews failed (1): HTTP 502"}), "")
+        self.replies[self.GHWAIT] = [err, (0, json.dumps({"status": "clean"}), "")]
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.calls.count("sleep 120"), 1)
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+
+    def test_codex_other_error_terminal(self):
+        hostile = "comment 9 is not your trigger ```$(rm -rf ~)```"
+        self.replies[self.GHWAIT] = (2, json.dumps({"error": hostile}), "")
+        code, raw = self.main_raw("next")
+        out = json.loads(raw)
+        self.assert_stop(out, "STOP_CODEX_ERROR")
+        self.assertNotIn("rm -rf", raw)
+        self.assertIn(hostile, self.report(out))
+        self.assertEqual(self.calls.count("sleep 120"), 0)
+
+    def test_codex_non_resumable_gh_error_terminal(self):
+        self.replies[self.GHWAIT] = (2, json.dumps({"error": "gh api x failed (1): HTTP 404"}), "")
+        self.assert_stop(self.main("next")[1], "STOP_GH_FAILED")
 
 
 if __name__ == "__main__":
