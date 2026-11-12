@@ -43,16 +43,15 @@ This supersedes the watch-only recovery design, `2026-10-31-shepherd-pr-counters
 
 ### Location
 
-`skills/shepherd-pr-repair/shepherd.py` and `test_shepherd.py`, beside `ci_remediation.py` (builder's-call made by the designer: the command already reaches that directory as `<codex-review-loop base dir>/../shepherd-pr-repair/`, so no stub `skills/shepherd-pr/` skill is needed). It imports `codex_loop` and `ci_remediation` by path rather than shelling out where that is simpler; either is acceptable.
+`skills/shepherd-pr-repair/shepherd.py` and `test_shepherd.py`, beside `ci_remediation.py` (designer's call: the command already reaches that directory as `<codex-review-loop base dir>/../shepherd-pr-repair/`, so no stub `skills/shepherd-pr/` skill is needed). It calls `codex_loop.py` and `ci_remediation.py` as subprocesses with a `timeout=` (30 s for `match`, as today, because the remediation regex is user-supplied), reading their JSON; it doesn't import them, since their subcommands print to stdout.
 
 ### State file
 
-`$(git rev-parse --git-dir)/kitchen-sink/shepherd/<n>.json`, mode 0600, written atomically (temp file + `os.replace`). Fields:
+`$(git rev-parse --git-dir)/kitchen-sink/shepherd/<n>.json`, mode 0600, written atomically (temp file + `os.replace`). `--git-dir` is per worktree (`.git/worktrees/<name>` in a linked one), which is deliberate: a run belongs to one checkout. Fields:
 
 | Field | Meaning (today's equivalent) |
 |---|---|
-| `run_id` | random, set by `start`; every `next`/`record` is for the current run |
-| `pr`, `branch`, `owner`, `repo`, `default` | fixed at `start`, re-checked each pass |
+| `pr`, `branch`, `owner`, `repo`, `default`, `model` | fixed at `start`, re-checked each pass |
 | `deadline` | epoch, `start` time + `shepherdTimeoutMinutes` |
 | `gated_head` | last head this run shows/gates (today: last status line's head) |
 | `codex_passed` | heads that passed step 2 this run |
@@ -61,35 +60,48 @@ This supersedes the watch-only recovery design, `2026-10-31-shepherd-pr-counters
 | `rerun` | per-head count, reset on a new head this run pushed |
 | `infra` | entries applied on this head |
 | `requeued` | `createdAt` of the removal this run re-enqueued after |
-| `pending` | `null`, or the action last handed to the agent (`repair`, `triage`, `handoff`) with its args |
+| `wait_first` | set by `record repair-stopped --resumable`; the next pass starts with the 120 s resumable wait |
+| `pending` | `null`, or the action last handed to the agent (`repair`, `triage`, `ready`) with its args |
+| `ended` | set by every `stop` and `done` |
 
-`stop` and `done` mark the file `ended`; `next` or `record` on a missing or `ended` file is a terminal stop saying to run `/shepherd-pr` (designer's call: `start` is a single call, so there is no half-started run, and the agent never needs to carry `run_id`).
+`next` and `record` find `<n>` the way `start` does (`gh pr view` on the current branch, re-checked anyway). A missing or `ended` file is a terminal stop saying to run `/shepherd-pr`. No file is written until `<n>` is known.
 
-Per-PR file, so two PRs in one clone don't collide. A second concurrent run on the same PR is not supported; `start` simply overwrites (as a second run today would ignore the first's status line).
+**One process at a time.** `start`, `next` and `record` hold an exclusive `fcntl.flock` on `<n>.lock` (beside the state file) for their whole run. A caller that can't take it returns `{"action":"busy"}` at once, changing nothing: the agent waits for the running task's notification (after `start`: stop, saying a run is still active). This covers a compacted agent starting a second `next` while the first is alive.
 
 ### Subcommands
 
-All print exactly one JSON object on stdout; exit 0 for an action, 2 for a tool error (with `error`).
+All print exactly one JSON object on stdout; exit 0 for an action, 2 for a tool error. A tool error's stdout carries only a fixed `code`; `gh` stderr and any other detail go to the report file.
 
-- **`start --model <name>`**: the model name is for the `@codex review` trigger's footer (`docs/attribution.md`), which the script can't detect; it is stored in the state file. Then today's fail-fast key check, detached-HEAD check, PR lookup and every ref/SHA/owner regex, the cross-repo/author/default-branch limits, and the branch-mismatch check. No PR on a `fix-NNN` branch with the no-PR preconditions met → `{"action":"handoff","issue":<digits>}`. (it first writes a state file with `pending` `handoff` and no deadline); after the hand-off, if `/fix-gh-issue`'s outstanding list isn't exactly "nothing outstanding", the agent stops terminally as today; otherwise it runs `start` again, which now finds the draft PR. Otherwise `start` writes a fresh state file, with the deadline computed then (as today: once `<n>` is set, after any hand-off), and returns `{"action":"next"}` (or a stop).
-- **`next`**: one call runs passes until it needs the agent. It re-reads GitHub every pass (today's step 1 reads) and applies, in order, today's steps 1–6 minus the judgment parts:
+- **`start --model <name>`**: `<name>` must match `^[A-Za-z0-9. -]{1,40}$` (it goes into the public `@codex review` trigger's footer, `docs/attribution.md`, which the script can't detect). Then today's fail-fast key check, detached-HEAD check, PR lookup and every ref/SHA/owner regex, the cross-repo/author/default-branch limits, and the branch-mismatch check. No PR on a `fix-NNN` branch with the no-PR preconditions met → `{"action":"handoff","issue":<digits>}`, writing nothing. After the hand-off, if `/fix-gh-issue`'s outstanding list isn't exactly "nothing outstanding", the agent stops terminally as today; otherwise it runs `start` again (the one allowed second `start`), which now finds the draft PR. With a PR, `start` writes a fresh state file, with the deadline computed then (as today: once `<n>` is set, after any hand-off), and returns `{"action":"next"}` (or a stop).
+- **`next`**: each call does at most about 9 minutes of work (user decision): passes until the agent is needed, a wait slice runs out, or the call's budget is used, then returns. A call that only ran out of time returns `{"action":"next"}` with `status`; the agent prints it and runs `next` again. So an interrupted agent stops writes within minutes and the user sees a status line at least that often. It re-reads GitHub every pass (today's step 1 reads) and applies, in order, today's steps 1–6 minus the judgment parts:
   - step 1 checks: later-pass foreign-head and auto-merge-turned-off stops (against `gated_head`/`automerge` from the file instead of a status line), the `(unconfirmed)` declines stop (with `--disable-auto` first), `UNKNOWN` merge state wait, `DIRTY`/`BEHIND` → repair `rebase`.
-  - step 2: the Codex gate via `codex_loop` (`mode`, `gh-wait`, posting the trigger with the footer from `docs/attribution.md`, the `proceed`/`stop` timeout rules, at most two triggers and the `--windows 2` wait). `findings` → repair `codex`.
-  - step 3: the show block (written to `evidence_dir/summary.txt`, untrusted fields fenced), changed files with sensitive marks, the `pull_request_target` note, method choice, the ejection test and its evidence gathering, the remediation `match`; a `none` match → `triage`.
-  - step 4: `gh pr merge --auto --<method> --match-head-commit`. A draft is not marked ready by the script (user decision): `next` returns `ready`, the agent runs `gh pr ready <n>` itself so the `require-review-before-pr` hook still gates a `fix-NNN` draft, then runs `next` again, which enables auto-merge.
-  - step 5: the check watch (`gh pr checks --watch` in 540 s slices), the re-read with first-match-wins, the queue watch and its deadlines.
+  - step 2: the Codex gate via `codex_loop.py` (`mode`, `gh-wait`, posting the trigger with the footer, the `proceed`/`stop` timeout rules, at most two triggers and the `--windows 2` wait). A `gh-wait` longer than the call's budget runs in slices: `gh-wait` already resumes its window from the trigger comment, so the script re-calls it with the same `--trigger-comment` on the next `next`. `findings` → repair `codex`.
+  - step 3: the show block (written to `summary.txt`, untrusted fields fenced), changed files with sensitive marks, the `pull_request_target` note, method choice, the decide guard (`off-by-run` with a `fail` or `cancel` check: don't enable, and a draft stays draft), the ejection test and its evidence gathering, the remediation `match`; a `none` match → `triage`. For a non-draft head the block is shown on the first return after auto-merge is enabled, not before; it is for the record only, so that is accepted.
+  - step 4: `gh pr merge --auto --<method> --match-head-commit`. A draft is not marked ready by the script (user decision): `next` returns `ready` and sets `pending` `ready`; the agent runs `gh pr ready <n>` itself so the `require-review-before-pr` hook still gates a `fix-NNN` draft, then runs `next`, which enables auto-merge. A `next` that finds `pending` `ready` and the PR still a draft is a terminal stop (`gh pr ready` failed or the hook refused it), never another `ready`.
+  - step 5: the check watch (polling `gh pr checks --json` every 15 s; the 540 s `--watch` slices existed only for the Bash tool's cap), the re-read with first-match-wins, the queue watch and its deadlines.
   - step 6: cap check, the rerun and infra-rerun selection and evidence, `gh run rerun`, `--disable-auto` before a `codex` repair.
-  - Resumable stops become an internal 120 s wait and another pass (bounded by the run deadline), so they never reach the agent; the deadline returns `stop` with code `STOP_DEADLINE`.
+  - Resumable stops become an internal 120 s wait and another pass (bounded by the run deadline), so they never reach the agent; the deadline returns `stop` with code `STOP_DEADLINE`. A failed `gh` command is resumable or terminal by today's Rules (HTTP 5xx, secondary rate limit, GraphQL timeout, network error; never for `--disable-auto` or `gh run rerun`).
   - Waiting is plain `time.sleep` inside the script, with `gh` polls every 15 s as today.
-  - Before any pass, if `pending` is set (the agent was handed a repair and the run then came back via `next` without a `record`, e.g. after compaction): if a rebase is in progress, HEAD has commits not on the PR head, or the tracked tree is dirty → terminal stop naming what's local (today's recovered-pass guard). Otherwise, for a pending `repair` whose push landed before the `record` (designer's call: `headRefOid` equals local HEAD and descends from `gated_head`), apply `repair-pushed`'s effects itself instead of the foreign-head stop; any other new head is still foreign. Then clear `pending` and go on. A pending `repair` that never recorded its result does not refund the repair. A pending `handoff` → terminal stop as today's recovered pass ("the draft stays draft; the outstanding list may not have been shown; re-running marks it ready").
-- **`record <event>`**: the agent reports what only it knows, and the script updates the file:
-  - `repair-pushed --head <sha>` (repair skill step 7: new head, auto-merge `off-by-run`, `rerun`/`infra` reset),
-  - `repair-stopped --resumable` (refunds the repair, as today's "repairs one lower"),
-  - `triage --verdict infra|not-infra`,
+  - Handing out a `repair` counts it, sets `automerge` `off-by-run` (the skill runs `--disable-auto` before it pushes, as today), and sets `pending`.
+  - Before any pass, if `pending` is set (the agent came back via `next` without a `record`, e.g. after compaction):
+    - A rebase in progress, HEAD with commits not on `headRefOid`, or a dirty tracked tree → terminal stop naming what's local (today's recovered-pass guard).
+    - Pending `repair`, head unchanged: return the same `repair` action again, without counting another repair (the agent may never have started it).
+    - Pending `repair`, `headRefOid` equal to local HEAD: the repair's push landed before its `record`; apply `repair-pushed`'s effects. This holds for a rebase, whose head doesn't descend from `gated_head`. Any other new head is still foreign.
+    - Pending `triage`: re-gather the evidence and hand out the triage again; counters unchanged.
+    - Pending `ready`: as in step 4 above.
+  - **Evidence directories:** each pass's `evidence_dir` is a private `mktemp -d` under `$TMPDIR`. The script removes the previous one at the start of each pass and on `stop`/`done`. A `repair` with cause `checks` passes its `evidence_dir`, and the skill reads it instead of gathering its own.
+- **`record <event>`**: the agent reports what only it knows; the script checks it and updates the file:
+  - `repair-pushed` (repair skill's new head): the script reads local HEAD and requires `headRefOid` to equal it, or it's a terminal stop (it never takes a SHA from the agent). Then new head, auto-merge `off-by-run`, `rerun`/`infra` reset, `pending` cleared.
+  - `repair-stopped --resumable`: refunds the repair (as today's "repairs one lower") and sets `wait_first`.
+  - `repair-stopped --terminal`: marks the run ended and returns a `stop` action with `automerge`, `queued` and, for cause `checks` with HEAD still at the gated head, today's list of `gh run rerun <id>` commands to try first in the report.
+  - `triage --verdict infra|not-infra`.
 
-### Actions `next` returns
+### Actions
 
 ```json
+{"action":"next"}
+{"action":"busy"}
+{"action":"handoff","issue":<digits>}
 {"action":"repair","cause":"checks|codex|rebase","head":"<sha>","branch":"<ref>","default":"<ref>","codex_mode":"<mode>","evidence_dir":"<path>"}
 {"action":"triage","evidence_dir":"<path>"}
 {"action":"ready","pr":<n>}
@@ -97,37 +109,73 @@ All print exactly one JSON object on stdout; exit 0 for an action, 2 for a tool 
 {"action":"done","merged":true}
 ```
 
-Every action also carries `status`, a one-line summary the agent prints (user decision; it replaces today's status line for the user's benefit, not as state): `#<n> head <sha7> · checks <count per bucket> · auto-merge <on|off|off by this run> · queue <position|no> · repairs <r>/3 · rerun <c> · infra <names> · deadline <epoch>`, built only from validated fields. The first return after a head is new to the run also carries `summary`, the path of the step 3 block, which the agent shows fenced; for a draft that is the `ready` return, so the block is still shown before the PR is marked ready. There is no live progress during a wait.
+Every action after `start` also carries `status`, a one-line summary the agent prints (user decision; it replaces today's status line for the user's benefit, not as state): `#<n> head <sha7> · checks <count per bucket> · auto-merge <on|off|off by this run> · queue <position|no> · repairs <r>/3 · rerun <c> · infra <names> · deadline <epoch>`, built only from validated fields. The first return after a head is new to the run also carries `summary`, the path of the step 3 block, which the agent shows fenced; for a draft that is the `ready` return, so the block is still shown before the PR is marked ready.
 
-Every field is either a fixed token, an integer, a regex-validated ref/SHA, or a path the script created. Untrusted text only appears inside files in `evidence_dir` (or the stop's `report` file); the agent shows them in a fence. `code` is from a fixed enum in the script (one per distinct stop in today's command).
+Every field is either a fixed token, an integer, a regex-validated ref/SHA, a remediation entry name (which `ci_remediation` already validates), or a path the script created. Untrusted text only appears inside files in `evidence_dir` (or the stop's `report` file); the agent shows them in a fence. `code` is from a fixed enum in the script (one per distinct stop in today's command).
 
 ### Repair skill
 
-`shepherd-pr-repair` keeps evidence gathering for code fixes, code fixes, rebase and Codex fixing. Its infra-match branch (the `--log-failed` evidence for `failure` runs, the third-party-status guard, match → `gh run rerun` → wait) moves into the script, with its counting unchanged (designer's call, per the no-behaviour-change non-goal): on a `checks` failure the script first tries step 6's rerun and infra-rerun paths as today, then, before handing out a `repair`, runs the skill's infra match; a match spends a repair, appends to `infra`, reruns and continues, and an entry already in `infra` falls through to the code-fix `repair`. The skill's `<infra>` input and "returning without a new head" exit go. It ends by telling the agent which `record` event to run.
+`shepherd-pr-repair` keeps code fixes, rebase and Codex fixing, and its `codex` evidence. Its infra-match branch (the `--log-failed` evidence for `failure` runs, the third-party-status guard, match → `gh run rerun` → wait) moves into the script, with its counting unchanged (designer's call, per the no-behaviour-change non-goal): on a `checks` failure the script first tries step 6's rerun and infra-rerun paths as today, then, before handing out a `repair`, runs the skill's infra match; a match spends a repair, appends to `infra`, reruns and continues, and an entry already in `infra` falls through to the code-fix `repair` with that evidence. Other skill edits:
+
+- The guard becomes "invoked from a `/shepherd-pr` `repair` action in this conversation" (there is no step 6 any more), and the description says the same.
+- Step 2's transient-`gh` exception lists the resumable error classes itself instead of pointing at `/shepherd-pr`'s Rules.
+- Each exit names its `record` event (`repair-pushed`, `repair-stopped --resumable`, `repair-stopped --terminal`); the `<infra>` input and the "returning without a new head" exit go.
+- Its `version` frontmatter is bumped.
+
+`agents/ci-log-triage.md` (which names step 3 or 6) and the `ci_remediation.py` docstring (re-enqueue use) are updated to name the script.
 
 ### Command file
 
-Shrinks to: the scope paragraph, the untrusted-data and never-ask rules, and the loop:
+Shrinks to the scope paragraph, the rules that bind the agent, and the loop.
 
-1. `shepherd.py start`; on `handoff`, run `/fix-gh-issue` as step 1's hand-off does today, then `record handoff-done`.
-2. `shepherd.py next` in the background; wait for it.
-3. Print `status` (and `summary`, fenced, when present). `ready` → `gh pr ready <n>`. `repair` → invoke `kitchen-sink:shepherd-pr-repair` with the fields; `record` its result. `triage` → one `kitchen-sink:ci-log-triage` with the evidence files; `record triage`. `stop`/`done` → show the report fenced and say what the user does next (re-run `/shepherd-pr`, auto-merge state, queue state). Otherwise back to 2.
+Rules kept:
+- Never ask the user anything.
+- The untrusted-data rule.
+- Never run `/shepherd-pr` yourself (`ffe9e0a`, #140), and never run `shepherd.py start` except at the start of a run and once after a hand-off. Another `start` resets the counters.
+- The agent never runs `gh pr merge`; only the repair skill runs `--disable-auto`.
+- Any failure of a command the agent runs itself (`gh pr ready`, the skill, the triage agent) ends the run with a report; the script turns a failed `gh pr ready` into a terminal stop on its next call.
 
-After a compaction: run `next` again. Never `start` mid-run (that would reset the counters).
+The loop:
+1. `shepherd.py start --model <running model>`. On `handoff`, run `/fix-gh-issue` as step 1's hand-off does today, then `start` again if nothing is outstanding.
+2. `shepherd.py next` with `run_in_background: true`; wait for its notification.
+3. Print `status` (and `summary`, fenced, when present), then act on the action:
+   - `next`: back to 2.
+   - `busy`: wait for the running task's notification, then back to 2.
+   - `ready`: `gh pr ready <n>`, then back to 2.
+   - `repair`: invoke `kitchen-sink:shepherd-pr-repair` with the fields, then `record` its result.
+   - `triage`: one `kitchen-sink:ci-log-triage` with the evidence files, then `record triage`.
+   - `stop`/`done`: show the report fenced and say what the user does next (re-run `/shepherd-pr`, auto-merge state, queue state). This ends the run.
+   - Otherwise back to 2.
+
+After a compaction: run `next` again (a `busy` reply means the earlier call is still running).
 
 ### Tests
 
-`test_shepherd.py`, stdlib `unittest`, with a fake `gh` runner keyed on argv (as `test_codex_loop.py` does). One test per rule that today exists only as prose: the ejection test (head's vs earlier head's removal, `requeued` handled, no suites), deadline anchoring and checks, rerun/infra-rerun eligibility, step 5's first-match order (a push both changes head and logs an ejection), the queue watch deadlines, the repair cap and its refund, the `pending` guard after compaction, the untrusted-text rule (a hostile title/log never appears in stdout), and failing `gh` resumable vs terminal. Added to `.github/workflows/` beside the existing test lines.
+`test_shepherd.py`, stdlib `unittest`, with a fake `gh` runner keyed on argv (as `test_codex_loop.py` does). One test per rule that today exists only as prose:
+- the ejection test: the head's vs an earlier head's removal, `requeued` handled, no suites;
+- deadline anchoring and checks;
+- rerun/infra-rerun eligibility;
+- step 5's first-match order (a push both changes the head and logs an ejection);
+- the queue watch deadlines;
+- the repair cap and its refund;
+- the `pending` cases after compaction, including a rebase repair pushed before its `record`;
+- the lock (`busy`);
+- `pending` `ready` with the PR still a draft;
+- `record repair-pushed` refusing a head that isn't local HEAD;
+- the untrusted-text rule: a hostile title, log or `gh` stderr never appears in stdout;
+- a failing `gh`, resumable vs terminal.
+
+The tests are added to `.github/workflows/test.yml` beside the existing test lines.
 
 ### Docs
 
-- README `/shepherd-pr` section: drop the compaction bullet; say the run's state lives in `.git/kitchen-sink/shepherd/`.
+- README `/shepherd-pr` section: rewrite the line about waiting after resumable stops and printing a status each pass (it's now inside `next`, with a status line on each return), drop the compaction bullet, and say the run's state lives in `$(git rev-parse --git-dir)/kitchen-sink/shepherd/`.
 - The counters-lost design: a one-line "Superseded by" note at the top.
 - Version bump (minor: behavioural change) in `plugin.json` and both `marketplace.json` fields.
 
 ## Left to the builder
 
-- Module layout inside `shepherd.py`, and whether to import or subprocess `codex_loop`/`ci_remediation`.
+- Module layout inside `shepherd.py`.
 - The exact `STOP_*` names.
 - How the summary/report files are laid out, as long as untrusted text is fenced as today's rule says.
 - Order of porting, as long as the final command no longer references the status line or the recovered pass.
