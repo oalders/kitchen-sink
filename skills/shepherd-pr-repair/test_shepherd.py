@@ -112,6 +112,157 @@ class TestRules(unittest.TestCase):
         for bad in ("a..b", "-x", "a b", "a;b"):
             self.assertFalse(rules.valid_ref(bad), bad)
 
+    # --- decision rules: pure, so tested with literal inputs ---
+
+    @staticmethod
+    def add(t):
+        return {"__typename": "AddedToMergeQueueEvent", "createdAt": t}
+
+    @staticmethod
+    def remove(t):
+        return {"__typename": "RemovedFromMergeQueueEvent", "createdAt": t}
+
+    @staticmethod
+    def ejected_pr(**over):
+        pr = {"isInMergeQueue": False, "autoMergeRequest": None}
+        pr.update(over)
+        return pr
+
+    def test_buckets_and_pick_method(self):
+        self.assertEqual(rules.buckets([{"bucket": "pass"}, {"bucket": "fail"}, {"bucket": "pass"}]), {"pass": 2, "fail": 1})
+        self.assertEqual(rules.pick_method({"mergeCommitAllowed": True, "rebaseMergeAllowed": True}), "merge")
+        self.assertIsNone(rules.pick_method({"squashMergeAllowed": False}))
+
+    def test_ejection_head_removal(self):
+        nodes = [self.add("t1"), self.remove("t2")]
+        self.assertEqual(rules.ejection(self.ejected_pr(), nodes, "t0", None), nodes[1])
+
+    def test_ejection_earlier_head(self):
+        nodes = [self.add("t1"), self.remove("t2")]
+        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t3", None))
+
+    def test_ejection_requeued_handled(self):
+        nodes = [self.add("t1"), self.remove("t2")]
+        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t0", "t2"))
+
+    def test_ejection_no_suites(self):
+        nodes = [self.add("t1"), self.remove("t2")]
+        self.assertEqual(rules.ejection(self.ejected_pr(), nodes, None, None), nodes[1])
+
+    def test_ejection_queued_or_automerge(self):
+        nodes = [self.add("t1"), self.remove("t2")]
+        self.assertIsNone(rules.ejection(self.ejected_pr(isInMergeQueue=True), nodes, "t0", None))
+        self.assertIsNone(rules.ejection(self.ejected_pr(autoMergeRequest={"enabledBy": {}}), nodes, "t0", None))
+
+    def test_ejection_last_node_must_be_a_removal(self):
+        nodes = [self.add("t1"), self.remove("t2"), self.add("t3")]
+        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t0", None))
+
+    def test_may_requeue_once_per_head(self):
+        nodes = [self.add("t1"), self.remove("t2"), self.add("t3"), self.remove("t4")]
+        self.assertFalse(rules.may_requeue(nodes, nodes[3], "t0"))
+        self.assertTrue(rules.may_requeue(nodes, nodes[3], "t3"))  # t2 belongs to an earlier head
+
+    def test_queue_deadline(self):
+        self.assertEqual(rules.queue_deadline(100, 200, True, 60), 1160)
+        self.assertEqual(rules.queue_deadline(100, 200, True, None), 3700)
+        self.assertEqual(rules.queue_deadline(100, 200, True, -1), 3700)
+        self.assertEqual(rules.queue_deadline(100, 200, False, None), 400)
+
+    def test_rerun_choice(self):
+        def run(id, attempt, **over):
+            r = {"databaseId": id, "attempt": attempt, "conclusion": "cancelled", "name": "CI", "event": "pull_request", "headSha": SHA}
+            r.update(over)
+            return r
+
+        def check(state="CANCELLED"):
+            return {"bucket": "cancel", "state": state, "workflow": "CI"}
+
+        self.assertEqual(rules.rerun_choice([check("FAILURE")], [run(11, 1)], SHA, 0), ("repair", []))
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 1)], SHA, 0), ("rerun", [11]))
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 2)], SHA, 1), ("infra-rerun", [11]))
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 3)], SHA, 1)[0], "stop")
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 2)], SHA, 0)[0], "infra-rerun")  # attempt 2 after no rerun counted
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 1, name="Other")], SHA, 0)[0], "stop")
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 1, headSha="a" * 40)], SHA, 0)[0], "stop")
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 1, event="push")], SHA, 0)[0], "stop")
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 1, conclusion="success")], SHA, 0)[0], "stop")
+        self.assertEqual(rules.rerun_choice([check()], [run("x1", 1)], SHA, 0)[0], "stop")
+        self.assertEqual(rules.rerun_choice([check()], [run(11, 1)], SHA, 2)[0], "stop")
+
+    def test_reread_order_push_and_ejection(self):
+        other = "b" * 40
+        self.assertEqual(rules.reread_outcome({"state": "OPEN", "headRefOid": other}, [], SHA, True), "new-head")
+        self.assertEqual(rules.reread_outcome({"state": "MERGED", "headRefOid": other}, [], SHA, True), "merged")
+        self.assertEqual(rules.reread_outcome({"state": "CLOSED", "headRefOid": SHA}, [], SHA, False), "closed")
+        self.assertEqual(rules.reread_outcome({"state": "OPEN", "headRefOid": SHA}, [{"bucket": "cancel"}], SHA, True), "failed")
+        self.assertEqual(rules.reread_outcome({"state": "OPEN", "headRefOid": SHA}, [], SHA, True), "ejected")
+        self.assertEqual(rules.reread_outcome({"state": "OPEN", "headRefOid": SHA}, [{"bucket": "pass"}], SHA, False), "continue")
+
+    def test_in_queue_watch(self):
+        pr = {"state": "OPEN", "mergeStateStatus": "CLEAN", "isInMergeQueue": True}
+        self.assertTrue(rules.in_queue_watch(pr, [{"bucket": "pass"}]))
+        self.assertFalse(rules.in_queue_watch(pr, [{"bucket": "pending"}]))
+        self.assertFalse(rules.in_queue_watch({**pr, "mergeStateStatus": "DIRTY"}, []))
+        self.assertTrue(rules.in_queue_watch({**pr, "mergeStateStatus": "BEHIND"}, []))
+        armed = {"state": "OPEN", "mergeStateStatus": "CLEAN", "isInMergeQueue": False, "autoMergeRequest": {}, "reviewDecision": None}
+        self.assertTrue(rules.in_queue_watch(armed, []))
+        self.assertFalse(rules.in_queue_watch({**armed, "mergeStateStatus": "BEHIND"}, []))
+        self.assertFalse(rules.in_queue_watch({**armed, "reviewDecision": "CHANGES_REQUESTED"}, []))
+        self.assertFalse(rules.in_queue_watch({**armed, "autoMergeRequest": None}, []))
+
+    def test_open_outcome_order(self):
+        def pr(**over):
+            base = {"mergeStateStatus": "CLEAN", "reviewDecision": None, "isInMergeQueue": False, "autoMergeRequest": {}}
+            base.update(over)
+            return base
+
+        out = rules.open_outcome
+        self.assertEqual(out(pr(reviewDecision="REVIEW_REQUIRED", mergeStateStatus="DIRTY"), [], "on"), "review-required")
+        self.assertEqual(out(pr(mergeStateStatus="DIRTY", isInMergeQueue=True), [], "on"), "dirty-queued")
+        self.assertEqual(out(pr(mergeStateStatus="BEHIND"), [], "on"), "rebase")
+        self.assertEqual(out(pr(mergeStateStatus="DIRTY"), [], "on"), "rebase")
+        self.assertEqual(out(pr(), [{"bucket": "pending"}], "on"), "pending")
+        self.assertEqual(out(pr(autoMergeRequest=None), [], "off-by-run"), "resumable-off-by-run")
+        self.assertEqual(out(pr(autoMergeRequest=None), [], "off"), "turned-off")
+        with self.assertRaises(rules.RuleError):  # unreachable by design: never a silent pass
+            out(pr(), [], "on")
+
+    def test_decide_guard(self):
+        pr = {"isDraft": True, "isInMergeQueue": False, "autoMergeRequest": None}
+        self.assertEqual(rules.decide(pr, [{"bucket": "fail"}], "off-by-run"), "guard")
+        self.assertEqual(rules.decide(pr, [{"bucket": "pass"}], "off-by-run"), "ready")
+        self.assertEqual(rules.decide({**pr, "isDraft": False}, [], "off"), "enable")
+        self.assertEqual(rules.decide({**pr, "isDraft": False, "autoMergeRequest": {}}, [], "on"), "keep")
+        self.assertEqual(rules.decide({**pr, "autoMergeRequest": {}}, [], "on"), "ready")
+        self.assertEqual(rules.decide({**pr, "isDraft": False, "isInMergeQueue": True}, [], "on"), "keep-queue")
+
+    def test_status_line(self):
+        state = {"pr": 7, "automerge": "off-by-run", "repairs": 1, "rerun": 0, "infra": ["npm-flake", "dns"], "deadline": NOW}
+        pr = {"headRefOid": SHA, "isInMergeQueue": True, "mergeQueueEntry": {"position": 2}}
+        checks = [{"bucket": "pass", "name": "`$(x)`"}, {"bucket": "pass"}, {"bucket": "fail"}, {"bucket": "evil\nbucket"}]
+        self.assertEqual(
+            rules.status_line(state, pr, checks),
+            f"#7 head c5bf4f3 · checks pass 2, fail 1 · auto-merge off by this run · queue 2 · repairs 1/3 · rerun 0 · infra npm-flake,dns · deadline {NOW}",
+        )
+        state.update(automerge="on", infra=[])
+        pr = {"headRefOid": SHA, "isInMergeQueue": False}
+        self.assertEqual(
+            rules.status_line(state, pr, []),
+            f"#7 head c5bf4f3 · checks - · auto-merge on · queue no · repairs 1/3 · rerun 0 · infra - · deadline {NOW}",
+        )
+
+    def test_resumable_errors(self):
+        merge = ["gh", "pr", "merge", "7", "--auto", "--squash"]
+        for err in ("HTTP 502", "HTTP 503: Service Unavailable", "You have exceeded a secondary rate limit", "GraphQL: timeout",
+                    "dial tcp: i/o timeout", "connection reset by peer", "connection refused", "no such host",
+                    "could not resolve host: api.github.com", "TLS handshake timeout", "unexpected EOF"):
+            self.assertTrue(rules.is_resumable_gh_error(merge, err), err)
+        self.assertFalse(rules.is_resumable_gh_error(["gh", "pr", "merge", "7", "--disable-auto"], "secondary rate limit"))
+        self.assertFalse(rules.is_resumable_gh_error(["gh", "run", "rerun", "5"], "HTTP 502"))
+        for err in ("HTTP 404", "HTTP 422: nope", "HTTP 5000", "bad flag"):
+            self.assertFalse(rules.is_resumable_gh_error(merge, err), err)
+
 
 class TestStart(Env):
     def test_start_writes_state(self):
