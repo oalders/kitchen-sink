@@ -75,6 +75,8 @@ class Env(unittest.TestCase):
             "git rev-parse --git-dir": self.git_dir,
             "git config --local --get": fail(""),
             "git branch --show-current": "fix-174\n",
+            "git rev-parse --git-path rebase-merge": os.path.join(self.git_dir, "rebase-merge"),
+            "git rev-parse --git-path rebase-apply": os.path.join(self.git_dir, "rebase-apply"),
             "gh pr view --json number": "7\n",
             "gh pr view 7": pr_view(),
             "gh api user": "me\n",
@@ -515,8 +517,6 @@ class NextBase(Env):
                 "gh api graphql": queue(),
                 "gh api --paginate repos/o/r/commits/": "",
                 "git rev-parse HEAD": SHA + "\n",
-                "git rev-parse --git-path rebase-merge": os.path.join(self.git_dir, "rebase-merge"),
-                "git rev-parse --git-path rebase-apply": os.path.join(self.git_dir, "rebase-apply"),
                 "git fetch origin": "",
                 "git merge-base --is-ancestor HEAD ": "",  # local HEAD is on the PR's head; any other ancestry is unexpected
                 "git status --porcelain --untracked-files=no": "",
@@ -586,6 +586,41 @@ class Next(NextBase):
             f.write("{not json")
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(len(self.lookups()), 2)
+
+    def rebasing(self, head_name="refs/heads/fix-174"):
+        """A conflicted rebase: HEAD detached, and git's rebase dir names the branch being rebased."""
+        rebase_dir = os.path.join(self.git_dir, "rebase-merge")
+        os.mkdir(rebase_dir)
+        self.addCleanup(shutil.rmtree, rebase_dir)
+        with open(os.path.join(rebase_dir, "head-name"), "w") as f:
+            f.write(head_name + "\n")
+        self.replies["git branch --show-current"] = "\n"
+        self.replies[self.LOOKUP] = fail("not on any branch")  # `gh pr view` on a detached HEAD
+
+    def test_next_mid_rebase_trusts_the_pointer(self):
+        self.live(automerge="off-by-run", pending={**self.repair("rebase"), "claimed": True})
+        sh.save_pointer(7, "fix-174")
+        self.rebasing()
+        self.assertEqual(self.main("next")[1]["action"], "repairing")
+        self.assertEqual(self.lookups(), [])
+
+    def test_next_mid_rebase_of_another_branch_falls_back(self):
+        self.live(automerge="off-by-run", pending={**self.repair("rebase"), "claimed": True})
+        sh.save_pointer(7, "fix-174")
+        self.rebasing("refs/heads/other")
+        self.assertEqual(self.main("next")[1]["code"], "STOP_NO_PR")
+        self.assertEqual(len(self.lookups()), 1)
+
+    def test_start_mid_rebase(self):
+        sh.save_pointer(7, "fix-174")
+        self.rebasing()
+        for name, pending, code in (("claimed", {**self.repair("rebase"), "claimed": True}, "STOP_REPAIR_CLAIMED"), ("unclaimed", self.repair("rebase"), "STOP_DETACHED")):
+            with self.subTest(name):
+                self.live(pending=pending)
+                before = self.read_state_bytes()
+                out = self.main("start", "--model", "X")[1]
+                self.assertEqual((out["action"], out["code"]), ("stop", code))
+                self.assertEqual(self.read_state_bytes(), before)
 
     def test_next_busy_leaves_state(self):
         self.live()
@@ -961,18 +996,21 @@ class Next(NextBase):
         self.assertEqual((state["gated_head"], state["pending"]), (SHA, pending))
         self.assertTrue(os.path.isdir(evidence))
 
-    def test_stop_during_claimed_repair_keeps_evidence(self):
+    def test_stop_keeps_evidence_only_for_a_claimed_repair(self):
         for name, over, code in (("deadline", {"deadline": NOW - 1}, "STOP_DEADLINE"), ("check_limits", {}, "STOP_CLOSED")):
-            with self.subTest(name):
-                evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
-                self.addCleanup(lambda e=evidence: os.path.isdir(e) and os.rmdir(e))
-                self.replies["gh pr view 7"] = pr_full(state="CLOSED" if code == "STOP_CLOSED" else "OPEN")
-                self.live(pending={**self.claimed(), "evidence_dir": evidence}, evidence_dir=evidence, **over)
-                out = self.main("next")[1]
-                self.assert_stop(out, code)
-                if code == "STOP_DEADLINE":
-                    self.assertIn("git log", self.report(out))
-                self.assertTrue(os.path.isdir(evidence))  # its subagent may still read it
+            for is_claimed in (True, False) if code == "STOP_CLOSED" else (True,):  # unclaimed: re-issued before any deadline
+                with self.subTest(name, claimed=is_claimed):
+                    evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
+                    self.addCleanup(lambda e=evidence: os.path.isdir(e) and os.rmdir(e))
+                    self.replies["gh pr view 7"] = pr_full(state="CLOSED" if code == "STOP_CLOSED" else "OPEN")
+                    pending = self.claimed() if is_claimed else self.repair()
+                    self.live(pending={**pending, "evidence_dir": evidence}, evidence_dir=evidence, **over)
+                    out = self.main("next")[1]
+                    self.assert_stop(out, code)
+                    if code == "STOP_DEADLINE":
+                        self.assertIn("git log", self.report(out))
+                    self.assertIsNone(sh.load_state(7)["evidence_dir"])
+                    self.assertEqual(os.path.isdir(evidence), is_claimed)  # its subagent may still read it
 
     def test_next_replays_the_stop_that_ended_the_run(self):
         self.live(pending=self.claimed())
@@ -981,15 +1019,17 @@ class Next(NextBase):
         self.assertEqual(self.main("next"), (0, stop))  # same code and script-written report path
         self.assertEqual(self.main("record", "repair-stopped", "--terminal"), (0, stop))
         self.assertEqual(self.main("claim", "--head", SHA, "--cause", "checks"), (1, {"ok": False, "reason": stop["code"]}))
+        self.assertTrue(os.path.isfile(stop["report"]))
 
     def test_next_replays_the_tool_error_that_ended_the_run(self):
         self.live()
-        with mock.patch.object(sh, "next_loop", side_effect=RuntimeError("boom")) as loop:
-            code, final = self.main("next")
-            self.assertEqual((code, sorted(final), final["code"]), (2, ["code", "report"], "CMD_FAILED"))
-            self.assertTrue(sh.load_state(7)["ended"])
-            self.assertEqual(self.main("next"), (2, final))
-        self.assertEqual(loop.call_count, 1)
+        self.replies["gh pr checks 7"] = RuntimeError("boom")
+        code, final = self.main("next")
+        self.assertEqual((code, sorted(final), final["code"]), (2, ["code", "report"], "CMD_FAILED"))
+        self.assertTrue(sh.load_state(7)["ended"])
+        self.assertEqual(self.main("next"), (2, final))
+        self.assertEqual(len([c for c in self.calls if c.startswith("gh pr checks 7")]), 1)  # replayed, not re-run
+        self.assertIn("RuntimeError: boom", self.report(final))
 
     def test_resumable_stop_then_next_reissues_the_repair(self):
         self.live(repairs=1, automerge="off-by-run", pending=self.claimed("rebase"))
@@ -1010,6 +1050,7 @@ class Next(NextBase):
         self.assertEqual((out["automerge"], out["queued"]), ("on", False))
         self.assertIn("stopped before claiming", self.report(out))
         self.assertEqual(sh.load_state(7)["repairs"], 1)
+        self.assertEqual(self.main("next"), (0, out))
 
     def test_claim_clears_the_unclaimed_count(self):
         self.live(automerge="off-by-run", pending={**self.repair(), "issued": 2})
@@ -1028,9 +1069,12 @@ class Next(NextBase):
         self.addCleanup(lambda: os.path.isdir(evidence) and os.rmdir(evidence))
         self.live(pending={**self.claimed(), "evidence_dir": evidence}, evidence_dir=evidence)
         self.replies["gh pr view 7"] = pr_full(state="MERGED")
-        self.assertEqual(self.main("next")[1]["action"], "done")
-        self.assertTrue(sh.load_state(7)["ended"])
+        done = self.main("next")
+        self.assertEqual((done[0], done[1]["action"]), (0, "done"))
+        state = sh.load_state(7)
+        self.assertEqual((state["ended"], state["evidence_dir"]), (True, None))
         self.assertTrue(os.path.isdir(evidence))  # its subagent may still read it
+        self.assertEqual(self.main("next"), done)  # a lost `done` replays
 
     def test_start_with_claimed_repair_stops_and_keeps_the_run(self):
         self.live(pending=self.claimed())
@@ -1043,6 +1087,13 @@ class Next(NextBase):
         self.assertEqual(self.read_state_bytes(), before)  # still live: the real subagent can still record
         self.assert_stop(self.main("record", "repair-stopped", "--terminal")[1], "STOP_REPAIR_STOPPED")
         self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})
+
+    def test_start_stop_clears_an_ended_runs_final(self):
+        self.live(pending=self.claimed())
+        self.assert_stop(self.main("record", "repair-stopped", "--terminal")[1], "STOP_REPAIR_STOPPED")
+        self.replies["gh pr view 7"] = pr_full(state="CLOSED")
+        self.assertEqual(self.main("start", "--model", "X")[1]["code"], "STOP_CLOSED")
+        self.assertEqual(self.main("next")[1]["code"], "STOP_NO_RUN")  # not the earlier run's STOP_REPAIR_STOPPED
 
     def test_start_resets_ended_or_unclaimed(self):
         for name, state in (("ended", {"ended": True, "pending": self.claimed()}), ("unclaimed", {"pending": self.repair()})):

@@ -1,7 +1,7 @@
 ---
 name: tune-gh-actions-timeouts
 description: Use when a GitHub Actions job has no `timeout-minutes`, when auditing or hardening any repo's `.github/workflows/`, when a hung CI job burned hours of Actions minutes, or as tune-perl-ci's final step.
-version: 1.0.0
+version: 1.0.1
 ---
 
 # Tune GitHub Actions Timeouts
@@ -29,7 +29,7 @@ How to dispatch:
 - Require the subagent to report back only the Report block, whose last item is the commit SHA, or "no changes" when nothing was committed. Drift and ambiguous entries are reported even then.
 - If verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
-A caller already running inside a subagent (e.g. `tune-perl-ci`) follows this skill inline — subagents can't dispatch further subagents.
+A caller already running inside a subagent (e.g. `tune-perl-ci`) follows this skill inline — its context is already out of the main one, so another dispatch adds nothing.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
 
