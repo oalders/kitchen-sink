@@ -34,6 +34,7 @@ import shepherd_rules as rules  # noqa: E402
 
 TIMEOUT_KEY = "kitchen-sink.shepherdTimeoutMinutes"
 CODEX_LOOP = os.path.join(HERE, "..", "codex-review-loop", "codex_loop.py")
+CI_REMEDIATION = os.path.join(HERE, "ci_remediation.py")
 BUDGET = 540  # seconds of work per `next`, under the Bash tool's 600 s cap
 HARD_CAP = 580  # no subprocess outlives this, whatever the budget left it
 CALL_TIMEOUT = 60
@@ -44,6 +45,30 @@ GH_WAIT_MARGIN = 35  # a `gh-wait` slice ends this long before the budget: its l
 MIN_SLICE = 30
 UNKNOWN_WAIT = 30
 EVIDENCE_PREFIX = "shepherd-evidence-"
+MATCH_TIMEOUT = 30  # the remediation regexes are user-supplied
+LOG_LINES, LOG_BYTES = 300, 65536  # an evidence log's tail
+REPORT_LOG_LINES = 20
+QUEUE_FAILED = ("failure", "timed_out", "startup_failure")  # cancelled-only evidence never passes
+STATUS_JQ = '.statuses[]|select(.state=="failure" or .state=="error")|"x"'
+CHECK_RUNS_JQ = (
+    '.check_runs[] | select(.conclusion != null and (.conclusion | IN("success","neutral","skipped") | not))'
+    ' | "\\(.app.slug) \\(.name)"'
+)
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # keeps \t and \n
+# /fix-gh-issue step 11's sensitive surfaces, by path; the marks are for the record and block nothing.
+SENSITIVE = re.compile(
+    r"(^|/)(\.github/workflows/|(package(-lock)?|npm-shrinkwrap|composer)\.json$|yarn\.lock$|pnpm-lock\.yaml$"
+    r"|Gemfile(\.lock)?$|go\.(mod|sum)$|Cargo\.(toml|lock)$|requirements[^/]*\.txt$|pyproject\.toml$|(poetry|uv|composer)\.lock$"
+    r"|Pipfile(\.lock)?$|cpanfile(\.snapshot)?$|(Makefile|Build)\.PL$|dist\.ini$|\.env)|secret|credential|auth|permission|access",
+    re.IGNORECASE,
+)
+DECISIONS = {
+    "guard": "guard: a check failed after this run's repair, so auto-merge stays off and a draft stays draft",
+    "keep-queue": "in the merge queue: keep it",
+    "ready": "draft: the agent marks it ready, then auto-merge is enabled",
+    "enable": "enable auto-merge",
+    "keep": "auto-merge already on: keep it",
+}
 QUEUE_QUERY = (
     "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number)"
     "{isInMergeQueue mergeQueueEntry{position estimatedTimeToMerge}"
@@ -150,8 +175,8 @@ def emit(action):
     return 0
 
 
-def write_report(lines):
-    path = os.path.join(tempfile.mkdtemp(), "report.txt")
+def write_report(lines, name="report.txt"):
+    path = os.path.join(tempfile.mkdtemp(), name)
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
     return path
@@ -276,6 +301,7 @@ def _start_with_pr(n, branch, model, minutes):
             "deadline": int(time.time()) + minutes * 60,
             "gated_head": None, "codex_passed": [], "automerge": None, "repairs": 0, "rerun": 0, "infra": [],
             "requeued": None, "wait_first": False, "pending": None, "ended": False, "evidence_dir": None,
+            "shown": None, "summary": None, "triage_verdict": None,
         },
     )  # fmt: skip
     return emit({"action": "next"})
@@ -341,6 +367,8 @@ def status(state, snap):
 def with_status(action, state, snap):
     if snap is not None and state["automerge"] is not None:
         action["status"] = status(state, snap)
+    if state["summary"]:  # the step 3 block, on the first return after it was written
+        action["summary"], state["summary"] = state["summary"], None
     return action
 
 
@@ -389,6 +417,8 @@ def next_loop(state, budget_end):
     except Stop as stop:
         if snap is not None and not stop.fields:
             stop.fields = stop_fields(snap)
+        if state["summary"]:
+            stop.fields["summary"] = state["summary"]
         raise
 
 
@@ -637,7 +667,181 @@ def codex_gate(state, snap, budget_end):
         )  # fmt: skip
 
 
+def fence(text):
+    """Untrusted text for a file: control characters removed, in a fence longer than any backtick run in it."""
+    clean = CONTROL.sub("", text).rstrip("\n")
+    bar = "`" * max(3, 1 + max(map(len, re.findall("`+", clean)), default=0))
+    return f"{bar}\n{clean}\n{bar}"
+
+
+def write_summary(state, snap):
+    """Step 3's block for a head new to the run; returns the path of its summary.txt."""
+    pr, repo, default = snap["pr"], snap["repo"], state["default"]
+    decision = rules.decide({**pr, **snap["queue"]}, snap["checks"], state["automerge"])
+    github = [f"mergeStateStatus {pr['mergeStateStatus']}", f"reviewDecision {pr['reviewDecision']}"]
+    if pr["autoMergeRequest"]:
+        github.append(f"auto-merge enabled by {(pr['autoMergeRequest'].get('enabledBy') or {}).get('login')}")
+    files = run(["gh", "pr", "diff", str(state["pr"]), "--name-only"]).stdout.splitlines()
+    lines = [
+        f"PR #{state['pr']} · branch {pr['headRefName']} · head {pr['headRefOid']}",
+        "Title (untrusted):", fence(pr["title"]),
+        "From GitHub (untrusted):", fence("\n".join(github)),
+        f"Merge method: {rules.pick_method(repo) or 'none allowed'}",
+        f"Private repo: {'no' if repo['visibility'] == 'PUBLIC' else 'yes'}",
+        (state.get("codex") or {}).get("note") or "Codex gate: no result recorded",
+        f"Decision: {DECISIONS[decision]}",
+        "Changed files (untrusted; [sensitive] marks /fix-gh-issue step 11's list, for the record only):",
+        fence("\n".join(f"{f}  [sensitive]" if SENSITIVE.search(f) else f for f in files) or "(none)"),
+    ]  # fmt: skip
+    if pr["isDraft"]:
+        grep = run(["git", "grep", "-l", "-e", "pull_request_target", f"origin/{default}", "--", ".github/workflows"], check=False)
+        if grep.returncode == 0:
+            lines += [f"pull_request_target workflows on origin/{default}: marking it ready may run a privileged workflow"
+                      " (it is marked ready anyway):", fence(grep.stdout)]  # fmt: skip
+        elif grep.returncode == 1:
+            lines.append(f"No pull_request_target workflow on origin/{default}.")
+        else:
+            lines += ["`git grep` for pull_request_target failed:", fence(grep.stderr)]
+    return write_report(lines, "summary.txt")
+
+
+def lookup(cmd):
+    """An evidence lookup: its stdout, or None when it failed (that fails the evidence, not the run)."""
+    try:
+        proc = run(cmd, check=False)
+    except GhError:  # timed out
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def queue_checks(state, oid):
+    """The queue commit's failed check runs as `<app> <name>` lines, or None when the lookup failed."""
+    path = f"repos/{state['owner']}/{state['repo']}/commits/{oid}/check-runs?filter=latest"
+    out = lookup(["gh", "api", "--paginate", path, "-q", CHECK_RUNS_JQ])
+    return None if out is None else out.splitlines()
+
+
+def removal_oid(removal):
+    oid = (removal.get("beforeCommit") or {}).get("oid")
+    return oid if isinstance(oid, str) and rules.valid_sha(oid) else None
+
+
+def queue_evidence(state, snap, removal):
+    """The ejection's evidence, in a new evidence dir: (passes, log paths)."""
+    oid = removal_oid(removal)
+    if oid is None:
+        return False, []
+    out = new_evidence_dir(state)
+    listed = lookup(["gh", "run", "list", "--commit", oid, "--limit", "100", "--json", "databaseId,conclusion,event"])
+    try:
+        runs = json.loads(listed) if listed is not None else None
+    except ValueError:
+        runs = None
+    ids = [
+        str(r["databaseId"]) for r in runs or []
+        if r["event"] == "merge_group" and r["conclusion"] in QUEUE_FAILED and rules.valid_id(str(r["databaseId"]))
+    ]  # fmt: skip
+    paths = []
+    for run_id in ids:
+        log = lookup(["gh", "run", "view", run_id, "--log-failed"])
+        tail = "".join((log or "").splitlines(keepends=True)[-LOG_LINES:]).encode()[-LOG_BYTES:]
+        if tail:  # a failed fetch or an empty log leaves no file, and fails the evidence
+            paths.append(os.path.join(out, run_id))
+            with open(paths[-1], "wb") as f:
+                f.write(tail)
+    status = lookup(["gh", "api", "--paginate", f"repos/{state['owner']}/{state['repo']}/commits/{oid}/status", "--jq", STATUS_JQ])
+    checks = queue_checks(state, oid)
+    passes = (
+        runs is not None and bool(ids) and len(paths) == len(ids)
+        and status is not None and not status.strip()  # no failing third-party status
+        and bool(checks) and all(c.startswith("github-actions ") for c in checks)
+    )  # fmt: skip
+    return passes, paths
+
+
+def judge_logs(paths):
+    """`ci_remediation.py match`: `match:<name>`, `none`, `invalid` or `error`."""
+    cmd = [sys.executable, CI_REMEDIATION, "match", *(a for p in paths for a in ("--log", p))]
+    try:
+        proc = run(cmd, check=False, timeout=MATCH_TIMEOUT)
+        out = json.loads(proc.stdout)
+    except (GhError, ValueError):  # a timeout, or no JSON
+        return "error"
+    status = out.get("status") if isinstance(out, dict) else None
+    name = out.get("name") if isinstance(out, dict) else None
+    if (proc.returncode, status) == (0, "match") and isinstance(name, str) and rules.valid_name(name):
+        return f"match:{name}"
+    return {(1, "none"): "none", (2, "invalid"): "invalid"}.get((proc.returncode, status), "error")
+
+
+def ejected_stop(state, snap, removal, paths, method, why):
+    """Step 3's "Otherwise": what the queue reported, all fenced, and how to re-enqueue by hand."""
+    oid = removal_oid(removal)
+    checks = queue_checks(state, oid) if oid else None
+    lines = [
+        "Removed from merge queue (untrusted):", fence(f"createdAt {removal.get('createdAt')}\nreason {removal.get('reason')}"),
+        *([why] if why else []),
+        "Failed checks (untrusted):", fence("\n".join(checks or []) or "none"),
+    ]  # fmt: skip
+    for path in paths:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            tail = "".join(f.readlines()[-REPORT_LOG_LINES:])
+        lines += [f"Run {os.path.basename(path)}, last {REPORT_LOG_LINES} lines of its failed log (untrusted):", fence(tail)]
+    if not paths:
+        lines.append("No failed merge_group run log was found: it was likely dequeued by hand or by a conflict.")
+    head = snap["pr"]["headRefOid"]
+    lines.append(f"Run `gh pr merge {state['pr']} --auto --{method} --match-head-commit {head}` before /shepherd-pr.")
+    return Stop("STOP_EJECTED", True, lines)
+
+
+def handle_ejection(state, snap, method):
+    """Step 3's ejection test: None (no ejection, or re-enqueue it), a `triage` action, or a Stop."""
+    pr, queue = snap["pr"], snap["queue"]
+    removal = None
+    if not queue["isInMergeQueue"] and pr["autoMergeRequest"] is None:
+        nodes, earliest = queue["timelineItems"]["nodes"], earliest_suite(state, pr["headRefOid"])
+        removal = rules.ejection({**pr, **queue}, nodes, earliest, state["requeued"])
+    verdict, state["triage_verdict"] = state["triage_verdict"], None  # a verdict serves only the next pass
+    if removal is None:
+        return None
+    passes, paths = queue_evidence(state, snap, removal)
+    why = None
+    if passes and rules.may_requeue(nodes, removal, earliest):  # one re-enqueue per head, across runs
+        judged = verdict or judge_logs(paths)  # `record triage` answered the last pass's `none`
+        if judged == "infra" or judged.startswith("match:"):
+            state["requeued"] = removal["createdAt"]  # handled; the decide below re-enables auto-merge
+            return None
+        if judged == "invalid":
+            raise Stop(
+                "STOP_REMEDIATION_INVALID", True,
+                [f"A remediation entry is invalid; `python3 {CI_REMEDIATION} list` names its errors. Fix it, then re-run /shepherd-pr."],
+            )  # fmt: skip
+        if judged == "none":
+            state["pending"] = {"action": "triage", "evidence_dir": state["evidence_dir"]}
+            return dict(state["pending"])
+        why = "The log triage judged it not infrastructure." if verdict else "`ci_remediation.py match` failed (an error, no JSON or a timeout)."
+    raise ejected_stop(state, snap, removal, paths, method, why)
+
+
 def show_and_act(state, snap):
+    """Steps 3-4: the block for a new head, the method, the ejection, then ready or enable. None: on to the watch."""
+    pr, head = snap["pr"], snap["pr"]["headRefOid"]
+    if state["shown"] != head:
+        state.update(summary=write_summary(state, snap), shown=head)
+    method = rules.pick_method(snap["repo"])
+    if method is None:
+        raise Stop("STOP_NO_METHOD", True, ["No merge method is allowed; a repo admin must allow squash, merge or rebase."])
+    triage = handle_ejection(state, snap, method)
+    if triage:
+        return triage
+    decision = rules.decide({**pr, **snap["queue"]}, snap["checks"], state["automerge"])
+    if decision == "ready":  # the agent runs `gh pr ready`, so the review hook still gates it
+        state["pending"] = {"action": "ready", "pr": state["pr"]}
+        return dict(state["pending"])
+    if decision == "enable":  # with a merge queue this enqueues; a repo without auto-merge fails it (terminal)
+        run(["gh", "pr", "merge", str(state["pr"]), "--auto", f"--{method}", "--match-head-commit", head])
+        state["automerge"] = "on"
+        pr["autoMergeRequest"] = {"enabledBy": {"login": snap["viewer"]}}  # what the watch would read back
     return None
 
 
