@@ -832,7 +832,7 @@ class Next(NextBase):
         self.assertEqual([c for c in self.calls if c.startswith("sleep")], ["sleep 5", "sleep 5"])
 
     def test_record_repair_pushed_out_of_budget_while_waiting(self):
-        self.live(pending={**self.repair(), "dispatched": True})  # the record clears it, so the next pass adopts the push
+        self.live(pending={**self.repair(), "claimed": True})  # the record clears it, so the next pass adopts the push
         self.replies["gh pr view 7"] = pr_full()
         with mock.patch.object(sh, "sleep_within", side_effect=sh.OutOfBudget):
             out = self.main("record", "repair-pushed")[1]
@@ -910,52 +910,84 @@ class Next(NextBase):
         state = sh.load_state(7)
         self.assertEqual((state["triage_verdict"], state["pending"]), ({"cause": "checks", "verdict": "infra"}, None))
 
-    def test_record_repair_dispatched(self):
-        self.live(pending=self.repair())
-        self.assertEqual(self.main("record", "repair-dispatched")[1], {"action": "dispatched"})
-        self.assertTrue(sh.load_state(7)["pending"]["dispatched"])
-        self.live()
-        self.assert_stop(self.main("record", "repair-dispatched")[1], "STOP_NO_REPAIR")
+    def claimed(self, cause="checks"):
+        return {**self.repair(cause), "claimed": True}
 
-    def test_dispatched_repair_is_repairing(self):
+    def test_claim(self):
+        self.live(pending=self.repair("codex"))
+        self.assertEqual(self.main("claim", "--head", SHA, "--cause", "codex"), (0, {"ok": True}))
+        self.assertEqual(sh.load_state(7)["pending"], self.claimed("codex"))
+
+    def test_claim_refused(self):
+        mismatch, taken = "no pending repair for this head and cause", "another repair subagent already claimed this repair"
+        for name, state, argv, reason in (
+            ("wrong head", {"pending": self.repair("codex")}, ["--head", OTHER, "--cause", "codex"], mismatch),
+            ("wrong cause", {"pending": self.repair("codex")}, ["--head", SHA, "--cause", "checks"], mismatch),
+            ("already claimed", {"pending": self.claimed("codex")}, ["--head", SHA, "--cause", "codex"], taken),
+            ("no pending repair", {}, ["--head", SHA, "--cause", "codex"], mismatch),
+            ("ended run", {"ended": True, "pending": self.repair("codex")}, ["--head", SHA, "--cause", "codex"], "STOP_NO_RUN"),
+        ):
+            with self.subTest(name):
+                self.live(**state)
+                before = self.read_state_bytes()
+                self.assertEqual(self.main("claim", *argv), (1, {"ok": False, "reason": reason}))
+                self.assertEqual(self.read_state_bytes(), before)
+        os.remove(self.state_file())
+        self.assertEqual(self.main("claim", "--head", SHA, "--cause", "codex"), (1, {"ok": False, "reason": "STOP_NO_RUN"}))
+        self.assertFalse(os.path.exists(self.state_file()))
+
+    def test_second_claim_fails(self):
+        self.live(pending=self.repair())
+        self.assertEqual(self.main("claim", "--head", SHA, "--cause", "checks")[0], 0)
+        self.assertEqual(self.main("claim", "--head", SHA, "--cause", "checks")[0], 1)
+
+    def test_claim_busy(self):
+        self.live(pending=self.repair())
+        before = self.read_state_bytes()
+        with sh.locked(7):
+            self.assertEqual(self.main("claim", "--head", SHA, "--cause", "checks"), (0, {"action": "busy"}))
+        self.assertEqual(self.read_state_bytes(), before)
+
+    def test_claimed_repair_is_repairing(self):
         evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
         self.addCleanup(lambda: os.path.isdir(evidence) and os.rmdir(evidence))
-        pending = {**self.repair(), "evidence_dir": evidence, "dispatched": True}
+        pending = {**self.claimed(), "evidence_dir": evidence}
         self.live(automerge="off-by-run", pending=pending, evidence_dir=evidence)
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)  # its push landed before its `record`
         self.replies["git rev-parse HEAD"] = OTHER + "\n"
-        self.assertEqual(self.main("next")[1]["action"], "repairing")
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "repairing")
+        self.assertIn("status", out)
         state = sh.load_state(7)
         self.assertEqual((state["gated_head"], state["pending"]), (SHA, pending))
         self.assertTrue(os.path.isdir(evidence))
 
-    def test_dispatched_repair_deadline(self):
-        self.live(deadline=NOW - 1, pending={**self.repair(), "dispatched": True})
+    def test_claimed_repair_deadline_keeps_evidence(self):
+        evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
+        self.addCleanup(lambda: os.path.isdir(evidence) and os.rmdir(evidence))
+        self.live(deadline=NOW - 1, pending={**self.claimed(), "evidence_dir": evidence}, evidence_dir=evidence)
         out = self.main("next")[1]
         self.assert_stop(out, "STOP_DEADLINE")
         self.assertIn("git log", self.report(out))
+        self.assertTrue(os.path.isdir(evidence))  # its subagent may still read it
 
-    def test_start_busy_with_dispatched_repair(self):
-        self.live(pending={**self.repair(), "dispatched": True})
+    def test_start_with_claimed_repair_stops_and_keeps_the_run(self):
+        self.live(pending=self.claimed())
         before = self.read_state_bytes()
-        self.assertEqual(self.main("start", "--model", "X")[1], {"action": "busy"})
-        self.assertEqual(self.read_state_bytes(), before)
-        self.live(deadline=NOW - 1, pending={**self.repair(), "dispatched": True})
+        out = self.main("start", "--model", "X")[1]
+        self.assertEqual((out["action"], out["terminal"], out["code"]), ("stop", True, "STOP_REPAIR_CLAIMED"))
+        self.assertIn("record repair-stopped --terminal", self.report(out))
+        self.assertEqual(self.read_state_bytes(), before)  # still live: the real subagent can still record
+        self.assert_stop(self.main("record", "repair-stopped", "--terminal")[1], "STOP_REPAIR_STOPPED")
         self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})
 
-    def test_guard(self):
-        self.live(pending={**self.repair("codex"), "dispatched": True})
-        before = self.read_state_bytes()
-        self.assertEqual(self.main("guard", "--head", SHA, "--cause", "codex"), (0, {"ok": True}))
-        for argv in (["--head", OTHER, "--cause", "codex"], ["--head", SHA, "--cause", "checks"]):
-            with self.subTest(argv):
-                code, out = self.main("guard", *argv)
-                self.assertEqual((code, out["ok"]), (1, False))
-        self.assertEqual(self.read_state_bytes(), before)
-        self.live(pending=self.repair("codex"))  # handed out but not dispatched
-        self.assertEqual(self.main("guard", "--head", SHA, "--cause", "codex")[0], 1)
-        self.live(ended=True)
-        self.assertEqual(self.main("guard", "--head", SHA, "--cause", "codex")[0], 1)
+    def test_start_resets_ended_or_unclaimed(self):
+        for name, state in (("ended", {"ended": True, "pending": self.claimed()}), ("unclaimed", {"pending": self.repair()})):
+            with self.subTest(name):
+                self.live(**state)
+                self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})
+                state = sh.load_state(7)
+                self.assertEqual((state["ended"], state["pending"]), (False, None))
 
     def test_gh_stderr_not_on_stdout(self):
         self.live()

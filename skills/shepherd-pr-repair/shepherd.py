@@ -2,18 +2,20 @@
 """State machine for /shepherd-pr: carries the current branch's PR to merged.
 
 Subcommands print exactly one JSON object on stdout (exit 0 for an action, 1
-for a failed guard, 2 for a tool error):
+for a refused claim, 2 for a tool error):
 
   start --model NAME   Check the branch and PR, then write a fresh state file.
                        Returns next, handoff, busy or stop.
   next                 Pass over the PR until the agent is needed or about 9
                        minutes are used. Returns any action.
-  record EVENT         Report what only the agent knows: repair-dispatched,
-                       repair-pushed, repair-stopped --resumable|--terminal, or
+  record EVENT         Report what only the agent knows: repair-pushed,
+                       repair-stopped --resumable|--terminal, or
                        triage --verdict infra|not-infra.
-  guard --head SHA --cause CAUSE
-                       Read-only: pass (exit 0, {"ok":true}) only for the live
-                       run's dispatched repair of that head and cause.
+  claim --head SHA --cause CAUSE
+                       A repair subagent's step 1: claim the live run's pending,
+                       unclaimed repair of that head and cause. Exit 0 with
+                       {"ok":true} (claimed) or {"action":"busy"}; exit 1 with
+                       {"ok":false,"reason":...} (refused, nothing written).
 
 State lives in `<git-dir>/kitchen-sink/shepherd/<n>.json`; see
 docs/superpowers/specs/2026-11-12-shepherd-pr-script-design.md.
@@ -255,8 +257,14 @@ def live_state(n):
     return state
 
 
-def finish(state):
+def claimed(state):
+    return bool((state["pending"] or {}).get("claimed"))
+
+
+def finish(state, keep_evidence=False):
     """End the run: every stop and done."""
+    if keep_evidence:
+        state["evidence_dir"] = None  # a claimed repair's subagent may still read it: leave it in the temp dir
     drop_evidence(state)
     state["ended"] = True
     save_state(state["pr"], state)
@@ -327,8 +335,14 @@ def _pr_failure(pr, viewer, repo, branch):
 
 def _start_with_pr(n, branch, model, minutes):
     old = load_state(n)
-    if old and not old["ended"] and (old["pending"] or {}).get("dispatched") and time.time() < old["deadline"]:
-        return emit({"action": "busy"})  # its repair subagent is still running; a reset would hand out a second one
+    if old and not old["ended"] and claimed(old):  # a reset would hand out a second repair; `cmd_start` must not end it
+        pending = old["pending"]
+        return emit_stop(Stop("STOP_REPAIR_CLAIMED", True, [
+            f"A repair subagent claimed this run's {pending['cause']} repair of {pending['head']} and may still be running.",
+            "If none is running in any session, run"
+            f" `python3 '{os.path.abspath(__file__)}' record repair-stopped --terminal` to end the run,"
+            " then /shepherd-pr again.",
+        ]))  # fmt: skip
     pr = gh_json(
         ["pr", "view", str(n), "--json", "number,state,isCrossRepository,author,baseRefName,headRefName,headRefOid"]
     )
@@ -439,7 +453,7 @@ def check_deadline(state, snap=None):
     """The run's soft deadline: before each resumable wait, each watch poll and after each Codex wait."""
     if time.time() >= state["deadline"]:
         lines = ["The run's deadline passed; run /shepherd-pr again to continue."]
-        if (state["pending"] or {}).get("dispatched"):
+        if claimed(state):
             lines.append("A repair subagent may still be running and push; check `git log` and the PR before re-running.")
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
@@ -1188,7 +1202,7 @@ def pass_once(state, snap, budget_end):
     if pr["state"] == "MERGED":
         return {"action": "done", "merged": True}
     check_limits(state, snap)
-    if (state["pending"] or {}).get("dispatched"):  # its subagent reads evidence_dir and leaves local work: touch neither
+    if claimed(state):  # its subagent reads evidence_dir and leaves local work: touch neither
         check_deadline(state, snap)
         return {"action": "repairing"}  # until its `record`, whatever the PR's head
     reissue = handle_pending(state, snap) if state["pending"] else None  # may adopt a pushed head first
@@ -1222,10 +1236,10 @@ def cmd_next(_args):
         try:
             action = next_loop(state, time.time() + BUDGET)
         except Exception:  # every stop, and a tool error: the agent ends the run on both
-            finish(state)
+            finish(state, keep_evidence=claimed(state))
             raise
         if action["action"] == "done":
-            finish(state)
+            finish(state, keep_evidence=claimed(state))
         else:
             save_state(n, state)
         return emit(action)
@@ -1234,17 +1248,10 @@ def cmd_next(_args):
 # --- record --------------------------------------------------------------------
 
 
-def record_repair_dispatched(state, _args):
-    if (state["pending"] or {}).get("action") != "repair":
-        raise Stop("STOP_NO_REPAIR", True, ["No repair is pending to dispatch; run /shepherd-pr again."])
-    state["pending"]["dispatched"] = True
-    return {"action": "dispatched"}
-
-
 def record_repair_pushed(state, _args):
     if (state["pending"] or {}).get("action") != "repair":
         return {"action": "next"}  # nothing handed out (or `next` already adopted it): the pass re-reads
-    state["pending"].pop("dispatched", None)  # its subagent is done: a deferred adopt below falls to the next pass
+    state["pending"].pop("claimed", None)  # its subagent is done: a deferred adopt below falls to the next pass
     for lag in range(3):  # GitHub's headRefOid can trail a push by a moment; `next` would re-issue the repair
         try:
             snap, local = read_pr(state), local_head()
@@ -1309,12 +1316,7 @@ def record_triage(state, args):
     return {"action": "next"}
 
 
-RECORDERS = {
-    "repair-dispatched": record_repair_dispatched,
-    "repair-pushed": record_repair_pushed,
-    "repair-stopped": record_repair_stopped,
-    "triage": record_triage,
-}
+RECORDERS = {"repair-pushed": record_repair_pushed, "repair-stopped": record_repair_stopped, "triage": record_triage}
 
 
 def cmd_record(args):
@@ -1332,23 +1334,27 @@ def cmd_record(args):
         return emit(action)
 
 
-def cmd_guard(args):
-    """A repair subagent's step 1: it can't see the conversation that dispatched it, so the state is the check."""
-    reason = None
+def cmd_claim(args):
+    """A repair subagent's step 1: it can't see the conversation that dispatched it, so the state is the check, and
+    claiming under the lock lets only one subagent take a handed-out repair."""
     try:
         n = _pr_or_stop()
         with locked(n):
-            pending = live_state(n)["pending"] or {}
+            state = live_state(n)
+            pending = state["pending"] or {}
+            want = {"action": "repair", "head": args.head, "cause": args.cause}
+            if {k: pending.get(k) for k in want} != want:
+                reason = "no pending repair for this head and cause"
+            elif pending.get("claimed"):
+                reason = "another repair subagent already claimed this repair"
+            else:
+                pending["claimed"] = True
+                save_state(n, state)
+                return emit({"ok": True})
     except Stop as stop:
         reason = stop.code
-    else:
-        want = {"action": "repair", "dispatched": True, "head": args.head, "cause": args.cause}
-        if {k: pending.get(k) for k in want} != want:
-            reason = "no dispatched repair for this head and cause"
-    if reason:
-        emit({"ok": False, "reason": reason})
-        return 1
-    return emit({"ok": True})
+    emit({"ok": False, "reason": reason})
+    return 1
 
 
 def main(argv=None):
@@ -1365,10 +1371,10 @@ def main(argv=None):
     how.add_argument("--terminal", action="store_true")
     r.add_argument("--verdict", choices=("infra", "not-infra"))
     r.set_defaults(func=cmd_record)
-    g = sub.add_parser("guard")
-    g.add_argument("--head", required=True)
-    g.add_argument("--cause", required=True, choices=("checks", "codex", "rebase"))
-    g.set_defaults(func=cmd_guard)
+    c = sub.add_parser("claim")
+    c.add_argument("--head", required=True)
+    c.add_argument("--cause", required=True, choices=("checks", "codex", "rebase"))
+    c.set_defaults(func=cmd_claim)
     args = p.parse_args(argv)
     global hard_end
     hard_end = time.time() + HARD_CAP
