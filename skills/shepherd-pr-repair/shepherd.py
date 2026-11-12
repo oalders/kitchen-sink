@@ -489,12 +489,16 @@ def local_work_guard(head):
     for name in ("rebase-merge", "rebase-apply"):
         if os.path.exists(run(["git", "rev-parse", "--git-path", name]).stdout.strip()):
             raise Stop("STOP_LOCAL_WORK", True, ["A rebase is in progress, possibly the repair's; `git rebase --abort` ends it."])
+    cmd = ["git", "fetch", "origin"]
     try:
-        fetched = run(["git", "fetch", "origin"], check=False).returncode == 0
-    except GhError:  # timed out
-        fetched = False
-    if not fetched:
-        raise Resumable()  # a network blip, waited out like a `gh` one; the deadline bounds a lasting failure
+        proc = run(cmd, check=False)
+        failure = proc.stderr if proc.returncode else None
+    except GhError as e:  # timed out
+        failure = e.stderr
+    if failure is not None:
+        if rules.is_resumable_gh_error(cmd, failure):
+            raise Resumable()  # a network blip, waited out like a `gh` one; the deadline bounds a lasting failure
+        raise Stop("STOP_FETCH_FAILED", True, ["`git fetch origin` failed for a reason waiting won't fix.", fence(failure)])
     if run(["git", "merge-base", "--is-ancestor", "HEAD", head], check=False).returncode != 0:
         raise Stop("STOP_LOCAL_WORK", True, [f"Local HEAD has commits not on the PR's head {head}."])
     if run(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.strip():
@@ -1234,7 +1238,11 @@ def record_repair_pushed(state, _args):
         if head != state["pending"]["head"]:
             break
         if lag < 2:
-            sleep_within(5, hard_end)
+            try:
+                sleep_within(5, hard_end)
+            except OutOfBudget:  # `pending` stays, so the next pass adopts the push
+                state["wait_first"] = True
+                return {"action": "next"}
     if head == state["pending"]["head"]:  # the skill said it pushed, but GitHub has no new head
         raise Stop("STOP_NO_NEW_HEAD", True, [f"The PR's head is still {head}; the repair's push didn't land."], stop_fields(snap))
     if head != local:  # never take a SHA from the agent

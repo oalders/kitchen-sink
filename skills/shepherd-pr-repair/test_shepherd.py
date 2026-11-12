@@ -743,7 +743,7 @@ class Next(NextBase):
                     os.rmdir(rebase_dir)
 
     def test_pending_fetch_failure_is_waited_out(self):
-        for name, failure in (("exit", fail("fatal: unable to access")), ("timeout", sh.GhError(["git"], "timeout", "timed out"))):
+        for name, failure in (("exit", fail("fatal: Could not resolve host: github.com")), ("timeout", sh.GhError(["git"], "timeout", "timed out"))):
             with self.subTest(name):
                 self.reset_next_replies()
                 self.live(pending=self.repair())
@@ -751,6 +751,15 @@ class Next(NextBase):
                 self.calls.clear()
                 self.assertEqual(self.main("next")[1]["action"], "next")  # no STOP_FETCH_FAILED
                 self.assertIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)
+
+    def test_pending_fetch_failure_that_waiting_cannot_fix_stops(self):
+        self.reset_next_replies()
+        self.live(pending=self.repair())
+        self.replies["git fetch origin"] = fail("fatal: 'origin' does not appear to be a git repository")
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_FETCH_FAILED")
+        with open(out["report"]) as f:
+            self.assertIn("```\nfatal: 'origin' does not appear to be a git repository\n```", f.read())
 
     def assert_local_work_stops(self, setup, code):
         self.reset_next_replies()
@@ -787,6 +796,14 @@ class Next(NextBase):
         self.assertEqual(out["action"], "next")
         self.assertEqual(sh.load_state(7)["gated_head"], OTHER)
         self.assertEqual([c for c in self.calls if c.startswith("sleep")], ["sleep 5", "sleep 5"])
+
+    def test_record_repair_pushed_out_of_budget_while_waiting(self):
+        self.live(pending=self.repair())
+        self.replies["gh pr view 7"] = pr_full()
+        with mock.patch.object(sh, "sleep_within", side_effect=sh.OutOfBudget):
+            out = self.main("record", "repair-pushed")[1]
+        state = sh.load_state(7)
+        self.assertEqual((out["action"], state["wait_first"], state["pending"] is not None), ("next", True, True))
 
     def test_record_repair_pushed_needs_new_head(self):
         self.live(rerun=1, infra=["flaky"], pending=self.repair())
@@ -1701,10 +1718,14 @@ class Watch(NextBase):
             self.assertNotIn(text, raw)
 
 
-
-@unittest.skipUnless(shutil.which("jq"), "jq not installed")
 class TestJq(unittest.TestCase):
     """The jq constants run for real, on API-shaped JSON; the fake `run` elsewhere hands back pre-extracted text."""
+
+    def setUp(self):
+        if not shutil.which("jq"):
+            if os.environ.get("CI"):
+                self.fail("jq not installed")
+            self.skipTest("jq not installed")
 
     def jq(self, expr, doc):
         return subprocess.run(["jq", "-r", expr], input=json.dumps(doc), capture_output=True, text=True, check=True).stdout
