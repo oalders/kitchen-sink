@@ -184,33 +184,46 @@ class TestRules(unittest.TestCase):
 
     def test_ejection_head_removal(self):
         nodes = [self.add("t1"), self.remove("t2")]
-        self.assertEqual(rules.ejection(self.ejected_pr(), nodes, "t0", None), nodes[1])
+        self.assertEqual(rules.ejection(self.ejected_pr(), nodes, "t0", None, None), nodes[1])
 
     def test_ejection_earlier_head(self):
         nodes = [self.add("t1"), self.remove("t2")]
-        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t3", None))
+        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t3", None, None))
 
     def test_ejection_requeued_handled(self):
         nodes = [self.add("t1"), self.remove("t2")]
-        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t0", "t2"))
+        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t0", "t2", None))
 
     def test_ejection_no_suites(self):
         nodes = [self.add("t1"), self.remove("t2")]
-        self.assertEqual(rules.ejection(self.ejected_pr(), nodes, None, None), nodes[1])
+        self.assertEqual(rules.ejection(self.ejected_pr(), nodes, None, None, None), nodes[1])
 
     def test_ejection_queued_or_automerge(self):
         nodes = [self.add("t1"), self.remove("t2")]
-        self.assertIsNone(rules.ejection(self.ejected_pr(isInMergeQueue=True), nodes, "t0", None))
-        self.assertIsNone(rules.ejection(self.ejected_pr(autoMergeRequest={"enabledBy": {}}), nodes, "t0", None))
+        self.assertIsNone(rules.ejection(self.ejected_pr(isInMergeQueue=True), nodes, "t0", None, None))
+        self.assertIsNone(rules.ejection(self.ejected_pr(autoMergeRequest={"enabledBy": {}}), nodes, "t0", None, None))
 
     def test_ejection_last_node_must_be_a_removal(self):
         nodes = [self.add("t1"), self.remove("t2"), self.add("t3")]
-        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t0", None))
+        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, "t0", None, None))
 
     def test_may_requeue_once_per_head(self):
         nodes = [self.add("t1"), self.remove("t2"), self.add("t3"), self.remove("t4")]
-        self.assertFalse(rules.may_requeue(nodes, nodes[3], "t0"))
-        self.assertTrue(rules.may_requeue(nodes, nodes[3], "t3"))  # t2 belongs to an earlier head
+        self.assertFalse(rules.may_requeue(nodes, nodes[3], "t0", None))
+        self.assertTrue(rules.may_requeue(nodes, nodes[3], "t3", None))  # t2 belongs to an earlier head
+
+    def test_ejection_own_removal(self):
+        nodes = [self.add("2027-01-01T00:00:00Z"), self.remove("2027-01-01T00:02:00Z")]
+        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, None, None, "2027-01-01T00:01:00Z"))
+
+    def test_ejection_after_requeue_past_own_removal(self):
+        nodes = [self.add("2027-01-01T00:02:00Z"), self.remove("2027-01-01T00:03:00Z")]
+        self.assertEqual(rules.ejection(self.ejected_pr(), nodes, None, None, "2027-01-01T00:01:00Z"), nodes[1])
+
+    def test_may_requeue_skips_own_removal(self):
+        times = ("2027-01-01T00:00:00Z", "2027-01-01T00:02:00Z", "2027-01-01T00:03:00Z", "2027-01-01T00:04:00Z")
+        nodes = [self.add(times[0]), self.remove(times[1]), self.add(times[2]), self.remove(times[3])]
+        self.assertTrue(rules.may_requeue(nodes, nodes[3], None, "2027-01-01T00:01:00Z"))
 
     def test_queue_deadline(self):
         self.assertEqual(rules.queue_deadline(100, 200, True, 60), 1160)
@@ -356,6 +369,11 @@ class TestStart(Env):
         self.assertEqual(state["deadline"], NOW + 180 * 60)
         self.assertEqual(state["model"], "Opus 5.5")
         self.assertEqual((state["pr"], state["branch"], state["owner"], state["repo"]), (7, "fix-174", "o", "r"))
+
+    def test_start_carries_disabled_at(self):
+        sh.save_state(7, {"ended": True, "disabled_at": "2027-01-15T07:00:00Z"})  # e.g. STOP_UNCONFIRMED_DECLINE dequeued it
+        self.main("start", "--model", "Opus 5.5")
+        self.assertEqual(sh.load_state(7)["disabled_at"], "2027-01-15T07:00:00Z")
 
     def test_start_handoff(self):
         self.replies.update(
@@ -536,7 +554,7 @@ class NextBase(Env):
             "pr": 7, "branch": "fix-174", "owner": "o", "repo": "r", "default": "main", "model": "X",
             "deadline": NOW + 3600, "gated_head": SHA, "codex_passed": [], "automerge": "on", "repairs": 0,
             "rerun": 0, "infra": [], "requeued": None, "wait_first": False, "pending": None, "ended": False,
-            "evidence_dir": None, "shown": None, "summary": None, "triage_verdict": None,
+            "evidence_dir": None, "shown": None, "summary": None, "triage_verdict": None, "disabled_at": None,
         }  # fmt: skip
         state.update(over)
         sh.save_state(7, state)
@@ -1789,6 +1807,18 @@ class Watch(NextBase):
         self.assertLessEqual(self.clock - NOW, 540)
         state = sh.load_state(7)
         self.assertEqual((state["rerun"], state["repairs"], state["ended"]), (1, 0, False))
+
+    def test_own_dequeue_is_no_ejection(self):
+        self.replies["gh pr checks 7"] = [CANCELLED, checks(check())]
+        self.replies[RUNS] = json.dumps([gh_run(conclusion="cancelled")])
+        self.replies["gh pr view 7"] = [pr_full(), pr_full(autoMergeRequest=None), pr_full()]
+        add = {"__typename": "AddedToMergeQueueEvent", "createdAt": "2027-01-15T07:00:00Z"}  # before NOW
+        removed = removal(created="2027-01-15T08:00:30Z")  # the run's --disable-auto at NOW dequeued it
+        self.replies["gh api graphql"] = [queue([add], queued=True), queue([add, removed]), queue([add, removed], queued=True)]
+        self.replies[MERGE] = ""
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "next")
+        self.assertIn(MERGE, self.calls)
 
     def test_infra_rerun_match(self):
         self.replies["gh pr checks 7"] = CANCELLED
