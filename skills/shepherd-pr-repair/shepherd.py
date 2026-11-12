@@ -496,8 +496,8 @@ def local_work_guard(head):
     except GhError as e:  # timed out
         failure = e.stderr
     if failure is not None:
-        if rules.is_resumable_gh_error(cmd, failure):
-            raise Resumable()  # a network blip, waited out like a `gh` one; the deadline bounds a lasting failure
+        if not rules.is_permanent_fetch_error(failure):
+            raise Resumable()  # git's transient errors have no stable wording, so wait unless clearly permanent; the deadline bounds it
         raise Stop("STOP_FETCH_FAILED", True, ["`git fetch origin` failed for a reason waiting won't fix.", fence(failure)])
     if run(["git", "merge-base", "--is-ancestor", "HEAD", head], check=False).returncode != 0:
         raise Stop("STOP_LOCAL_WORK", True, [f"Local HEAD has commits not on the PR's head {head}."])

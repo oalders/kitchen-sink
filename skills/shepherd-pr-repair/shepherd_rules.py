@@ -19,7 +19,7 @@ def valid_ref(s):
 
 def valid_name(s):
     """An owner or repo name."""
-    return re.fullmatch(r"[A-Za-z0-9._-]+", s) is not None
+    return re.fullmatch(r"[A-Za-z0-9._-]+", s) is not None and ".." not in s
 
 
 def valid_id(s):
@@ -209,11 +209,24 @@ def status_line(state, pr, checks):
     )
 
 
+# skills/shepherd-pr-repair/SKILL.md (Rules) lists these in prose; keep the two in sync.
 _RESUMABLE = re.compile(
     r"HTTP 5\d\d\b|secondary rate limit|timeout|timed out|connection reset|connection refused"
     r"|no such host|could not resolve host|TLS|tls:|unexpected EOF",
     re.IGNORECASE,
 )
+
+
+# Git's transient failures have no stable wording, so only clearly permanent ones stop a `git fetch`.
+_FETCH_PERMANENT = re.compile(
+    r"does not appear to be a git repository|Repository not found|Authentication failed|Permission denied"
+    r"|could not read Username|No such remote|not a git repository",
+    re.IGNORECASE,
+)
+
+
+def is_permanent_fetch_error(stderr):
+    return _FETCH_PERMANENT.search(stderr) is not None
 
 
 def is_resumable_gh_error(cmd, stderr):

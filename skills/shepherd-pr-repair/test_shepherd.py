@@ -131,6 +131,9 @@ class TestRules(unittest.TestCase):
             self.assertTrue(rules.valid_ref(ok), ok)
         for bad in ("a..b", "-x", "a b", "a;b"):
             self.assertFalse(rules.valid_ref(bad), bad)
+        self.assertTrue(rules.valid_name("my.repo-1"))
+        for bad in ("a..b", "a/b", ""):
+            self.assertFalse(rules.valid_name(bad), bad)
 
     # --- decision rules: pure, so tested with literal inputs ---
 
@@ -743,7 +746,13 @@ class Next(NextBase):
                     os.rmdir(rebase_dir)
 
     def test_pending_fetch_failure_is_waited_out(self):
-        for name, failure in (("exit", fail("fatal: Could not resolve host: github.com")), ("timeout", sh.GhError(["git"], "timeout", "timed out"))):
+        for name, failure in (
+            ("dns", fail("fatal: Could not resolve host: github.com")),
+            ("503", fail("fatal: unable to access 'x': The requested URL returned error: 503")),
+            ("early EOF", fail("fatal: early EOF")),
+            ("empty", fail("")),
+            ("timeout", sh.GhError(["git"], "timeout", "timed out")),
+        ):
             with self.subTest(name):
                 self.reset_next_replies()
                 self.live(pending=self.repair())
@@ -755,11 +764,15 @@ class Next(NextBase):
     def test_pending_fetch_failure_that_waiting_cannot_fix_stops(self):
         self.reset_next_replies()
         self.live(pending=self.repair())
-        self.replies["git fetch origin"] = fail("fatal: 'origin' does not appear to be a git repository")
-        out = self.main("next")[1]
-        self.assert_stop(out, "STOP_FETCH_FAILED")
-        with open(out["report"]) as f:
-            self.assertIn("```\nfatal: 'origin' does not appear to be a git repository\n```", f.read())
+        for stderr in ("fatal: 'origin' does not appear to be a git repository", "ERROR: Repository not found."):
+            with self.subTest(stderr):
+                self.reset_next_replies()
+                self.live(pending=self.repair())
+                self.replies["git fetch origin"] = fail(stderr)
+                out = self.main("next")[1]
+                self.assert_stop(out, "STOP_FETCH_FAILED")
+                with open(out["report"]) as f:
+                    self.assertIn(f"```\n{stderr}\n```", f.read())
 
     def assert_local_work_stops(self, setup, code):
         self.reset_next_replies()
