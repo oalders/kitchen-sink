@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -344,28 +345,49 @@ class TestStart(Env):
 
     def test_start_rejects(self):
         cases = {
-            "cross-repo": {"gh pr view 7": pr_view(isCrossRepository=True)},
-            "other author": {"gh pr view 7": pr_view(author={"login": "x"})},
-            "non-default base": {"gh pr view 7": pr_view(baseRefName="dev")},
-            "bad sha": {"gh pr view 7": pr_view(headRefOid="abc")},
-            "branch mismatch": {"gh pr view 7": pr_view(headRefName="other")},
-            "detached": {"git branch --show-current": "\n"},
+            "cross-repo": ({"gh pr view 7": pr_view(isCrossRepository=True)}, "STOP_CROSS_REPO"),
+            "other author": ({"gh pr view 7": pr_view(author={"login": "x"})}, "STOP_NOT_AUTHOR"),
+            "non-default base": ({"gh pr view 7": pr_view(baseRefName="dev")}, "STOP_BASE_NOT_DEFAULT"),
+            "bad sha": ({"gh pr view 7": pr_view(headRefOid="abc")}, "STOP_BAD_SHA"),
+            "branch mismatch": ({"gh pr view 7": pr_view(headRefName="other")}, "STOP_BRANCH_MISMATCH"),
+            "detached": ({"git branch --show-current": "\n"}, "STOP_DETACHED"),
         }
-        codes = set()
-        for name, replies in cases.items():
+        for name, (replies, code) in cases.items():
             with self.subTest(name):
                 self.replies.update(replies)
-                code, out = self.main("start", "--model", "X")
-                self.assertEqual((code, out["action"], out["terminal"]), (0, "stop", True))
-                codes.add(out["code"])
+                rc, out = self.main("start", "--model", "X")
+                self.assertEqual((rc, out["action"], out["terminal"], out["code"]), (0, "stop", True, code))
                 self.assertFalse(os.path.exists(self.state_file()))
                 self.reset_replies()  # fresh replies for the next case
         with self.subTest("bad model"):
             code, out = self.main("start", "--model", "bad;model")
-            self.assertEqual((out["action"], out["terminal"]), ("stop", True))
-            codes.add(out["code"])
+            self.assertEqual((out["action"], out["terminal"], out["code"]), ("stop", True, "STOP_BAD_MODEL"))
             self.assertFalse(os.path.exists(self.state_file()))
-        self.assertEqual(len(codes), len(cases) + 1)
+
+    def test_start_handoff_stops(self):
+        base = {
+            "gh pr view --json number": fail("no pull requests found"),
+            "git branch --show-current": "fix-12\n",
+            "gh pr list --head fix-12": "0\n",
+            "gh repo view --json defaultBranchRef": "main\n",
+            "git status --porcelain": "",
+            "git rev-list --count origin/main..HEAD": "2\n",
+        }
+        cases = {
+            "not a fix branch": ({"git branch --show-current": "topic\n"}, "STOP_NO_PR"),
+            "a PR exists": ({"gh pr list --head fix-12": "1\n"}, "STOP_PR_EXISTS"),
+            "dirty tree": ({"git status --porcelain": " M x\n"}, "STOP_DIRTY_TREE"),
+            "no commits": ({"git rev-list --count origin/main..HEAD": "0\n"}, "STOP_NO_COMMITS"),
+        }
+        for name, (replies, code) in cases.items():
+            with self.subTest(name):
+                self.reset_replies()
+                self.replies.update(base)
+                self.replies.update(replies)
+                rc, out = self.main("start", "--model", "X")
+                self.assertEqual((rc, out["action"], out["code"]), (0, "stop", code))
+                state_dir = os.path.join(self.git_dir, "kitchen-sink", "shepherd")
+                self.assertEqual([f for f in os.listdir(state_dir) if f.endswith(".json")] if os.path.isdir(state_dir) else [], [])
 
     def test_rejected_start_ends_live_state(self):
         self.main("start", "--model", "X")
@@ -396,6 +418,27 @@ class TestStart(Env):
             code, out = self.main("start", "--model", "X")
         self.assertEqual((code, out), (0, {"action": "busy"}))
         self.assertEqual(self.read_state_bytes(), before)
+
+    def test_state_dir_is_private(self):
+        path = os.path.join(self.git_dir, "kitchen-sink", "shepherd")
+        os.makedirs(path, mode=0o755)
+        os.chmod(path, 0o755)
+        self.assertEqual(sh.state_dir(), path)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o700)
+
+    def test_gh_json_non_json_is_a_resumable_blip(self):
+        self.replies["gh pr view"] = '{"number": 7, "tit'  # exit 0, truncated
+        with self.assertRaises(sh.GhError) as caught:
+            sh.gh_json(["pr", "view"])
+        self.assertTrue(rules.is_resumable_gh_error(caught.exception.cmd, caught.exception.stderr))
+
+    def test_pointer_rejects_bad_pr(self):
+        for pr in (True, 0, -3, "7", 7.0):
+            with self.subTest(pr=pr):
+                sh.save_pointer(pr, "fix-174")
+                self.assertIsNone(sh.load_pointer())
+        sh.save_pointer(7, "fix-174")
+        self.assertEqual(sh.load_pointer(), {"branch": "fix-174", "pr": 7})
 
     def test_start_writes_pointer(self):
         self.main("start", "--model", "X")
@@ -692,13 +735,22 @@ class Next(NextBase):
             "rebase": lambda: os.mkdir(rebase_dir),
             "local commits": lambda: self.replies.update({"git merge-base --is-ancestor HEAD ": fail("")}),
             "dirty tree": lambda: self.replies.update({"git status --porcelain --untracked-files=no": " M x\n"}),
-            "fetch timed out": lambda: self.replies.update({"git fetch origin": sh.GhError(["git"], "timeout", "timed out")}),
         }
         for name, setup in cases.items():
             with self.subTest(name):
-                self.assert_local_work_stops(setup, "STOP_FETCH_FAILED" if name.startswith("fetch") else "STOP_LOCAL_WORK")
+                self.assert_local_work_stops(setup, "STOP_LOCAL_WORK")
                 if os.path.isdir(rebase_dir):
                     os.rmdir(rebase_dir)
+
+    def test_pending_fetch_failure_is_waited_out(self):
+        for name, failure in (("exit", fail("fatal: unable to access")), ("timeout", sh.GhError(["git"], "timeout", "timed out"))):
+            with self.subTest(name):
+                self.reset_next_replies()
+                self.live(pending=self.repair())
+                self.replies["git fetch origin"] = failure
+                self.calls.clear()
+                self.assertEqual(self.main("next")[1]["action"], "next")  # no STOP_FETCH_FAILED
+                self.assertIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)
 
     def assert_local_work_stops(self, setup, code):
         self.reset_next_replies()
@@ -727,10 +779,20 @@ class Next(NextBase):
         state = sh.load_state(7)
         self.assertEqual((state["gated_head"], state["rerun"], state["pending"], state["automerge"]), (OTHER, 0, None, "off-by-run"))
 
+    def test_record_repair_pushed_waits_out_a_lagging_head(self):
+        self.live(pending=self.repair())
+        self.replies["gh pr view 7"] = [pr_full(), pr_full(), pr_full(headRefOid=OTHER)]
+        self.replies["git rev-parse HEAD"] = OTHER + "\n"
+        out = self.main("record", "repair-pushed")[1]
+        self.assertEqual(out["action"], "next")
+        self.assertEqual(sh.load_state(7)["gated_head"], OTHER)
+        self.assertEqual([c for c in self.calls if c.startswith("sleep")], ["sleep 5", "sleep 5"])
+
     def test_record_repair_pushed_needs_new_head(self):
         self.live(rerun=1, infra=["flaky"], pending=self.repair())
         code, out = self.main("record", "repair-pushed")
         self.assert_stop(out, "STOP_NO_NEW_HEAD")
+        self.assertEqual(len([c for c in self.calls if c.startswith("gh pr view 7")]), 3)
         state = sh.load_state(7)
         self.assertEqual((state["rerun"], state["infra"]), (1, ["flaky"]))  # nothing adopted
 
@@ -773,7 +835,7 @@ class Next(NextBase):
 
     def test_tool_error_in_next_ends_run(self):
         self.live()
-        self.replies["gh api graphql"] = "not json"
+        self.replies["gh api graphql"] = "{}"  # valid JSON of the wrong shape: a bug, not a blip
         code, out = self.main("next")
         self.assertEqual((code, out["code"]), (2, "CMD_FAILED"))
         self.assertTrue(sh.load_state(7)["ended"])
@@ -929,6 +991,14 @@ class Codex(NextBase):
         self.main("next")
         self.assertEqual(len(self.gh_waits()), 2)
         self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+
+    def test_codex_bad_trigger_id_is_not_adopted(self):
+        self.comments(555)
+        self.waits(self.timeout("1; rm -rf ~"), {"status": "clean"})
+        self.main("next")
+        self.assertEqual(len(self.posts()), 1)  # posted its own instead
+        self.assertIn("--trigger-comment 555 ", self.gh_waits()[1] + " ")
+        self.assertNotIn("rm -rf", " ".join(self.calls))
 
     def test_codex_stop_retrigger(self):
         self.comments(555, 556)
@@ -1629,6 +1699,38 @@ class Watch(NextBase):
         self.assertEqual(json.loads(raw)["action"], "repair")
         for text in ("rm -rf", "PWNED", "boom"):
             self.assertNotIn(text, raw)
+
+
+
+@unittest.skipUnless(shutil.which("jq"), "jq not installed")
+class TestJq(unittest.TestCase):
+    """The jq constants run for real, on API-shaped JSON; the fake `run` elsewhere hands back pre-extracted text."""
+
+    def jq(self, expr, doc):
+        return subprocess.run(["jq", "-r", expr], input=json.dumps(doc), capture_output=True, text=True, check=True).stdout
+
+    def test_check_runs_lists_only_failures(self):
+        def run(conclusion, slug, name):
+            return {"conclusion": conclusion, "name": name, "app": {"slug": slug}}
+
+        doc = {"check_runs": [
+            run("success", "github-actions", "ok"), run("neutral", "github-actions", "n"), run("skipped", "github-actions", "s"),
+            run(None, "github-actions", "in-progress"), run("failure", "github-actions", "test"), run("cancelled", "circleci", "build"),
+        ]}  # fmt: skip
+        self.assertEqual(self.jq(sh.CHECK_RUNS_JQ, doc), "github-actions test\ncircleci build\n")
+
+    def test_status_flags_failure_and_error(self):
+        states = [{"state": s} for s in ("success", "pending", "failure", "error")]
+        self.assertEqual(self.jq(sh.STATUS_JQ, {"statuses": states}), "x\nx\n")
+        self.assertEqual(self.jq(sh.STATUS_JQ, {"statuses": states[:2]}), "")
+
+    def test_jobs_lists_unsuccessful_ids(self):
+        jobs = [{"conclusion": c, "databaseId": i} for i, c in enumerate(("success", "skipped", "failure", "cancelled", None), 1)]
+        self.assertEqual(self.jq(sh.JOBS_JQ, {"jobs": jobs}), "3\n4\n5\n")
+
+    def test_check_suites_created_at(self):
+        doc = {"check_suites": [{"created_at": "2026-11-12T01:00:00Z"}, {"created_at": "2026-11-12T00:00:00Z"}]}
+        self.assertEqual(self.jq(sh.SUITES_JQ, doc), "2026-11-12T01:00:00Z\n2026-11-12T00:00:00Z\n")
 
 
 if __name__ == "__main__":

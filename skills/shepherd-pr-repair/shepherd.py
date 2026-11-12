@@ -53,6 +53,7 @@ FAILED_RUNS = ("failure", "timed_out", "startup_failure")  # runs with a `--log-
 RUN_FIELDS = "databaseId,attempt,conclusion,name,event,headSha"
 JOBS_JQ = '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .databaseId'
 REGISTER_WAIT = 60  # checks register late
+SUITES_JQ = ".check_suites[].created_at"
 STATUS_JQ = '.statuses[]|select(.state=="failure" or .state=="error")|"x"'
 CHECK_RUNS_JQ = (
     '.check_runs[] | select(.conclusion != null and (.conclusion | IN("success","neutral","skipped") | not))'
@@ -133,7 +134,11 @@ def run(cmd, check=True, timeout=CALL_TIMEOUT, **kw):
 
 
 def gh_json(args):
-    return json.loads(run(["gh", *args]).stdout)
+    cmd = ["gh", *args]
+    try:
+        return json.loads(run(cmd).stdout)
+    except ValueError as e:  # exit 0 with truncated stdout is a blip like a non-zero exit: let the classifier decide
+        raise GhError(cmd, 0, f"unexpected EOF: stdout is not JSON ({e})") from None
 
 
 # --- state and lock ----------------------------------------------------------
@@ -142,7 +147,8 @@ def gh_json(args):
 def state_dir():
     git_dir = run(["git", "rev-parse", "--git-dir"]).stdout.strip()
     path = os.path.join(git_dir, "kitchen-sink", "shepherd")
-    os.makedirs(path, exist_ok=True)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)  # makedirs leaves an existing directory's mode alone
     return path
 
 
@@ -183,7 +189,7 @@ def load_pointer():
     try:
         with open(_pointer_path()) as f:
             pointer = json.load(f)
-        if isinstance(pointer["branch"], str) and isinstance(pointer["pr"], int):
+        if isinstance(pointer["branch"], str) and type(pointer["pr"]) is int and pointer["pr"] > 0:
             return pointer
     except (OSError, ValueError, KeyError, TypeError):
         pass
@@ -488,7 +494,7 @@ def local_work_guard(head):
     except GhError:  # timed out
         fetched = False
     if not fetched:
-        raise Stop("STOP_FETCH_FAILED", True, ["`git fetch origin` failed."])
+        raise Resumable()  # a network blip, waited out like a `gh` one; the deadline bounds a lasting failure
     if run(["git", "merge-base", "--is-ancestor", "HEAD", head], check=False).returncode != 0:
         raise Stop("STOP_LOCAL_WORK", True, [f"Local HEAD has commits not on the PR's head {head}."])
     if run(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.strip():
@@ -560,7 +566,7 @@ def find_removal(state, snap):
 def earliest_suite(state, sha):
     """About when the head was pushed: its first check suite's `created_at` (ISO-8601 compares as text)."""
     path = f"repos/{state['owner']}/{state['repo']}/commits/{sha}/check-suites"
-    return min(run(["gh", "api", "--paginate", path, "-q", ".check_suites[].created_at"]).stdout.split(), default=None)
+    return min(run(["gh", "api", "--paginate", path, "-q", SUITES_JQ]).stdout.split(), default=None)
 
 
 def check_declines(state, snap):
@@ -711,7 +717,8 @@ def codex_gate(state, snap, budget_end):
             raise Stop("STOP_CODEX_ERROR", True, ["`codex_loop.py gh-wait` returned:", fence(json.dumps(result))])
         if gate["trigger"] is None:  # no review of this head yet: wait on its trigger, or post one
             gate["final"] = result.get("triggers", 0) >= 2  # a resumed run's last wait
-            gate["trigger"] = result.get("trigger") and str(result["trigger"]) or post_trigger(state, head)
+            trigger = str(result.get("trigger") or "")  # it goes to `gh-wait` as an argument
+            gate["trigger"] = trigger if rules.valid_id(trigger) else post_trigger(state, head)
             continue
         if not gate["final"]:
             if result.get("acknowledged"):  # the bot is reviewing: one more window
@@ -1215,14 +1222,19 @@ def cmd_next(_args):
 def record_repair_pushed(state, _args):
     if (state["pending"] or {}).get("action") != "repair":
         return {"action": "next"}  # nothing handed out (or `next` already adopted it): the pass re-reads
-    try:
-        snap, local = read_pr(state), local_head()
-    except GhError as e:
-        if not rules.is_resumable_gh_error(e.cmd, e.stderr):
-            raise Stop("STOP_GH_FAILED", True, [fence(str(e))]) from None
-        state["wait_first"] = True  # `pending` stays, so the next pass adopts the push
-        return {"action": "next"}
-    head = snap["pr"]["headRefOid"]
+    for lag in range(3):  # GitHub's headRefOid can trail a push by a moment; `next` would re-issue the repair
+        try:
+            snap, local = read_pr(state), local_head()
+        except GhError as e:
+            if not rules.is_resumable_gh_error(e.cmd, e.stderr):
+                raise Stop("STOP_GH_FAILED", True, [fence(str(e))]) from None
+            state["wait_first"] = True  # `pending` stays, so the next pass adopts the push
+            return {"action": "next"}
+        head = snap["pr"]["headRefOid"]
+        if head != state["pending"]["head"]:
+            break
+        if lag < 2:
+            sleep_within(5, hard_end)
     if head == state["pending"]["head"]:  # the skill said it pushed, but GitHub has no new head
         raise Stop("STOP_NO_NEW_HEAD", True, [f"The PR's head is still {head}; the repair's push didn't land."], stop_fields(snap))
     if head != local:  # never take a SHA from the agent
