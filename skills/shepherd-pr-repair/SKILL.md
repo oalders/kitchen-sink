@@ -24,7 +24,7 @@ Exits: as your last act, record the exit yourself, then reply.
 
 - Which `record`: step 7 (a new head pushed): `<script> record repair-pushed`; a stop marked resumable (step 2's exception above): `<script> record repair-stopped --resumable`; every other stop after step 1's claim passed: `<script> record repair-stopped --terminal`. A stop before the claim passes records nothing (the run may not be this subagent's to end).
 - A `record` still busy after Busy's waits: reply `done`, naming in `reason` that the record was lost and, if step 5 pushed, the pushed head; `/shepherd-pr` then records a terminal stop, even after a push, so the user re-runs it.
-- Any `record` that prints a `stop` or exits 2 (tool error: `code` + `report`): reply `done`, with its `code` first in `reason`, then the report this skill says to give (and the pushed head if step 5 pushed).
+- A `record` that exits 2 (tool error: `code` + `report`), or prints a `stop` whose `code` isn't `STOP_REPAIR_STOPPED` (`--terminal`'s normal answer): reply `done`, with its `code` first in `reason`, then the report this skill says to give (and the pushed head if step 5 pushed).
 - The reply is exactly one JSON object and nothing else: `{"outcome":"done|refused","reason":"<the full report the stop or step 7 says to give>"}`. `refused` when step 1's claim was refused (`{"ok":false,…}`, whatever its `reason`); `done` for every other exit, recorded or not. `reason` is that whole report, not a summary: e.g. local commits left and the `git reset --hard '<sha>'` that drops them, each decline with its evidence, the conflicted files.
 
 Steps:

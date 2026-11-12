@@ -641,6 +641,7 @@ class Next(NextBase):
                 out = self.main("start", "--model", "X")[1]
                 self.assertEqual((out["action"], out["code"]), ("stop", code))
                 self.assertEqual(self.read_state_bytes(), before)
+                self.assertEqual(self.lookups(), [])  # decided from the pointer, before any PR lookup
 
     def test_next_busy_leaves_state(self):
         self.live()
@@ -1031,6 +1032,13 @@ class Next(NextBase):
                         self.assertIn("git log", self.report(out))
                     self.assertIsNone(sh.load_state(7)["evidence_dir"])
                     self.assertEqual(os.path.isdir(evidence), is_claimed)  # its subagent may still read it
+
+    def test_terminal_record_drops_claimed_evidence(self):
+        evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
+        self.addCleanup(lambda: os.path.isdir(evidence) and os.rmdir(evidence))
+        self.live(pending={**self.claimed(), "evidence_dir": evidence}, evidence_dir=evidence)
+        self.assert_stop(self.main("record", "repair-stopped", "--terminal")[1], "STOP_REPAIR_STOPPED")
+        self.assertFalse(os.path.isdir(evidence))  # its subagent recorded, so it is done reading
 
     def test_next_replays_the_stop_that_ended_the_run(self):
         self.live(pending=self.claimed())
