@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -685,7 +686,7 @@ class Next(NextBase):
         self.assertEqual(out, {**self.repair("rebase"), "status": out["status"]})
         self.assertIn("repairs 1/3", out["status"])
         state = sh.load_state(7)
-        self.assertEqual((state["repairs"], state["automerge"], state["pending"]), (1, "off-by-run", self.repair("rebase")))
+        self.assertEqual((state["repairs"], state["automerge"], state["pending"]), (1, "off-by-run", {**self.repair("rebase"), "issued": 1}))
         self.live(repairs=3)
         self.assert_stop(self.main("next")[1], "STOP_REPAIR_CAP")
 
@@ -955,25 +956,66 @@ class Next(NextBase):
         self.replies["git rev-parse HEAD"] = OTHER + "\n"
         out = self.main("next")[1]
         self.assertEqual(out["action"], "repairing")
-        self.assertIn("status", out)
+        self.assertIn("auto-merge off by this run", out["status"])
         state = sh.load_state(7)
         self.assertEqual((state["gated_head"], state["pending"]), (SHA, pending))
         self.assertTrue(os.path.isdir(evidence))
 
-    def test_claimed_repair_deadline_keeps_evidence(self):
-        evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
-        self.addCleanup(lambda: os.path.isdir(evidence) and os.rmdir(evidence))
-        self.live(deadline=NOW - 1, pending={**self.claimed(), "evidence_dir": evidence}, evidence_dir=evidence)
-        out = self.main("next")[1]
-        self.assert_stop(out, "STOP_DEADLINE")
-        self.assertIn("git log", self.report(out))
-        self.assertTrue(os.path.isdir(evidence))  # its subagent may still read it
+    def test_stop_during_claimed_repair_keeps_evidence(self):
+        for name, over, code in (("deadline", {"deadline": NOW - 1}, "STOP_DEADLINE"), ("check_limits", {}, "STOP_CLOSED")):
+            with self.subTest(name):
+                evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
+                self.addCleanup(lambda e=evidence: os.path.isdir(e) and os.rmdir(e))
+                self.replies["gh pr view 7"] = pr_full(state="CLOSED" if code == "STOP_CLOSED" else "OPEN")
+                self.live(pending={**self.claimed(), "evidence_dir": evidence}, evidence_dir=evidence, **over)
+                out = self.main("next")[1]
+                self.assert_stop(out, code)
+                if code == "STOP_DEADLINE":
+                    self.assertIn("git log", self.report(out))
+                self.assertTrue(os.path.isdir(evidence))  # its subagent may still read it
 
     def test_next_replays_the_stop_that_ended_the_run(self):
         self.live(pending=self.claimed())
         stop = self.main("record", "repair-stopped", "--terminal")[1]
         self.assert_stop(stop, "STOP_REPAIR_STOPPED")
         self.assertEqual(self.main("next"), (0, stop))  # same code and script-written report path
+        self.assertEqual(self.main("record", "repair-stopped", "--terminal"), (0, stop))
+        self.assertEqual(self.main("claim", "--head", SHA, "--cause", "checks"), (1, {"ok": False, "reason": stop["code"]}))
+
+    def test_next_replays_the_tool_error_that_ended_the_run(self):
+        self.live()
+        with mock.patch.object(sh, "next_loop", side_effect=RuntimeError("boom")) as loop:
+            code, final = self.main("next")
+            self.assertEqual((code, sorted(final), final["code"]), (2, ["code", "report"], "CMD_FAILED"))
+            self.assertTrue(sh.load_state(7)["ended"])
+            self.assertEqual(self.main("next"), (2, final))
+        self.assertEqual(loop.call_count, 1)
+
+    def test_resumable_stop_then_next_reissues_the_repair(self):
+        self.live(repairs=1, automerge="off-by-run", pending=self.claimed("rebase"))
+        self.replies["gh pr view 7"] = pr_full(mergeStateStatus="DIRTY")
+        self.assertEqual(self.main("record", "repair-stopped", "--resumable")[1], {"action": "next"})
+        out = self.main("next")[1]  # after its wait: a fresh hand-out, not a STOP_REPAIR_UNCLAIMED
+        self.assertEqual((out["action"], out["cause"]), ("repair", "rebase"))
+        self.assertIn("sleep 120", self.calls)
+        self.assertEqual(sh.load_state(7)["pending"], {**self.repair("rebase"), "issued": 1})
+
+    def test_unclaimed_repair_handed_out_twice_stops(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(mergeStateStatus="DIRTY")
+        for _ in range(2):  # the dispatch, then one re-issue (e.g. after a compaction)
+            self.assertEqual(self.main("next")[1]["action"], "repair")
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_REPAIR_UNCLAIMED")
+        self.assertEqual((out["automerge"], out["queued"]), ("on", False))
+        self.assertIn("stopped before claiming", self.report(out))
+        self.assertEqual(sh.load_state(7)["repairs"], 1)
+
+    def test_claim_clears_the_unclaimed_count(self):
+        self.live(automerge="off-by-run", pending={**self.repair(), "issued": 2})
+        self.assertEqual(self.main("claim", "--head", SHA, "--cause", "checks"), (0, {"ok": True}))
+        self.assertEqual(self.main("next")[1]["action"], "repairing")
+        self.assertEqual(sh.load_state(7)["pending"], self.claimed())
 
     def test_record_resumable_on_claimed_repair_refunds(self):
         self.live(repairs=2, pending=self.claimed())
@@ -993,9 +1035,11 @@ class Next(NextBase):
     def test_start_with_claimed_repair_stops_and_keeps_the_run(self):
         self.live(pending=self.claimed())
         before = self.read_state_bytes()
-        out = self.main("start", "--model", "X")[1]
+        script = "/a dir/shepherd.py"  # the report's command line must quote it
+        with mock.patch.object(sh, "__file__", script):
+            out = self.main("start", "--model", "X")[1]
         self.assertEqual((out["action"], out["terminal"], out["code"]), ("stop", True, "STOP_REPAIR_CLAIMED"))
-        self.assertIn("record repair-stopped --terminal", self.report(out))
+        self.assertIn(f"python3 {shlex.quote(script)} record repair-stopped --terminal", self.report(out))
         self.assertEqual(self.read_state_bytes(), before)  # still live: the real subagent can still record
         self.assert_stop(self.main("record", "repair-stopped", "--terminal")[1], "STOP_REPAIR_STOPPED")
         self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})

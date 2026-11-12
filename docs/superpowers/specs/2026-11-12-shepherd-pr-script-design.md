@@ -15,6 +15,7 @@ Move that logic into a stdlib Python script with unit tests, and keep the run's 
 - **Goal:** the script does the mechanical GitHub work itself (user decision, approach B below): it only hands control back when judgment is needed.
 - **Non-goal:** changing what the limits mean. Counters stay **per run** (user decision): `start` resets them, so re-running `/shepherd-pr` is still the user choosing to continue. The rerun and re-enqueue limits remain per head across runs because they are counted from GitHub (run `attempt`, `RemovedFromMergeQueueEvent`s), as today.
 - **Non-goal:** #178's stop log and `stats`, #176's single-subagent repair. Stop codes are added (the tests need them anyway); the log stays in #178.
+  - Since done: #176 landed later (the `shepherd-pr-repair` skill in one subagent, guarded by `shepherd.py claim`).
 - **Non-goal:** loosening or tightening any stop. Behaviour is ported, not redesigned. Where porting exposes a rule that only existed for compaction recovery, it is deleted.
 - **Anti-goal:** untrusted text (PR title/body, file paths, check names, bot output, logs) reaching a field the agent puts on a command line, or being printed outside a file.
 - **Anti-goal:** the script merging directly, force-pushing, or posting anything but the `@codex review` trigger.
@@ -85,7 +86,7 @@ All print exactly one JSON object on stdout; exit 0 for an action, 2 for a tool 
   - Handing out a `repair` counts it, sets `automerge` `off-by-run` (the skill runs `--disable-auto` before it pushes, as today), and sets `pending`.
   - Before any pass, if `pending` is set (the agent came back via `next` without a `record`, e.g. after compaction):
     - A rebase in progress, HEAD with commits not on `headRefOid`, or a dirty tracked tree → terminal stop naming what's local (today's recovered-pass guard).
-    - Pending `repair`, head unchanged: return the same `repair` action again, without counting another repair (the agent may never have started it).
+    - Pending `repair`, head unchanged: return the same `repair` action again, without counting another repair (the agent may never have started it); a third hand-out no subagent claimed stops with `STOP_REPAIR_UNCLAIMED`.
     - Pending `repair`, `headRefOid` equal to local HEAD: the repair's push landed before its `record`; apply `repair-pushed`'s effects. This holds for a rebase, whose head doesn't descend from `gated_head`. Any other new head is still foreign.
     - Pending `triage`: re-gather the evidence and hand out the triage again; counters unchanged.
     - Pending `ready`: as in step 4 above.

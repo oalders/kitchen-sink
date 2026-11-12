@@ -56,6 +56,7 @@ GH_WAIT_MARGIN = 35  # a `gh-wait` slice ends this long before the budget: its l
 MIN_SLICE = 30
 UNKNOWN_WAIT = 30
 EVIDENCE_PREFIX = "shepherd-evidence-"
+MAX_UNCLAIMED = 2  # hand-outs of one repair no subagent claimed (a compaction re-issues once); a third would loop
 ALREADY_CLAIMED = "already-claimed"  # `claim`'s refusal for a held repair; the repair skill keys `refused` on it
 MATCH_TIMEOUT = 30  # the remediation regexes are user-supplied
 LOG_LINES, LOG_BYTES = 300, 65536  # an evidence log's tail
@@ -691,7 +692,13 @@ def repair_action(state, cause, evidence_dir=None):
 
 def hand_out(state, action):
     """A repair, new or re-issued: auto-merge off by this run (the skill disables it before pushing), pending."""
-    state.update(automerge="off-by-run", pending=action, queue_watch=None)  # the repair's push starts the watch over
+    issued = action.pop("issued", 0) + 1  # a re-issue carries pending's count; a claim clears it
+    if issued > MAX_UNCLAIMED:
+        raise Stop("STOP_REPAIR_UNCLAIMED", True, [
+            f"The repair subagent stopped before claiming this run's {action['cause']} repair of {action['head']} twice.",
+            "Check the subagent's reported reason, then run /shepherd-pr again.",
+        ])  # fmt: skip
+    state.update(automerge="off-by-run", pending={**action, "issued": issued}, queue_watch=None)  # the repair's push starts the watch over
     return dict(action)
 
 
@@ -1375,6 +1382,7 @@ def cmd_claim(args):
             elif pending.get("claimed"):
                 reason = ALREADY_CLAIMED
             else:
+                pending.pop("issued", None)  # claimed: only hand-outs since a claim count toward MAX_UNCLAIMED
                 pending["claimed"] = True
                 save_state(n, state)
                 return emit({"ok": True})
