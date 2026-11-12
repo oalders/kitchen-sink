@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # sibling module, however we're loaded
@@ -54,7 +55,7 @@ CHECK_RUNS_JQ = (
     '.check_runs[] | select(.conclusion != null and (.conclusion | IN("success","neutral","skipped") | not))'
     ' | "\\(.app.slug) \\(.name)"'
 )
-CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # keeps \t and \n
+HIDDEN = ("Cc", "Cf", "Zl", "Zp")  # control, format (bidi overrides, zero-width), line and paragraph separators
 # /fix-gh-issue step 11's sensitive surfaces, by path; the marks are for the record and block nothing.
 SENSITIVE = re.compile(
     r"(^|/)(\.github/workflows/|(package(-lock)?|npm-shrinkwrap|composer)\.json$|yarn\.lock$|pnpm-lock\.yaml$"
@@ -108,14 +109,20 @@ class OutOfBudget(Exception):
 
 
 def run(cmd, check=True, timeout=CALL_TIMEOUT, **kw):
-    """A hung call becomes a GhError ("timed out", resumable for `gh`) and never runs past HARD_CAP."""
-    if hard_end is not None:
-        timeout = min(timeout, hard_end - time.time())
+    """A hung call becomes a GhError ("timed out", resumable for `gh`) and never runs past HARD_CAP.
+
+    A call cut short by HARD_CAP raises OutOfBudget instead: it is this process running out, not the
+    command failing, so no caller that treats a failed command as a failed check may swallow it."""
+    capped = hard_end is not None and hard_end - time.time() < timeout
+    if capped:
+        timeout = hard_end - time.time()
     try:
         if timeout <= 0:
             raise subprocess.TimeoutExpired(cmd, timeout)
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kw)
     except subprocess.TimeoutExpired:
+        if capped:
+            raise OutOfBudget() from None
         raise GhError(cmd, "timeout", "timed out") from None
     if check and proc.returncode != 0:
         raise GhError(cmd, proc.returncode, proc.stderr)
@@ -669,7 +676,7 @@ def codex_gate(state, snap, budget_end):
 
 def fence(text):
     """Untrusted text for a file: control characters removed, in a fence longer than any backtick run in it."""
-    clean = CONTROL.sub("", text).rstrip("\n")
+    clean = "".join(c for c in text if c in "\t\n" or unicodedata.category(c) not in HIDDEN).rstrip("\n")
     bar = "`" * max(3, 1 + max(map(len, re.findall("`+", clean)), default=0))
     return f"{bar}\n{clean}\n{bar}"
 
@@ -681,7 +688,8 @@ def write_summary(state, snap):
     github = [f"mergeStateStatus {pr['mergeStateStatus']}", f"reviewDecision {pr['reviewDecision']}"]
     if pr["autoMergeRequest"]:
         github.append(f"auto-merge enabled by {(pr['autoMergeRequest'].get('enabledBy') or {}).get('login')}")
-    files = run(["gh", "pr", "diff", str(state["pr"]), "--name-only"]).stdout.splitlines()
+    diff = run(["gh", "pr", "diff", str(state["pr"]), "--name-only"], check=False)  # for the record: never ends the run
+    files = diff.stdout.splitlines()
     lines = [
         f"PR #{state['pr']} · branch {pr['headRefName']} · head {pr['headRefOid']}",
         "Title (untrusted):", fence(pr["title"]),
@@ -693,6 +701,8 @@ def write_summary(state, snap):
         "Changed files (untrusted; [sensitive] marks /fix-gh-issue step 11's list, for the record only):",
         fence("\n".join(f"{f}  [sensitive]" if SENSITIVE.search(f) else f for f in files) or "(none)"),
     ]  # fmt: skip
+    if diff.returncode != 0:
+        lines += ["`gh pr diff` failed, so the list above is incomplete:", fence(diff.stderr)]
     if pr["isDraft"]:
         grep = run(["git", "grep", "-l", "-e", "pull_request_target", f"origin/{default}", "--", ".github/workflows"], check=False)
         if grep.returncode == 0:
@@ -726,6 +736,18 @@ def removal_oid(removal):
     return oid if isinstance(oid, str) and rules.valid_sha(oid) else None
 
 
+def parse_runs(listed):
+    """`gh run list` output, or None (failing the evidence) when it isn't a list of whole run objects."""
+    try:
+        runs = json.loads(listed) if listed is not None else None
+    except ValueError:
+        return None
+    keys = ("databaseId", "conclusion", "event")
+    if not isinstance(runs, list) or not all(isinstance(r, dict) and all(k in r for k in keys) for r in runs):
+        return None
+    return runs
+
+
 def queue_evidence(state, snap, removal):
     """The ejection's evidence, in a new evidence dir: (passes, log paths)."""
     oid = removal_oid(removal)
@@ -733,10 +755,7 @@ def queue_evidence(state, snap, removal):
         return False, []
     out = new_evidence_dir(state)
     listed = lookup(["gh", "run", "list", "--commit", oid, "--limit", "100", "--json", "databaseId,conclusion,event"])
-    try:
-        runs = json.loads(listed) if listed is not None else None
-    except ValueError:
-        runs = None
+    runs = parse_runs(listed)
     ids = [
         str(r["databaseId"]) for r in runs or []
         if r["event"] == "merge_group" and r["conclusion"] in QUEUE_FAILED and rules.valid_id(str(r["databaseId"]))
@@ -760,18 +779,25 @@ def queue_evidence(state, snap, removal):
 
 
 def judge_logs(paths):
-    """`ci_remediation.py match`: `match:<name>`, `none`, `invalid` or `error`."""
+    """`ci_remediation.py match`: (`match:<name>` | `none` | `invalid` | `error`, detail for the report or None)."""
     cmd = [sys.executable, CI_REMEDIATION, "match", *(a for p in paths for a in ("--log", p))]
     try:
         proc = run(cmd, check=False, timeout=MATCH_TIMEOUT)
+    except GhError as e:  # its own 30 s timeout (the hard end's cut is OutOfBudget)
+        return "error", str(e)
+    try:
         out = json.loads(proc.stdout)
-    except (GhError, ValueError):  # a timeout, or no JSON
-        return "error"
-    status = out.get("status") if isinstance(out, dict) else None
-    name = out.get("name") if isinstance(out, dict) else None
+    except ValueError:
+        out = None
+    out = out if isinstance(out, dict) else {}
+    status, name = out.get("status"), out.get("name")
     if (proc.returncode, status) == (0, "match") and isinstance(name, str) and rules.valid_name(name):
-        return f"match:{name}"
-    return {(1, "none"): "none", (2, "invalid"): "invalid"}.get((proc.returncode, status), "error")
+        return f"match:{name}", None
+    if (proc.returncode, status) == (1, "none"):
+        return "none", None
+    if (proc.returncode, status) == (2, "invalid"):
+        return "invalid", "\n".join(map(str, out.get("errors") or []))
+    return "error", f"exit {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
 
 
 def ejected_stop(state, snap, removal, paths, method, why):
@@ -781,7 +807,8 @@ def ejected_stop(state, snap, removal, paths, method, why):
     lines = [
         "Removed from merge queue (untrusted):", fence(f"createdAt {removal.get('createdAt')}\nreason {removal.get('reason')}"),
         *([why] if why else []),
-        "Failed checks (untrusted):", fence("\n".join(checks or []) or "none"),
+        "Failed checks (untrusted):",
+        fence("the failed-checks lookup failed" if checks is None else "\n".join(checks) or "none"),
     ]  # fmt: skip
     for path in paths:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -807,19 +834,24 @@ def handle_ejection(state, snap, method):
     passes, paths = queue_evidence(state, snap, removal)
     why = None
     if passes and rules.may_requeue(nodes, removal, earliest):  # one re-enqueue per head, across runs
-        judged = verdict or judge_logs(paths)  # `record triage` answered the last pass's `none`
+        judged, detail = (verdict, None) if verdict else judge_logs(paths)  # `record triage` answered the last pass's `none`
         if judged == "infra" or judged.startswith("match:"):
             state["requeued"] = removal["createdAt"]  # handled; the decide below re-enables auto-merge
             return None
         if judged == "invalid":
             raise Stop(
                 "STOP_REMEDIATION_INVALID", True,
-                [f"A remediation entry is invalid; `python3 {CI_REMEDIATION} list` names its errors. Fix it, then re-run /shepherd-pr."],
+                ["A remediation entry is invalid; fix it, then re-run /shepherd-pr. `ci_remediation.py match` said (untrusted):",
+                 fence(detail)],
             )  # fmt: skip
         if judged == "none":
             state["pending"] = {"action": "triage", "evidence_dir": state["evidence_dir"]}
             return dict(state["pending"])
-        why = "The log triage judged it not infrastructure." if verdict else "`ci_remediation.py match` failed (an error, no JSON or a timeout)."
+        why = "The log triage judged it not infrastructure."
+        if not verdict:
+            why = "`ci_remediation.py match` failed (untrusted):\n" + fence(detail)
+    elif passes:
+        why = "This head was already re-enqueued once after an ejection (one re-enqueue per head, across runs)."
     raise ejected_stop(state, snap, removal, paths, method, why)
 
 
