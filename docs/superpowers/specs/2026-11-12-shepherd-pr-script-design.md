@@ -102,7 +102,7 @@ All print exactly one JSON object on stdout; exit 0 for an action, 2 for a tool 
 {"action":"next"}
 {"action":"busy"}
 {"action":"handoff","issue":<digits>}
-{"action":"repair","cause":"checks|codex|rebase","head":"<sha>","branch":"<ref>","default":"<ref>","codex_mode":"<mode>","evidence_dir":"<path>"}
+{"action":"repair","pr":<n>,"cause":"checks|codex|rebase","head":"<sha>","branch":"<ref>","default":"<ref>","codex_mode":"<mode>","evidence_dir":"<path>"}
 {"action":"triage","evidence_dir":"<path>"}
 {"action":"ready","pr":<n>}
 {"action":"stop","terminal":true,"code":"STOP_EJECTED","report":"<path>","automerge":"on|off","queued":false}

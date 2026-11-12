@@ -591,7 +591,7 @@ def repair_action(state, cause, evidence_dir=None):
     """Hand out a repair: counted, auto-merge off by this run (the skill disables it before pushing), pending."""
     check_cap(state)
     action = {
-        "action": "repair", "cause": cause, "head": state["gated_head"], "branch": state["branch"],
+        "action": "repair", "pr": state["pr"], "cause": cause, "head": state["gated_head"], "branch": state["branch"],
         "default": state["default"], "codex_mode": codex_mode(),
     }  # fmt: skip
     if evidence_dir:

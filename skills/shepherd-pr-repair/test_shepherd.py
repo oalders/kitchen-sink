@@ -467,7 +467,7 @@ class NextBase(Env):
         return state
 
     def repair(self, cause="checks", head=SHA):
-        return {"action": "repair", "cause": cause, "head": head, "branch": "fix-174", "default": "main", "codex_mode": "off"}
+        return {"action": "repair", "pr": 7, "cause": cause, "head": head, "branch": "fix-174", "default": "main", "codex_mode": "off"}
 
     def assert_stop(self, out, code):
         self.assertEqual((out["action"], out["terminal"], out["code"]), ("stop", True, code))
