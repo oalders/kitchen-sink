@@ -537,9 +537,12 @@ class Next(Env):
     def test_codex_mode_failure_counts_nothing(self):
         self.live()
         self.replies["gh pr view 7"] = pr_full(mergeStateStatus="BEHIND")
-        self.replies[CODEX_MODE] = (2, json.dumps({"error": "bad"}), "")
-        self.assert_stop(self.main("next")[1], "STOP_CODEX_MODE")
-        self.assertEqual(sh.load_state(7)["repairs"], 0)
+        for reply in ((2, json.dumps({"error": "bad"}), ""), json.dumps(["off"]), "null"):
+            with self.subTest(reply):
+                self.live()
+                self.replies[CODEX_MODE] = reply
+                self.assert_stop(self.main("next")[1], "STOP_CODEX_MODE")
+                self.assertEqual(sh.load_state(7)["repairs"], 0)
 
     def test_pending_repair_reissued(self):
         evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
@@ -550,6 +553,16 @@ class Next(Env):
         self.assertEqual(out, {**pending, "status": out["status"]})
         self.assertEqual(sh.load_state(7)["repairs"], 1)
         self.assertTrue(os.path.isdir(evidence))  # the re-issued repair still reads it
+
+    def test_reissue_while_armed_then_resumable_goes_on(self):
+        self.live(repairs=1, automerge="off-by-run", pending=self.repair())
+        out = self.main("next")[1]  # the PR is still armed: the skill never got to --disable-auto
+        self.assertEqual(out["action"], "repair")
+        self.assertIn("auto-merge off by this run", out["status"])
+        self.assertEqual(sh.load_state(7)["automerge"], "off-by-run")
+        self.main("record", "repair-stopped", "--resumable")
+        self.replies["gh pr view 7"] = pr_full(autoMergeRequest=None)  # the skill disabled it, then stopped
+        self.assertEqual(self.main("next")[1]["action"], "next")
 
     def test_pending_repair_not_reissued_past_step1(self):
         cases = {

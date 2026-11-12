@@ -502,7 +502,8 @@ def wait_unknown(state, head, budget_end):
 def codex_mode():
     try:
         proc = run([sys.executable, CODEX_LOOP, "mode"], check=False)
-        mode = json.loads(proc.stdout).get("mode") if proc.returncode == 0 else None
+        out = json.loads(proc.stdout) if proc.returncode == 0 else None
+        mode = out.get("mode") if isinstance(out, dict) else None
     except (GhError, ValueError) as e:
         raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", str(e)]) from None
     if mode not in ("off", "local", "github"):
@@ -520,7 +521,13 @@ def repair_action(state, cause, evidence_dir=None):
     }  # fmt: skip
     if evidence_dir:
         action["evidence_dir"] = evidence_dir
-    state.update(repairs=state["repairs"] + 1, automerge="off-by-run", pending=action)
+    state["repairs"] += 1
+    return hand_out(state, action)
+
+
+def hand_out(state, action):
+    """A repair, new or re-issued: auto-merge off by this run (the skill disables it before pushing), pending."""
+    state.update(automerge="off-by-run", pending=action)
     return dict(action)
 
 
@@ -549,7 +556,7 @@ def pass_once(state, snap, budget_end):
     step1_checks(state, snap)
     check_declines(state, snap)
     if reissue:
-        return reissue
+        return hand_out(state, reissue)  # step 1 may have re-synced automerge from the still-armed PR
     drop_evidence(state)  # after a re-issue's return: its repair still reads that directory
     if pr["mergeStateStatus"] == "UNKNOWN":
         wait_unknown(state, pr["headRefOid"], budget_end)
