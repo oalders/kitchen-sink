@@ -729,10 +729,10 @@ class Next(NextBase):
         self.assertEqual(self.calls.count("sleep 120"), 1)
 
     def test_record_triage(self):
-        self.live(pending={"action": "triage", "evidence_dir": "/x"})
+        self.live(pending={"action": "triage", "evidence_dir": "/x", "cause": "checks"})
         self.assertEqual(self.main("record", "triage", "--verdict", "infra")[1], {"action": "next"})
         state = sh.load_state(7)
-        self.assertEqual((state["triage_verdict"], state["pending"]), ("infra", None))
+        self.assertEqual((state["triage_verdict"], state["pending"]), ({"cause": "checks", "verdict": "infra"}, None))
 
     def test_gh_stderr_not_on_stdout(self):
         self.live()
@@ -1107,15 +1107,25 @@ class Ejection(NextBase):
             self.clock += 600
             raise sh.OutOfBudget()
 
-        self.live(shown=SHA, triage_verdict="infra")
+        verdict = {"cause": "ejection", "verdict": "infra"}
+        self.live(shown=SHA, triage_verdict=verdict)
         self.replies["gh run view 11 --log-failed"] = late
         self.assertEqual(self.main("next")[1]["action"], "next")
-        self.assertEqual(sh.load_state(7)["triage_verdict"], "infra")
+        self.assertEqual(sh.load_state(7)["triage_verdict"], verdict)
         self.replies["gh run view 11 --log-failed"] = log
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertFalse([c for c in self.calls if c.startswith(MATCH)])  # the verdict decided
         state = sh.load_state(7)
         self.assertEqual((state["requeued"], state["triage_verdict"]), ("t2", None))
+
+    def test_ejection_ignores_checks_verdict(self):
+        """A `checks` triage verdict never decides an ejection: the ejection judges its own logs."""
+        self.matches({"status": "none"}, 1)
+        self.live(shown=SHA, triage_verdict={"cause": "checks", "verdict": "infra"})
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "triage")
+        self.assertTrue([c for c in self.calls if c.startswith(MATCH)])
+        self.assertNotIn(MERGE, self.calls)
 
     def test_ejection_stop_drops_evidence(self):
         self.matches({"error": "x"}, 2)
@@ -1150,6 +1160,8 @@ class Ejection(NextBase):
                 out = self.main("next")[1]
                 self.assert_stop(out, "STOP_EJECTED")
                 self.assertIn(want, self.report(out))
+                if name == "bad oid":
+                    self.assertNotIn("likely dequeued", self.report(out))  # no run was looked up either
                 self.setUp()
                 self.matches({"status": "match", "name": "flaky"}, 0)
 
@@ -1167,11 +1179,11 @@ class Ejection(NextBase):
         self.assertEqual(out, {"action": "triage", "evidence_dir": out["evidence_dir"], "status": out["status"]})
         self.assertTrue(os.path.basename(out["evidence_dir"]).startswith(sh.EVIDENCE_PREFIX))
         self.assertEqual(os.listdir(out["evidence_dir"]), ["11"])
-        self.assertEqual(sh.load_state(7)["pending"], {"action": "triage", "evidence_dir": out["evidence_dir"]})
+        self.assertEqual(sh.load_state(7)["pending"], {"action": "triage", "evidence_dir": out["evidence_dir"], "cause": "ejection"})
         self.assertFalse([c for c in self.calls if c.startswith("gh pr merge")])
         for verdict in ("infra", "not-infra"):
             with self.subTest(verdict):
-                self.live(shown=SHA, pending={"action": "triage", "evidence_dir": out["evidence_dir"]})
+                self.live(shown=SHA, pending={"action": "triage", "evidence_dir": out["evidence_dir"], "cause": "ejection"})
                 self.calls.clear()
                 self.main("record", "triage", "--verdict", verdict)
                 after = self.main("next")[1]
@@ -1261,7 +1273,7 @@ class Ejection(NextBase):
         self.matches({"status": "none"}, 1)
         code, raw = self.main_raw("next")
         self.assertEqual(json.loads(raw)["action"], "triage")
-        self.live(shown=SHA, triage_verdict="not-infra")
+        self.live(shown=SHA, triage_verdict={"cause": "ejection", "verdict": "not-infra"})
         code, raw = self.main_raw("next")
         out = json.loads(raw)
         self.assert_stop(out, "STOP_EJECTED")
@@ -1398,7 +1410,7 @@ class Watch(NextBase):
         self.assertEqual(os.listdir(out["evidence_dir"]), ["21"])
         for verdict, want in (("infra", "next"), ("not-infra", "stop")):
             with self.subTest(verdict):
-                self.live(shown=SHA, rerun=1, pending={"action": "triage", "evidence_dir": out["evidence_dir"]})
+                self.live(shown=SHA, rerun=1, pending={"action": "triage", "evidence_dir": out["evidence_dir"], "cause": "checks"})
                 self.calls.clear()
                 self.main("record", "triage", "--verdict", verdict)
                 self.replies["gh run rerun"] = [lambda cmd: setattr(self, "clock", self.clock + 450) or ""]
@@ -1453,6 +1465,46 @@ class Watch(NextBase):
                 self.assert_stop(self.main("next")[1], code)
                 self.assertEqual(self.reruns(), [])
                 self.setUp()
+
+    def test_infra_rerun_ignores_ejection_verdict(self):
+        self.replies["gh pr checks 7"] = CANCELLED
+        self.replies[RUNS] = json.dumps([gh_run(attempt=2, conclusion="cancelled")])
+        self.replies[JOBS] = "21\n"
+        self.replies["gh run view --job 21 --log"] = self.LOG
+        self.live(shown=SHA, rerun=1, triage_verdict={"cause": "ejection", "verdict": "infra"})
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "triage")
+        self.assertEqual(self.reruns(), [])
+        self.assertEqual(sh.load_state(7)["pending"]["cause"], "checks")
+
+    def test_malformed_run_list(self):
+        for name, listed in {
+            "not json": "x",
+            "missing keys": json.dumps([{"databaseId": 11}]),
+            "not a list": json.dumps({"databaseId": 11}),
+            "string attempt": json.dumps([gh_run(attempt="1")]),
+        }.items():
+            with self.subTest(name):
+                self.replies["gh pr checks 7"] = FAILED
+                self.replies[RUNS] = listed
+                self.assert_stop(self.main("next")[1], "STOP_BAD_RUNS")
+                self.setUp()
+
+    def test_queue_watch_kept_over_gh_error(self):
+        """A resumable `gh` failure mid-watch keeps the watch's start, so its deadline doesn't restart."""
+        pull = {"isInMergeQueue": True, "mergeQueueEntry": {"position": 1}, "timelineItems": {"nodes": []}}
+        good = json.dumps({"data": {"repository": {"pullRequest": pull}}})
+        self.replies["gh api graphql"] = [good, good, fail("HTTP 502")]
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertIn("sleep 120", self.calls)
+        watching = sh.load_state(7)["queue_watch"]
+        self.assertEqual((watching["head"], watching["start"]), (SHA, NOW))
+
+    def test_repair_resets_queue_watch(self):
+        self.live(shown=SHA, queue_watch={"head": SHA, "start": NOW - 5000, "deadline": NOW - 1400})
+        self.replies["gh pr view 7"] = pr_full(mergeStateStatus="BEHIND")  # step 1's rebase, outside the watch
+        self.assertEqual(self.main("next")[1]["action"], "repair")
+        self.assertIsNone(sh.load_state(7)["queue_watch"])
 
     def test_queue_watch_deadline_resumable(self):
         pull = {"isInMergeQueue": True, "mergeQueueEntry": {"position": 1, "estimatedTimeToMerge": 60}, "timelineItems": {"nodes": []}}

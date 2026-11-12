@@ -602,7 +602,7 @@ def repair_action(state, cause, evidence_dir=None):
 
 def hand_out(state, action):
     """A repair, new or re-issued: auto-merge off by this run (the skill disables it before pushing), pending."""
-    state.update(automerge="off-by-run", pending=action)
+    state.update(automerge="off-by-run", pending=action, queue_watch=None)  # the repair's push starts the watch over
     return dict(action)
 
 
@@ -768,13 +768,12 @@ def removal_oid(removal):
     return oid if isinstance(oid, str) and rules.valid_sha(oid) else None
 
 
-def parse_runs(listed):
+def parse_runs(listed, keys=("databaseId", "conclusion", "event")):
     """`gh run list` output, or None (failing the evidence) when it isn't a list of whole run objects."""
     try:
         runs = json.loads(listed) if listed is not None else None
     except ValueError:
         return None
-    keys = ("databaseId", "conclusion", "event")
     if not isinstance(runs, list) or not all(isinstance(r, dict) and all(k in r for k in keys) for r in runs):
         return None
     return runs
@@ -854,7 +853,9 @@ def ejected_stop(state, snap, removal, paths, method, why):
         with open(path, encoding="utf-8", errors="replace") as f:
             tail = "".join(f.readlines()[-REPORT_LOG_LINES:])
         lines += [f"Run {os.path.basename(path)}, last {REPORT_LOG_LINES} lines of its failed log (untrusted):", fence(tail)]
-    if not paths:
+    if oid is None:
+        lines.append("No merge_group run was looked up either, for the same reason.")
+    elif not paths:
         lines.append("No failed merge_group run log was found: it was likely dequeued by hand or by a conflict.")
     head = snap["pr"]["headRefOid"]
     lines.append(f"Run `gh pr merge {state['pr']} --auto --{method} --match-head-commit {head}` before /shepherd-pr.")
@@ -866,19 +867,18 @@ def handle_ejection(state, snap, method):
     removal, earliest = find_removal(state, snap)
     if removal is None:
         return None
-    verdict = state["triage_verdict"]
     passes, paths = queue_evidence(state, snap, removal)
     why = None
     if passes and rules.may_requeue(snap["queue"]["timelineItems"]["nodes"], removal, earliest):  # once per head, across runs
-        judged, detail = use_verdict(state) or judge_logs(paths)  # `record triage` answered the last pass's `none`
+        verdict = use_verdict(state, "ejection")  # `record triage` answered the last pass's `none`
+        judged, detail = verdict or judge_logs(paths)
         if judged == "infra" or judged.startswith("match:"):
             state["requeued"] = removal["createdAt"]  # handled; the decide below re-enables auto-merge
             return None
         if judged == "invalid":
             raise invalid_remediation(detail)
         if judged == "none":
-            state["pending"] = {"action": "triage", "evidence_dir": state["evidence_dir"]}
-            return dict(state["pending"])
+            return triage_action(state, "ejection", state["evidence_dir"])
         why = "The log triage judged it not infrastructure."
         if not verdict:
             why = "`ci_remediation.py match` failed (untrusted):\n" + fence(detail)
@@ -887,10 +887,19 @@ def handle_ejection(state, snap, method):
     raise ejected_stop(state, snap, removal, paths, method, why)
 
 
-def use_verdict(state):
-    """`(verdict, None)` from `record triage`, used up; None when there is none."""
-    verdict, state["triage_verdict"] = state["triage_verdict"], None
-    return (verdict, None) if verdict else None
+def triage_action(state, cause, evidence_dir):
+    """Hand out a log triage; `cause` (ejection or checks), kept in the state only, binds its verdict to it."""
+    state["pending"] = {"action": "triage", "evidence_dir": evidence_dir, "cause": cause}
+    return {"action": "triage", "evidence_dir": evidence_dir}
+
+
+def use_verdict(state, cause):
+    """`(verdict, None)` from `record triage` for this cause, used up; None when there is none for it."""
+    recorded = state["triage_verdict"]
+    if not recorded or recorded.get("cause") != cause:
+        return None  # another cause's verdict is left for it (and dropped after this pass)
+    state["triage_verdict"] = None
+    return recorded["verdict"], None
 
 
 def invalid_remediation(detail):
@@ -930,9 +939,9 @@ def watch(state, snap, budget_end):
     watch_checks(state, snap, budget_end)
     try:
         action = queue_watch(state, snap, budget_end)
-    except OutOfBudget:
-        raise  # the next call carries this queue watch on, from its start
-    except Exception:
+    except (OutOfBudget, GhError):
+        raise  # cut off or a failed `gh`: the next pass or call carries this queue watch on, from its start
+    except Exception:  # a Stop, or a Resumable that starts the watch over
         state["queue_watch"] = None
         raise
     state["queue_watch"] = None
@@ -1023,7 +1032,10 @@ def checks_failed(state, snap):
     """Step 6 for cause `checks`: a rerun, an infra rerun, the remediation match's infra rerun, or a `repair`."""
     head = state["gated_head"]
     failed = [c for c in snap["checks"] if c["bucket"] in rules.FAILED_BUCKETS]
-    runs = gh_json(["run", "list", "--commit", head, "--limit", "100", "--json", RUN_FIELDS])
+    listed = run(["gh", "run", "list", "--commit", head, "--limit", "100", "--json", RUN_FIELDS]).stdout
+    runs = parse_runs(listed, RUN_FIELDS.split(","))
+    if runs is None or not all(isinstance(r["attempt"], int) for r in runs):
+        raise Stop("STOP_BAD_RUNS", True, ["`gh run list` returned runs in an unexpected shape; a person looks."])
     choice, ids = rules.rerun_choice(failed, runs, head, state["rerun"])
     if choice == "rerun":
         state["rerun"] += 1
@@ -1074,12 +1086,11 @@ def infra_rerun(state, ids):
     paths = job_logs(out, ids)
     if paths is None:
         raise reruns_spent(ids, "The rerun's job logs couldn't all be fetched, so they weren't judged.")
-    judged, detail = use_verdict(state) or judge_logs(paths)
+    judged, detail = use_verdict(state, "checks") or judge_logs(paths)
     if judged == "invalid":
         raise invalid_remediation(detail)
     if judged == "none":
-        state["pending"] = {"action": "triage", "evidence_dir": out}
-        return dict(state["pending"])
+        return triage_action(state, "checks", out)
     name = judged[len("match:") :] if judged.startswith("match:") else None
     if judged == "infra" or name and name not in state["infra"]:
         state["rerun"] += 1
@@ -1227,7 +1238,7 @@ def rerun_hints(sha):
 
 def record_triage(state, args):
     if (state["pending"] or {}).get("action") == "triage":
-        state.update(triage_verdict=args.verdict, pending=None)
+        state.update(triage_verdict={"cause": state["pending"].get("cause"), "verdict": args.verdict}, pending=None)
     return {"action": "next"}
 
 
