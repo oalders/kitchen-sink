@@ -215,6 +215,7 @@ class TestRules(unittest.TestCase):
     def test_ejection_own_removal(self):
         nodes = [self.add("2027-01-01T00:00:00Z"), self.remove("2027-01-01T00:02:00Z")]
         self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, None, None, "2027-01-01T00:01:00Z"))
+        self.assertIsNone(rules.ejection(self.ejected_pr(), nodes, None, None, "2027-01-01T00:02:00Z"))  # same second
 
     def test_ejection_after_requeue_past_own_removal(self):
         nodes = [self.add("2027-01-01T00:02:00Z"), self.remove("2027-01-01T00:03:00Z")]
@@ -1838,6 +1839,7 @@ class Watch(NextBase):
         self.replies["gh pr view 7"] = [pr_full(), pr_full(headRefOid=OTHER)]
         self.replies[DISABLE] = fail()
         self.main("next")
+        self.assertIn(DISABLE, self.calls)
         self.assertIsNone(sh.load_state(7)["disabled_at"])  # else a later run reads a real ejection as its own
 
     def test_infra_rerun_match(self):
