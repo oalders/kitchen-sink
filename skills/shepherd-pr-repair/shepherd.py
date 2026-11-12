@@ -403,6 +403,7 @@ def _start_with_pr(n, branch, model, minutes):
             "gated_head": None, "codex_passed": [], "automerge": None, "repairs": 0, "rerun": 0, "infra": [],
             "requeued": None, "wait_first": False, "pending": None, "ended": False, "evidence_dir": None,
             "shown": None, "summary": None, "triage_verdict": None,
+            "disabled_at": (load_state(n) or {}).get("disabled_at"),  # the last run's dequeue is no ejection either
         },
     )  # fmt: skip
     save_pointer(n, branch)
@@ -652,13 +653,22 @@ def find_removal(state, snap):
     if queue["isInMergeQueue"] or pr["autoMergeRequest"] is not None:
         return None, None  # not ejected, without the suites lookup
     earliest = earliest_suite(state, pr["headRefOid"])
-    return rules.ejection({**pr, **queue}, queue["timelineItems"]["nodes"], earliest, state["requeued"]), earliest
+    nodes = queue["timelineItems"]["nodes"]
+    return rules.ejection({**pr, **queue}, nodes, earliest, state["requeued"], state["disabled_at"]), earliest
 
 
 def earliest_suite(state, sha):
     """About when the head was pushed: its first check suite's `created_at` (ISO-8601 compares as text)."""
     path = f"repos/{state['owner']}/{state['repo']}/commits/{sha}/check-suites"
     return min(run(["gh", "api", "--paginate", path, "-q", SUITES_JQ]).stdout.split(), default=None)
+
+
+def disable_auto(state, snap):
+    """Auto-merge off, timed first so the queue removal it causes is not read as an ejection."""
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
+    run(["gh", "pr", "merge", str(state["pr"]), "--disable-auto"])
+    state["disabled_at"] = at  # only once it succeeded: a failed disable must not mask a later ejection
+    snap["pr"]["autoMergeRequest"] = None
 
 
 def check_declines(state, snap):
@@ -668,8 +678,7 @@ def check_declines(state, snap):
     if not lines:
         return
     if snap["pr"]["autoMergeRequest"] is not None:
-        run(["gh", "pr", "merge", n, "--disable-auto"])
-        snap["pr"]["autoMergeRequest"] = None  # the stop reports auto-merge off
+        disable_auto(state, snap)  # the stop reports auto-merge off
     raise Stop(
         "STOP_UNCONFIRMED_DECLINE",
         True,
@@ -806,8 +815,7 @@ def codex_gate(state, snap, budget_end):
             return codex_pass(state, head, gate, "Codex gate: clean")
         if status == "findings":
             if snap["pr"]["autoMergeRequest"] is not None:
-                run(["gh", "pr", "merge", str(state["pr"]), "--disable-auto"])
-                snap["pr"]["autoMergeRequest"] = None
+                disable_auto(state, snap)
             return repair_action(state, "codex")
         if status == "pending":
             return {"action": "next"}
@@ -999,7 +1007,8 @@ def handle_ejection(state, snap, method):
         return None
     passes, paths = queue_evidence(state, snap, removal)
     why = None
-    if passes and rules.may_requeue(snap["queue"]["timelineItems"]["nodes"], removal, earliest):  # once per head, across runs
+    nodes = snap["queue"]["timelineItems"]["nodes"]
+    if passes and rules.may_requeue(nodes, removal, earliest, state["disabled_at"]):  # once per head, across runs
         verdict = use_verdict(state, "ejection")  # `record triage` answered the last pass's `none`
         judged, detail = verdict or judge_logs(paths)
         if judged == "infra" or judged.startswith("match:"):
@@ -1132,8 +1141,7 @@ def reread_action(state, snap, outcome):
     if outcome == "ejected":
         return None  # the next pass's step 3 handles it
     if snap["pr"]["autoMergeRequest"] is not None:  # nothing ungated merges; a push also ejects a queued PR
-        run(["gh", "pr", "merge", str(state["pr"]), "--disable-auto"])
-        snap["pr"]["autoMergeRequest"] = None
+        disable_auto(state, snap)
         state["automerge"] = "off-by-run"
     if outcome == "new-head":
         raise Stop("STOP_FOREIGN_HEAD", True, ["Someone else pushed a new head; decide whether to gate it, then re-run."])

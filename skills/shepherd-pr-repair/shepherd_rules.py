@@ -81,7 +81,15 @@ def is_head_removal(nodes, removal_index, earliest_suite):
     return adds[-1]["createdAt"] >= earliest_suite  # ISO-8601 UTC strings compare as text
 
 
-def ejection(pr, nodes, earliest_suite, requeued):
+def _own_removal(nodes, index, disabled_at):
+    """A shepherd run's `--disable-auto` dequeued the head: the removal follows it, with no re-enqueue in between."""
+    if disabled_at is None or nodes[index]["createdAt"] < disabled_at:
+        return False
+    before = [n for n in nodes[:index] if _is_add(n) or _is_removal(n)]
+    return not before or before[-1]["createdAt"] < disabled_at
+
+
+def ejection(pr, nodes, earliest_suite, requeued, disabled_at):
     """The removal node when the head was ejected from the queue and not yet handled, else None."""
     if pr["isInMergeQueue"] or pr["autoMergeRequest"] is not None:
         return None
@@ -89,15 +97,23 @@ def ejection(pr, nodes, earliest_suite, requeued):
     if not events or not _is_removal(events[-1][1]):
         return None
     index, node = events[-1]
-    if not is_head_removal(nodes, index, earliest_suite) or node["createdAt"] == requeued:
+    if (
+        not is_head_removal(nodes, index, earliest_suite)
+        or node["createdAt"] == requeued
+        or _own_removal(nodes, index, disabled_at)
+    ):
         return None
     return node
 
 
-def may_requeue(nodes, removal, earliest_suite):
-    """One re-enqueue per head, across runs: no other removal of this head."""
+def may_requeue(nodes, removal, earliest_suite, disabled_at):
+    """One re-enqueue per head, across runs: no other removal of this head, the run's own dequeues aside."""
     return not any(
-        _is_removal(n) and n is not removal and is_head_removal(nodes, i, earliest_suite) for i, n in enumerate(nodes)
+        _is_removal(n)
+        and n is not removal
+        and is_head_removal(nodes, i, earliest_suite)
+        and not _own_removal(nodes, i, disabled_at)
+        for i, n in enumerate(nodes)
     )
 
 
