@@ -49,7 +49,10 @@ EVIDENCE_PREFIX = "shepherd-evidence-"
 MATCH_TIMEOUT = 30  # the remediation regexes are user-supplied
 LOG_LINES, LOG_BYTES = 300, 65536  # an evidence log's tail
 REPORT_LOG_LINES = 20
-QUEUE_FAILED = ("failure", "timed_out", "startup_failure")  # cancelled-only evidence never passes
+FAILED_RUNS = ("failure", "timed_out", "startup_failure")  # runs with a `--log-failed`; cancelled-only queue evidence never passes
+RUN_FIELDS = "databaseId,attempt,conclusion,name,event,headSha"
+JOBS_JQ = '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .databaseId'
+REGISTER_WAIT = 60  # checks register late
 STATUS_JQ = '.statuses[]|select(.state=="failure" or .state=="error")|"x"'
 CHECK_RUNS_JQ = (
     '.check_runs[] | select(.conclusion != null and (.conclusion | IN("success","neutral","skipped") | not))'
@@ -343,16 +346,22 @@ def cmd_start(args):
 
 def read_pr(state):
     """Step 1's reads: the PR, its checks, the repo, the viewer and the merge-queue GraphQL `pullRequest`."""
+    snap = reread(state)
+    snap["viewer"] = run(["gh", "api", "user", "-q", ".login"]).stdout.strip()
+    snap["repo"] = gh_json(
+        ["repo", "view", "--json", "owner,name,defaultBranchRef,visibility,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed"]
+    )
+    return snap
+
+
+def reread(state):
+    """Step 5's re-read: the PR, its checks and the merge-queue GraphQL `pullRequest`."""
     n = str(state["pr"])
     pr = gh_json(["pr", "view", n, "--json", PR_FIELDS])
     checks = read_checks(n)
-    viewer = run(["gh", "api", "user", "-q", ".login"]).stdout.strip()
-    repo = gh_json(
-        ["repo", "view", "--json", "owner,name,defaultBranchRef,visibility,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed"]
-    )
     query = ["api", "graphql", "-f", f"owner={state['owner']}", "-f", f"name={state['repo']}", "-F", f"number={n}"]
     queue = gh_json([*query, "-f", f"query={QUEUE_QUERY}"])["data"]["repository"]["pullRequest"]
-    return {"pr": pr, "checks": checks, "repo": repo, "viewer": viewer, "queue": queue}
+    return {"pr": pr, "checks": checks, "queue": queue}
 
 
 def read_checks(n):
@@ -389,10 +398,16 @@ def sleep_within(seconds, budget_end):
     time.sleep(seconds)
 
 
+def check_deadline(state, snap=None):
+    """The run's soft deadline: before each resumable wait, each watch poll and after each Codex wait."""
+    if time.time() >= state["deadline"]:
+        lines = ["The run's deadline passed; run /shepherd-pr again to continue."]
+        raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
+
+
 def resumable_wait(state, budget_end):
     """The 120 s wait; False when it doesn't fit this call, so the next call does it first."""
-    if time.time() >= state["deadline"]:
-        raise Stop("STOP_DEADLINE", True, ["The run's deadline passed; run /shepherd-pr again to continue."])
+    check_deadline(state)
     if time.time() + RESUMABLE_WAIT > budget_end:
         state["wait_first"] = True
         return False
@@ -411,11 +426,14 @@ def next_loop(state, budget_end):
             try:
                 snap = read_pr(state)
                 action = pass_once(state, snap, budget_end)
+                state["triage_verdict"] = None  # a verdict serves only the first pass to run through after its `record`
             except OutOfBudget:
-                action = {"action": "next"}
+                action = {"action": "next"}  # a cut-off pass keeps the verdict for the next call's
             except (GhError, Resumable) as e:
                 if isinstance(e, GhError) and not rules.is_resumable_gh_error(e.cmd, e.stderr):
                     raise Stop("STOP_GH_FAILED", True, [str(e)]) from None
+                if isinstance(e, Resumable):  # the pass ran through; a failed `gh` is retried with the verdict
+                    state["triage_verdict"] = None
                 action = None if resumable_wait(state, budget_end) else {"action": "next"}
             if action:
                 return with_status(action, state, snap)
@@ -496,14 +514,22 @@ def step1_checks(state, snap):
         raise Stop("STOP_FOREIGN_HEAD", True, [f"Someone else pushed {head}; decide whether to gate it, then re-run /shepherd-pr."])
     armed = pr["autoMergeRequest"] is not None
     if state["automerge"] == "on" and not armed and not queue["isInMergeQueue"]:
-        nodes = queue["timelineItems"]["nodes"]
-        if rules.ejection({**pr, **queue}, nodes, earliest_suite(state, head), state["requeued"]) is None:
+        if find_removal(state, snap)[0] is None:
             raise Stop("STOP_AUTOMERGE_OFF", True, ["Auto-merge was turned off or the PR was dequeued; the user decides."])
     if armed:
         state["automerge"] = "on"
     elif state["automerge"] is None:
         state["automerge"] = "off"
     state["gated_head"] = head
+
+
+def find_removal(state, snap):
+    """Step 3's ejection test: (the head's unhandled queue removal or None, the head's earliest suite)."""
+    pr, queue = snap["pr"], snap["queue"]
+    if queue["isInMergeQueue"] or pr["autoMergeRequest"] is not None:
+        return None, None  # not ejected, without the suites lookup
+    earliest = earliest_suite(state, pr["headRefOid"])
+    return rules.ejection({**pr, **queue}, queue["timelineItems"]["nodes"], earliest, state["requeued"]), earliest
 
 
 def earliest_suite(state, sha):
@@ -556,10 +582,14 @@ def codex_mode():
     return codex_info()["mode"]
 
 
-def repair_action(state, cause, evidence_dir=None):
-    """Hand out a repair: counted, auto-merge off by this run (the skill disables it before pushing), pending."""
+def check_cap(state):
     if state["repairs"] >= rules.MAX_REPAIRS:
         raise Stop("STOP_REPAIR_CAP", True, [f"{rules.MAX_REPAIRS} repairs didn't converge; a person looks."])
+
+
+def repair_action(state, cause, evidence_dir=None):
+    """Hand out a repair: counted, auto-merge off by this run (the skill disables it before pushing), pending."""
+    check_cap(state)
     action = {
         "action": "repair", "cause": cause, "head": state["gated_head"], "branch": state["branch"],
         "default": state["default"], "codex_mode": codex_mode(),
@@ -576,7 +606,7 @@ def hand_out(state, action):
     return dict(action)
 
 
-# Steps 2-6, filled in by later tasks; each returns an action or None to go on.
+# Steps 2-6; each returns an action or None to go on.
 
 
 def gh_wait(state, head, timeout, trigger=None, windows=1):
@@ -640,6 +670,8 @@ def codex_gate(state, snap, budget_end):
             if seconds < MIN_SLICE:
                 raise OutOfBudget()
             result = gh_wait(state, head, seconds, gate["trigger"], gate["windows"])
+            if result.get("status") not in ("clean", "findings"):
+                check_deadline(state, snap)
         status = result.get("status")
         if status == "clean":
             return codex_pass(state, head, gate, "Codex gate: clean")
@@ -748,6 +780,17 @@ def parse_runs(listed):
     return runs
 
 
+def write_tail(out, name, log):
+    """A log's tail as file `name` in `out`; None, and no file, for a failed fetch or an empty log."""
+    tail = "".join((log or "").splitlines(keepends=True)[-LOG_LINES:]).encode()[-LOG_BYTES:]
+    if not tail:
+        return None
+    path = os.path.join(out, name)
+    with open(path, "wb") as f:
+        f.write(tail)
+    return path
+
+
 def queue_evidence(state, snap, removal):
     """The ejection's evidence, in a new evidence dir: (passes, log paths)."""
     oid = removal_oid(removal)
@@ -758,16 +801,10 @@ def queue_evidence(state, snap, removal):
     runs = parse_runs(listed)
     ids = [
         str(r["databaseId"]) for r in runs or []
-        if r["event"] == "merge_group" and r["conclusion"] in QUEUE_FAILED and rules.valid_id(str(r["databaseId"]))
+        if r["event"] == "merge_group" and r["conclusion"] in FAILED_RUNS and rules.valid_id(str(r["databaseId"]))
     ]  # fmt: skip
-    paths = []
-    for run_id in ids:
-        log = lookup(["gh", "run", "view", run_id, "--log-failed"])
-        tail = "".join((log or "").splitlines(keepends=True)[-LOG_LINES:]).encode()[-LOG_BYTES:]
-        if tail:  # a failed fetch or an empty log leaves no file, and fails the evidence
-            paths.append(os.path.join(out, run_id))
-            with open(paths[-1], "wb") as f:
-                f.write(tail)
+    logs = [write_tail(out, run_id, lookup(["gh", "run", "view", run_id, "--log-failed"])) for run_id in ids]
+    paths = [p for p in logs if p]  # a missing one fails the evidence
     status = lookup(["gh", "api", "--paginate", f"repos/{state['owner']}/{state['repo']}/commits/{oid}/status", "--jq", STATUS_JQ])
     checks = queue_checks(state, oid)
     passes = (
@@ -804,11 +841,14 @@ def ejected_stop(state, snap, removal, paths, method, why):
     """Step 3's "Otherwise": what the queue reported, all fenced, and how to re-enqueue by hand."""
     oid = removal_oid(removal)
     checks = queue_checks(state, oid) if oid else None
+    if oid is None:
+        found = "no lookup was made: the removal's beforeCommit.oid is not a SHA"
+    else:
+        found = "the failed-checks lookup failed" if checks is None else "\n".join(checks) or "none"
     lines = [
         "Removed from merge queue (untrusted):", fence(f"createdAt {removal.get('createdAt')}\nreason {removal.get('reason')}"),
         *([why] if why else []),
-        "Failed checks (untrusted):",
-        fence("the failed-checks lookup failed" if checks is None else "\n".join(checks) or "none"),
+        "Failed checks (untrusted):", fence(found),
     ]  # fmt: skip
     for path in paths:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -823,27 +863,19 @@ def ejected_stop(state, snap, removal, paths, method, why):
 
 def handle_ejection(state, snap, method):
     """Step 3's ejection test: None (no ejection, or re-enqueue it), a `triage` action, or a Stop."""
-    pr, queue = snap["pr"], snap["queue"]
-    removal = None
-    if not queue["isInMergeQueue"] and pr["autoMergeRequest"] is None:
-        nodes, earliest = queue["timelineItems"]["nodes"], earliest_suite(state, pr["headRefOid"])
-        removal = rules.ejection({**pr, **queue}, nodes, earliest, state["requeued"])
-    verdict, state["triage_verdict"] = state["triage_verdict"], None  # a verdict serves only the next pass
+    removal, earliest = find_removal(state, snap)
     if removal is None:
         return None
+    verdict = state["triage_verdict"]
     passes, paths = queue_evidence(state, snap, removal)
     why = None
-    if passes and rules.may_requeue(nodes, removal, earliest):  # one re-enqueue per head, across runs
-        judged, detail = (verdict, None) if verdict else judge_logs(paths)  # `record triage` answered the last pass's `none`
+    if passes and rules.may_requeue(snap["queue"]["timelineItems"]["nodes"], removal, earliest):  # once per head, across runs
+        judged, detail = use_verdict(state) or judge_logs(paths)  # `record triage` answered the last pass's `none`
         if judged == "infra" or judged.startswith("match:"):
             state["requeued"] = removal["createdAt"]  # handled; the decide below re-enables auto-merge
             return None
         if judged == "invalid":
-            raise Stop(
-                "STOP_REMEDIATION_INVALID", True,
-                ["A remediation entry is invalid; fix it, then re-run /shepherd-pr. `ci_remediation.py match` said (untrusted):",
-                 fence(detail)],
-            )  # fmt: skip
+            raise invalid_remediation(detail)
         if judged == "none":
             state["pending"] = {"action": "triage", "evidence_dir": state["evidence_dir"]}
             return dict(state["pending"])
@@ -853,6 +885,20 @@ def handle_ejection(state, snap, method):
     elif passes:
         why = "This head was already re-enqueued once after an ejection (one re-enqueue per head, across runs)."
     raise ejected_stop(state, snap, removal, paths, method, why)
+
+
+def use_verdict(state):
+    """`(verdict, None)` from `record triage`, used up; None when there is none."""
+    verdict, state["triage_verdict"] = state["triage_verdict"], None
+    return (verdict, None) if verdict else None
+
+
+def invalid_remediation(detail):
+    return Stop(
+        "STOP_REMEDIATION_INVALID", True,
+        ["A remediation entry is invalid; fix it, then re-run /shepherd-pr. `ci_remediation.py match` said (untrusted):",
+         fence(detail)],
+    )  # fmt: skip
 
 
 def show_and_act(state, snap):
@@ -878,7 +924,207 @@ def show_and_act(state, snap):
 
 
 def watch(state, snap, budget_end):
-    return None
+    """Step 5: the check watch, then the re-read and the queue watch. An action, or None to pass again at once.
+
+    `snap` is updated in place with each re-read, so the status line and stop fields show the last one."""
+    watch_checks(state, snap, budget_end)
+    try:
+        action = queue_watch(state, snap, budget_end)
+    except OutOfBudget:
+        raise  # the next call carries this queue watch on, from its start
+    except Exception:
+        state["queue_watch"] = None
+        raise
+    state["queue_watch"] = None
+    return action
+
+
+def poll(state, snap, budget_end):
+    check_deadline(state, snap)
+    sleep_within(POLL, budget_end)
+    snap.update(reread(state))
+
+
+def watch_checks(state, snap, budget_end):
+    """Poll until the checks have registered (up to 60 s) and none is pending, or the PR moved on."""
+    waited = 0
+    while snap["pr"]["state"] == "OPEN" and snap["pr"]["headRefOid"] == state["gated_head"]:
+        checks = snap["checks"]
+        if checks and not rules.buckets(checks).get("pending") or not checks and waited >= REGISTER_WAIT:
+            return
+        poll(state, snap, budget_end)
+        waited += POLL
+
+
+def queue_watch(state, snap, budget_end):
+    """Step 5's re-read (items 1-3), then the queue watch (item 4) until its deadline, or item 5."""
+    head = state["gated_head"]
+    watching = state.get("queue_watch")
+    if watching and watching["head"] != head:
+        watching = None
+    while True:
+        pr, checks = {**snap["pr"], **snap["queue"]}, snap["checks"]
+        outcome = rules.reread_outcome(pr, checks, head, False)
+        if outcome == "continue" and find_removal(state, snap)[0] is not None:  # only now: the suites lookup needs the gated head
+            outcome = "ejected"
+        if outcome != "continue":
+            return reread_action(state, snap, outcome)
+        if watching:  # after a poll (in this call or the last)
+            if not pr["isInMergeQueue"] and pr["autoMergeRequest"] is None:
+                why = "The PR was taken out of the merge queue or auto-merge was turned off; the user decides."
+                raise Stop("STOP_DEQUEUED", True, [why])
+            if time.time() > watching["deadline"]:
+                raise Resumable()
+        if not rules.in_queue_watch(pr, checks):
+            return open_action(state, snap)
+        now = int(time.time())
+        watching = state["queue_watch"] = watching or {"head": head, "start": now}
+        eta = (pr.get("mergeQueueEntry") or {}).get("estimatedTimeToMerge")
+        watching["deadline"] = rules.queue_deadline(watching["start"], now, pr["isInMergeQueue"], eta)
+        poll(state, snap, budget_end)
+
+
+def reread_action(state, snap, outcome):
+    """Step 5 items 1-3 on the re-read."""
+    if outcome == "merged":
+        return {"action": "done", "merged": True}
+    if outcome == "closed":
+        raise Stop("STOP_CLOSED", True, ["The PR is closed."])
+    if outcome == "ejected":
+        return None  # the next pass's step 3 handles it
+    if snap["pr"]["autoMergeRequest"] is not None:  # nothing ungated merges; a push also ejects a queued PR
+        run(["gh", "pr", "merge", str(state["pr"]), "--disable-auto"])
+        snap["pr"]["autoMergeRequest"] = None
+        state["automerge"] = "off-by-run"
+    if outcome == "new-head":
+        raise Stop("STOP_FOREIGN_HEAD", True, ["Someone else pushed a new head; decide whether to gate it, then re-run."])
+    return checks_failed(state, snap)
+
+
+OPEN_STOPS = {
+    "review-required": ("STOP_REVIEW_REQUIRED", "A reviewer must act: review required or changes requested."),
+    "dirty-queued": ("STOP_QUEUE_CONFLICT", "The PR conflicts with its base while queued; a person resolves it."),
+    "turned-off": ("STOP_AUTOMERGE_OFF", "Auto-merge was turned off or the PR was dequeued; the user decides."),
+}
+
+
+def open_action(state, snap):
+    """Step 5 item 5."""
+    outcome = rules.open_outcome({**snap["pr"], **snap["queue"]}, snap["checks"], state["automerge"])
+    if outcome == "rebase":
+        return None  # the next pass's step 1 rebases it, without waiting
+    if outcome in ("pending", "resumable-off-by-run"):  # off by this run: step 4 re-enables it
+        raise Resumable()
+    code, message = OPEN_STOPS[outcome]
+    raise Stop(code, True, [message])
+
+
+def checks_failed(state, snap):
+    """Step 6 for cause `checks`: a rerun, an infra rerun, the remediation match's infra rerun, or a `repair`."""
+    head = state["gated_head"]
+    failed = [c for c in snap["checks"] if c["bucket"] in rules.FAILED_BUCKETS]
+    runs = gh_json(["run", "list", "--commit", head, "--limit", "100", "--json", RUN_FIELDS])
+    choice, ids = rules.rerun_choice(failed, runs, head, state["rerun"])
+    if choice == "rerun":
+        state["rerun"] += 1
+        rerun(ids)
+    if choice == "infra-rerun":
+        return infra_rerun(state, ids)
+    if choice == "stop":
+        raise reruns_spent(ids, None)
+    check_cap(state)  # the match below spends a repair, as the skill's infra fix did
+    out, paths, third_party = failure_evidence(state, head, runs)
+    if not paths:
+        why = "A check failed, but no failed run had a log (a check that isn't an Actions run?); a person looks."
+        raise Stop("STOP_NO_LOGS", True, [why])
+    judged, detail = judge_logs(paths)
+    if judged == "invalid":
+        raise invalid_remediation(detail)
+    if judged == "error":
+        raise Stop("STOP_REMEDIATION_ERROR", True, ["`ci_remediation.py match` failed (untrusted):", fence(detail)])
+    name = judged[len("match:") :] if judged.startswith("match:") else None
+    if name and third_party:
+        why = f"Entry {name} matched, but a third-party status failed too (or couldn't be read); a person looks."
+        raise Stop("STOP_THIRD_PARTY", True, [why])
+    if name and name not in state["infra"]:  # an entry already applied on this head falls through to the code fix
+        selected = [
+            str(r["databaseId"]) for r in runs
+            if r["event"] == "pull_request" and r["headSha"] == head and r["conclusion"] in (*FAILED_RUNS, "cancelled")
+            and rules.valid_id(str(r["databaseId"]))
+        ]  # fmt: skip
+        if not {os.path.basename(p) for p in paths} <= set(selected):
+            why = f"Entry {name} matched, but a failed run isn't this head's pull_request run; a person looks."
+            raise Stop("STOP_INFRA_RUNS", True, [why])
+        state["repairs"] += 1
+        state["infra"].append(name)  # judge_logs passed it through rules.valid_name: the status line prints it
+        rerun(selected)
+    return repair_action(state, "checks", out)
+
+
+def rerun(ids):
+    """A full re-run (never `--failed`), then the resumable wait and another pass."""
+    for run_id in ids:
+        run(["gh", "run", "rerun", str(run_id)])
+    raise Resumable()
+
+
+def infra_rerun(state, ids):
+    """The second rerun of cancelled or timed-out runs, when their logs are judged infrastructure."""
+    out = new_evidence_dir(state)
+    paths = job_logs(out, ids)
+    if paths is None:
+        raise reruns_spent(ids, "The rerun's job logs couldn't all be fetched, so they weren't judged.")
+    judged, detail = use_verdict(state) or judge_logs(paths)
+    if judged == "invalid":
+        raise invalid_remediation(detail)
+    if judged == "none":
+        state["pending"] = {"action": "triage", "evidence_dir": out}
+        return dict(state["pending"])
+    name = judged[len("match:") :] if judged.startswith("match:") else None
+    if judged == "infra" or name and name not in state["infra"]:
+        state["rerun"] += 1
+        if name:
+            state["infra"].append(name)  # validated by judge_logs, as above
+        rerun(ids)
+    why = {
+        "not-infra": "The log triage judged it not infrastructure.",
+        "error": "`ci_remediation.py match` failed (untrusted):\n" + fence(detail or ""),
+    }.get(judged, f"Entry {name} already ran on this head.")
+    raise reruns_spent(ids, why)
+
+
+def job_logs(out, ids):
+    """Each unsuccessful job's full log (`--log-failed` is empty for a cancelled job); None unless all are there."""
+    paths = []
+    for run_id in ids:
+        jobs = lookup(["gh", "run", "view", str(run_id), "--json", "jobs", "-q", JOBS_JQ])
+        if jobs is None:
+            return None
+        for job in filter(rules.valid_id, jobs.split()):
+            path = write_tail(out, job, lookup(["gh", "run", "view", "--job", job, "--log"]))
+            if path is None:
+                return None
+            paths.append(path)
+    return paths or None
+
+
+def failure_evidence(state, head, runs):
+    """The `checks` evidence in a new evidence dir: (dir, `--log-failed` tails, a third-party status failed or is unknown)."""
+    out = new_evidence_dir(state)
+    ids = [str(r["databaseId"]) for r in runs if r["conclusion"] in FAILED_RUNS and rules.valid_id(str(r["databaseId"]))]
+    paths = [p for p in (write_tail(out, i, lookup(["gh", "run", "view", i, "--log-failed"])) for i in ids) if p]
+    status = lookup(["gh", "api", "--paginate", f"repos/{state['owner']}/{state['repo']}/commits/{head}/status", "--jq", STATUS_JQ])
+    return out, paths, status is None or bool(status.strip())
+
+
+def reruns_spent(ids, why):
+    lines = [
+        *([why] if why else []),
+        "The reruns didn't help and the logs weren't judged infrastructure (or couldn't be), or a check isn't an Actions run.",
+    ]
+    if ids:
+        lines += ["Re-run these first:", *(f"gh run rerun {i}" for i in ids)]
+    return Stop("STOP_RERUNS_SPENT", True, lines)
 
 
 def pass_once(state, snap, budget_end):
