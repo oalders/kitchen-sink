@@ -126,6 +126,29 @@ class TestRules(unittest.TestCase):
             with self.assertRaises(rules.RuleError):
                 rules.timeout_minutes(bad)
 
+    def test_is_permanent_fetch_error(self):
+        permanent = (
+            "fatal: 'origin' does not appear to be a git repository",
+            "remote: Repository not found.",
+            "fatal: Authentication failed for 'https://github.com/o/r.git/'",
+            "git@github.com: Permission denied (publickey).",
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+            "fatal: No such remote 'origin'",
+            "fatal: not a git repository (or any of the parent directories): .git",
+        )
+        transient = (
+            "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 503",
+            "fatal: early EOF",
+            "fatal: unable to access '...': Could not resolve host: github.com",
+            "",
+        )
+        for stderr in permanent:
+            with self.subTest(permanent=stderr):
+                self.assertTrue(rules.is_permanent_fetch_error(stderr))
+        for stderr in transient:
+            with self.subTest(transient=stderr):
+                self.assertFalse(rules.is_permanent_fetch_error(stderr))
+
     def test_valid_ref(self):
         for ok in ("fix-174", "feat/a.b"):
             self.assertTrue(rules.valid_ref(ok), ok)
@@ -762,8 +785,6 @@ class Next(NextBase):
                 self.assertIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)
 
     def test_pending_fetch_failure_that_waiting_cannot_fix_stops(self):
-        self.reset_next_replies()
-        self.live(pending=self.repair())
         for stderr in ("fatal: 'origin' does not appear to be a git repository", "ERROR: Repository not found."):
             with self.subTest(stderr):
                 self.reset_next_replies()
