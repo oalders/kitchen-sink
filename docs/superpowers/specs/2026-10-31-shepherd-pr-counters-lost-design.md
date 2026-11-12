@@ -1,5 +1,7 @@
 # /shepherd-pr: recover in watch-only mode when the counters are lost
 
+Superseded by `2026-11-12-shepherd-pr-script-design.md`.
+
 Issue #151, the line-17 row.
 
 ## Intent

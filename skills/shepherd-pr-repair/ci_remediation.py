@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""CI remediation entries for the shepherd-pr-repair skill.
+"""CI remediation entries for /shepherd-pr (read by shepherd.py).
 
 Entries are per-clone git config sections, set only by the user:
 
   [kitchen-sink "remediation.<name>"]
       match = <Python regex, re.MULTILINE, searched over each failed log's tail>
 
-A match's only action is a full re-run of the head's workflow runs (or, for
-/shepherd-pr, re-enqueueing a head after a merge-queue ejection); any other
+A match's only action, taken by shepherd.py, is a full re-run of the head's
+workflow runs, or re-enqueueing a head after a merge-queue ejection; any other
 field makes the entry invalid.
 
 Subcommands (all print JSON on stdout):

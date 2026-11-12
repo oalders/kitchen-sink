@@ -1,6 +1,6 @@
 ---
 name: ci-log-triage
-description: Use only when /shepherd-pr step 3 or 6 dispatches it to classify CI failure logs.
+description: Use only when a /shepherd-pr `triage` action dispatches it to classify CI failure logs.
 tools: Read
 model: sonnet
 ---

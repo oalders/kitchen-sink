@@ -20,3 +20,4 @@ jobs:
       - run: python3 hooks/test_suggest_review_after_commit.py
       - run: python3 skills/codex-review-loop/test_codex_loop.py
       - run: python3 skills/shepherd-pr-repair/test_ci_remediation.py
+      - run: python3 skills/shepherd-pr-repair/test_shepherd.py
