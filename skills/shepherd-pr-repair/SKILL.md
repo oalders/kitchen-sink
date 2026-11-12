@@ -23,7 +23,7 @@ Exits: `/shepherd-pr` records each one with `shepherd.py record`. Step 7 (a new 
 Steps:
 
 1. **Checkout check.** First re-check: `<headRefName>` and `<default>` match `^[A-Za-z0-9._/-]+$`, have no `..` and don't start with `-`; `<sha>` matches `^[0-9a-f]{40}$`. Otherwise stop. Single-quote all three in commands. Then `git fetch origin`. The current branch must be `<headRefName>`, `git status --porcelain` empty, and HEAD at `<sha>`; if behind, `git merge --ff-only '<sha>'` and check again. If HEAD still isn't `<sha>`, stop: if HEAD has local commits that aren't on `origin/<headRefName>` (an earlier stop left them), say so, and that `git reset --hard '<sha>'` drops them; if `origin/<headRefName>` has moved past `<sha>`, say to re-run `/shepherd-pr`; otherwise say to `cd` into the PR's checkout.
-2. **Evidence**, into files in one private `mktemp -d` directory under `$TMPDIR`, read only from there:
+2. **Evidence**. For `codex`, into files in one private `mktemp -d` directory under `$TMPDIR`, read only from there:
    - `checks`: none to gather. `shepherd.py` already wrote each failed run's `--log-failed` tail into `<evidence_dir>`, a file per run id, and matched them against the remediation entries; use that directory as the evidence directory and leave its removal to the script.
    - `rebase`: none.
    - `codex`: `python3 <skill base dir>/codex_loop.py gh-threads --pr <n>` (the `codex-review-loop` skill's base directory). For each finding, take the numeric id from its `url`'s `#discussion_r<id>` and fetch the body with `gh api repos/{owner}/{repo}/pulls/comments/<id>`; never fetch the `url` itself.

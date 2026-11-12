@@ -158,12 +158,36 @@ def load_state(n):
         return None
 
 
-def save_state(n, state):
-    path = _state_path(n)
+def _write_json(path, data):
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))  # mkstemp creates 0600
     with os.fdopen(fd, "w") as f:
-        json.dump(state, f)
+        json.dump(data, f)
     os.replace(tmp, path)
+
+
+def save_state(n, state):
+    _write_json(_state_path(n), state)
+
+
+def _pointer_path():
+    return os.path.join(state_dir(), "pointer.json")
+
+
+def save_pointer(n, branch):
+    """Which PR this branch's run is on, so `next` and `record` need no `gh` lookup. Left behind when the run ends:
+    the state it names is then ended, and every `next` stops NO_RUN as before."""
+    _write_json(_pointer_path(), {"branch": branch, "pr": n})
+
+
+def load_pointer():
+    try:
+        with open(_pointer_path()) as f:
+            pointer = json.load(f)
+        if isinstance(pointer["branch"], str) and isinstance(pointer["pr"], int):
+            return pointer
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None  # missing or corrupt: the caller looks the PR up
 
 
 @contextlib.contextmanager
@@ -256,10 +280,10 @@ def _first_failure(checks):
 def _handoff(branch, pr_view_error):
     """No PR for the branch: hand a committed fix-NNN branch to /fix-gh-issue, else stop."""
     if re.fullmatch(r"fix-[0-9]+", branch) is None:
-        raise Stop("STOP_NO_PR", True, [f"No PR for {branch!r} and it is not a fix-NNN branch.", pr_view_error])
+        raise Stop("STOP_NO_PR", True, [f"No PR for {branch!r} and it is not a fix-NNN branch.", fence(pr_view_error)])
     count = run(["gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number", "-q", "length"]).stdout.strip()
     if count != "0":
-        raise Stop("STOP_PR_EXISTS", True, [f"`gh pr view` did not pick a PR, but {count!r} exist for {branch}.", pr_view_error])
+        raise Stop("STOP_PR_EXISTS", True, [f"`gh pr view` did not pick a PR, but {count!r} exist for {branch}.", fence(pr_view_error)])
     default = run(["gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]).stdout.strip()
     if not rules.valid_ref(default):
         raise Stop("STOP_BAD_DEFAULT", True, ["The default branch name is not a valid ref."])
@@ -314,6 +338,7 @@ def _start_with_pr(n, branch, model, minutes):
             "shown": None, "summary": None, "triage_verdict": None,
         },
     )  # fmt: skip
+    save_pointer(n, branch)
     return emit({"action": "next"})
 
 
@@ -431,7 +456,7 @@ def next_loop(state, budget_end):
                 action = {"action": "next"}  # a cut-off pass keeps the verdict for the next call's
             except (GhError, Resumable) as e:
                 if isinstance(e, GhError) and not rules.is_resumable_gh_error(e.cmd, e.stderr):
-                    raise Stop("STOP_GH_FAILED", True, [str(e)]) from None
+                    raise Stop("STOP_GH_FAILED", True, [fence(str(e))]) from None
                 if isinstance(e, Resumable):  # the pass ran through; a failed `gh` is retried with the verdict
                     state["triage_verdict"] = None
                 action = None if resumable_wait(state, budget_end) else {"action": "next"}
@@ -550,7 +575,7 @@ def check_declines(state, snap):
     raise Stop(
         "STOP_UNCONFIRMED_DECLINE",
         True,
-        ["Declined findings tagged (unconfirmed); remove the tag in your own words, then re-run /shepherd-pr:", *lines],
+        ["Declined findings tagged (unconfirmed); remove the tag in your own words, then re-run /shepherd-pr:", fence("\n".join(lines))],
     )
 
 
@@ -571,9 +596,9 @@ def codex_info():
         out = json.loads(proc.stdout) if proc.returncode == 0 else None
         mode = out.get("mode") if isinstance(out, dict) else None
     except (GhError, ValueError) as e:
-        raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", str(e)]) from None
+        raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", fence(str(e))]) from None
     if mode not in ("off", "local", "github"):
-        raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", proc.stdout, proc.stderr])
+        raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", fence(f"{proc.stdout}\n{proc.stderr}")])
     minutes = (out.get("bot_wait") or {}).get("minutes")
     return {"mode": mode, "minutes": minutes if isinstance(minutes, int) else None}
 
@@ -625,7 +650,7 @@ def gh_wait(state, head, timeout, trigger=None, windows=1):
         failed = re.match(r"gh .* failed \((\d+)\): (.*)", error, re.S) if isinstance(error, str) else None
         if failed:  # a `gh` call inside gh-wait: resumable or terminal as any failed `gh`
             raise GhError(["gh"], int(failed[1]), failed[2])
-        raise Stop("STOP_CODEX_ERROR", True, ["`codex_loop.py gh-wait` failed:", proc.stdout, proc.stderr])
+        raise Stop("STOP_CODEX_ERROR", True, ["`codex_loop.py gh-wait` failed:", fence(f"{proc.stdout}\n{proc.stderr}")])
     return out
 
 
@@ -642,7 +667,7 @@ def post_trigger(state, head):
         shutil.rmtree(tmp, ignore_errors=True)
     found = re.search(r"issuecomment-([0-9]+)$", url)
     if not found:
-        raise Stop("STOP_CODEX_TRIGGER", True, ["`gh pr comment` printed no comment id:", url])
+        raise Stop("STOP_CODEX_TRIGGER", True, ["`gh pr comment` printed no comment id:", fence(url)])
     return found[1]
 
 
@@ -683,7 +708,7 @@ def codex_gate(state, snap, budget_end):
         if status == "pending":
             return {"action": "next"}
         if status != "timeout":
-            raise Stop("STOP_CODEX_ERROR", True, ["`codex_loop.py gh-wait` returned:", json.dumps(result)])
+            raise Stop("STOP_CODEX_ERROR", True, ["`codex_loop.py gh-wait` returned:", fence(json.dumps(result))])
         if gate["trigger"] is None:  # no review of this head yet: wait on its trigger, or post one
             gate["final"] = result.get("triggers", 0) >= 2  # a resumed run's last wait
             gate["trigger"] = result.get("trigger") and str(result["trigger"]) or post_trigger(state, head)
@@ -1159,9 +1184,12 @@ def pass_once(state, snap, budget_end):
 
 
 def _pr_or_stop():
+    pointer = load_pointer()
+    if pointer and pointer["branch"] == run(["git", "branch", "--show-current"]).stdout.strip():
+        return pointer["pr"]  # `check_limits` re-checks the PR's headRefName against the branch every pass
     n, error = find_pr()
     if n is None:
-        raise Stop("STOP_NO_PR", True, ["No PR for this branch; run /shepherd-pr.", error])
+        raise Stop("STOP_NO_PR", True, ["No PR for this branch; run /shepherd-pr.", fence(error)])
     return n
 
 
@@ -1191,7 +1219,7 @@ def record_repair_pushed(state, _args):
         snap, local = read_pr(state), local_head()
     except GhError as e:
         if not rules.is_resumable_gh_error(e.cmd, e.stderr):
-            raise Stop("STOP_GH_FAILED", True, [str(e)]) from None
+            raise Stop("STOP_GH_FAILED", True, [fence(str(e))]) from None
         state["wait_first"] = True  # `pending` stays, so the next pass adopts the push
         return {"action": "next"}
     head = snap["pr"]["headRefOid"]
@@ -1288,7 +1316,7 @@ def main(argv=None):
 
 
 def _tool_error(code, detail):
-    print(json.dumps({"code": code, "report": write_report([detail])}, separators=(",", ":")))
+    print(json.dumps({"code": code, "report": write_report([fence(detail)])}, separators=(",", ":")))
     return 2
 
 

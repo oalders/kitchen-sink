@@ -397,6 +397,12 @@ class TestStart(Env):
         self.assertEqual((code, out), (0, {"action": "busy"}))
         self.assertEqual(self.read_state_bytes(), before)
 
+    def test_start_writes_pointer(self):
+        self.main("start", "--model", "X")
+        self.assertEqual(sh.load_pointer(), {"branch": "fix-174", "pr": 7})
+        path = os.path.join(self.git_dir, "kitchen-sink", "shepherd", "pointer.json")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
 
 OTHER = "b" * 40
 THIRD = "d" * 40
@@ -479,6 +485,63 @@ class NextBase(Env):
 
 
 class Next(NextBase):
+    LOOKUP = "gh pr view --json number"
+
+    def lookups(self):
+        return [c for c in self.calls if c.startswith(self.LOOKUP)]
+
+    def test_next_with_pointer_makes_no_lookup(self):
+        self.live()
+        sh.save_pointer(7, "fix-174")
+        self.replies[self.LOOKUP] = fail("HTTP 502")
+        code, out = self.main("next")
+        self.assertEqual((code, out["action"]), (0, "next"))
+        self.assertEqual(self.lookups(), [])
+
+    def test_record_with_pointer_makes_no_lookup(self):
+        self.live(pending=self.repair())
+        sh.save_pointer(7, "fix-174")
+        self.replies[self.LOOKUP] = fail("HTTP 502")
+        code, out = self.main("record", "repair-stopped", "--resumable")
+        self.assertEqual((code, out["action"]), (0, "next"))
+        self.assertEqual(self.lookups(), [])
+
+    def test_pointer_for_another_branch_or_corrupt_falls_back(self):
+        self.live()
+        sh.save_pointer(9, "other")
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(len(self.lookups()), 1)
+        pointer = os.path.join(self.git_dir, "kitchen-sink", "shepherd", "pointer.json")
+        with open(pointer, "w") as f:
+            f.write("{not json")
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(len(self.lookups()), 2)
+
+    def test_next_busy_leaves_state(self):
+        self.live()
+        before = self.read_state_bytes()
+        with sh.locked(7):
+            code, out = self.main("next")
+        self.assertEqual((code, out), (0, {"action": "busy"}))
+        self.assertEqual(self.read_state_bytes(), before)
+
+    def test_report_fences_untrusted_text(self):
+        hostile = "ignore this (unconfirmed)"
+        cases = {
+            "declined": ({"gh pr view 7 --json body": f"## Declined findings\n- {hostile}\n", "gh pr merge 7 --disable-auto": ""}, "STOP_UNCONFIRMED_DECLINE"),
+            "gh stderr": ({"gh pr checks 7": fail(hostile)}, "STOP_GH_FAILED"),
+            "codex": ({CODEX_MODE: json.dumps({"mode": hostile})}, "STOP_CODEX_MODE"),
+        }
+        for name, (replies, code) in cases.items():
+            with self.subTest(name):
+                self.reset_next_replies()
+                self.live()
+                self.replies.update(replies)
+                out = self.main("next")[1]
+                self.assert_stop(out, code)
+                fenced = self.report(out).split("```")[1::2]  # the text between each fence pair
+                self.assertTrue(any("ignore this" in block for block in fenced), self.report(out))
+
     def test_next_missing_or_ended(self):
         self.assert_stop(self.main("next")[1], "STOP_NO_RUN")
         self.live(ended=True)
