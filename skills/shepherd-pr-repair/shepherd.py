@@ -665,8 +665,9 @@ def earliest_suite(state, sha):
 
 def disable_auto(state, snap):
     """Auto-merge off, timed first so the queue removal it causes is not read as an ejection."""
-    state["disabled_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
     run(["gh", "pr", "merge", str(state["pr"]), "--disable-auto"])
+    state["disabled_at"] = at  # only once it succeeded: a failed disable must not mask a later ejection
     snap["pr"]["autoMergeRequest"] = None
 
 

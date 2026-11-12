@@ -220,6 +220,10 @@ class TestRules(unittest.TestCase):
         nodes = [self.add("2027-01-01T00:02:00Z"), self.remove("2027-01-01T00:03:00Z")]
         self.assertEqual(rules.ejection(self.ejected_pr(), nodes, None, None, "2027-01-01T00:01:00Z"), nodes[1])
 
+    def test_ejection_removal_before_disable(self):
+        nodes = [self.add("2027-01-01T00:00:00Z"), self.remove("2027-01-01T00:01:00Z")]
+        self.assertEqual(rules.ejection(self.ejected_pr(), nodes, None, None, "2027-01-01T00:02:00Z"), nodes[1])
+
     def test_may_requeue_skips_own_removal(self):
         times = ("2027-01-01T00:00:00Z", "2027-01-01T00:02:00Z", "2027-01-01T00:03:00Z", "2027-01-01T00:04:00Z")
         nodes = [self.add(times[0]), self.remove(times[1]), self.add(times[2]), self.remove(times[3])]
@@ -1491,6 +1495,16 @@ class Ejection(NextBase):
         state = sh.load_state(7)
         self.assertEqual((state["requeued"], state["automerge"], state["infra"]), ("t2", "on", []))
 
+    def test_ejection_requeue_past_own_removal(self):
+        self.live(shown=SHA, disabled_at="2027-01-15T07:30:00Z")
+        times = ("2027-01-15T07:00:00Z", "2027-01-15T07:31:00Z", "2027-01-15T07:40:00Z", "2027-01-15T07:50:00Z")
+        add = [{"__typename": "AddedToMergeQueueEvent", "createdAt": t} for t in times[::2]]
+        self.replies["gh api graphql"] = queue([add[0], removal(created=times[1]), add[1], removal(created=times[3])])
+        self.matches({"status": "match", "name": "flaky"}, 0)
+        self.main("next")
+        self.assertIn(MERGE, self.calls)
+        self.assertEqual(sh.load_state(7)["requeued"], times[3])
+
     def test_ejection_byte_cap(self):
         self.replies["gh run view 11 --log-failed"] = "".join(f"{i:04d}" + "x" * 995 + "\n" for i in range(300))
         self.matches({"status": "match", "name": "flaky"}, 0)
@@ -1818,7 +1832,13 @@ class Watch(NextBase):
         self.replies[MERGE] = ""
         out = self.main("next")[1]
         self.assertEqual(out["action"], "next")
-        self.assertIn(MERGE, self.calls)
+        self.assertEqual(sh.load_state(7)["disabled_at"], "2027-01-15T08:00:00Z")  # NOW
+
+    def test_failed_disable_leaves_no_mark(self):
+        self.replies["gh pr view 7"] = [pr_full(), pr_full(headRefOid=OTHER)]
+        self.replies[DISABLE] = fail()
+        self.main("next")
+        self.assertIsNone(sh.load_state(7)["disabled_at"])  # else a later run reads a real ejection as its own
 
     def test_infra_rerun_match(self):
         self.replies["gh pr checks 7"] = CANCELLED
