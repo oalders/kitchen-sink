@@ -181,6 +181,17 @@ def decide(pr, checks, automerge):
     return "enable" if pr["autoMergeRequest"] is None else "keep"
 
 
+def unconfirmed_declines(body):
+    """Lines tagged `(unconfirmed)` between `## Declined findings` and the next heading."""
+    found, inside = [], False
+    for line in body.splitlines():
+        if line.startswith("#"):
+            inside = line.strip() == "## Declined findings"
+        elif inside and "(unconfirmed)" in line:
+            found.append(line)
+    return found
+
+
 def status_line(state, pr, checks):
     """Built only from validated fields; check names never appear."""
     if not valid_sha(pr["headRefOid"]):

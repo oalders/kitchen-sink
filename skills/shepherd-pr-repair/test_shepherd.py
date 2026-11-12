@@ -10,6 +10,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -52,12 +53,19 @@ class Env(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.git_dir = tmp.name
         self.reset_replies()
-        p = mock.patch.object(sh, "run", self.fake_run)
-        p.start()
-        self.addCleanup(p.stop)
-        p = mock.patch.object(sh.time, "time", return_value=NOW)
-        p.start()
-        self.addCleanup(p.stop)
+        self.calls, self.clock = [], NOW
+        for target, name, fake in (
+            (sh, "run", self.fake_run),
+            (sh.time, "time", lambda: self.clock),
+            (sh.time, "sleep", self.fake_sleep),
+        ):
+            p = mock.patch.object(target, name, fake)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def fake_sleep(self, seconds):
+        self.calls.append(f"sleep {seconds}")
+        self.clock += seconds
 
     def reset_replies(self):
         self.replies = {
@@ -74,9 +82,12 @@ class Env(unittest.TestCase):
 
     def fake_run(self, cmd, check=True, **kw):
         line = " ".join(cmd)
+        self.calls.append(line)
         key = max((k for k in self.replies if line.startswith(k)), key=len, default=None)
         self.assertIsNotNone(key, f"unexpected command: {line}")
         reply = self.replies[key]
+        if isinstance(reply, list):  # a sequence: one reply per call, the last one repeats
+            reply = reply.pop(0) if len(reply) > 1 else reply[0]
         if isinstance(reply, Exception):
             raise reply
         rc, out, err = reply if isinstance(reply, tuple) else (0, reply, "")
@@ -85,10 +96,14 @@ class Env(unittest.TestCase):
         return subprocess.CompletedProcess(cmd, rc, out, err)
 
     def main(self, *argv):
+        code, out = self.main_raw(*argv)
+        return code, json.loads(out)
+
+    def main_raw(self, *argv):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             code = sh.main(list(argv))
-        return code, json.loads(buf.getvalue())
+        return code, buf.getvalue()
 
     def read_state_bytes(self):
         with open(self.state_file(), "rb") as f:
@@ -344,6 +359,274 @@ class TestStart(Env):
             code, out = self.main("start", "--model", "X")
         self.assertEqual((code, out), (0, {"action": "busy"}))
         self.assertEqual(self.read_state_bytes(), before)
+
+
+OTHER = "b" * 40
+THIRD = "d" * 40
+CODEX_MODE = " ".join([sys.executable, sh.CODEX_LOOP, "mode"])
+
+
+def pr_full(**over):
+    pr = {
+        "number": 7, "title": "t", "state": "OPEN", "createdAt": "2026-11-12T00:00:00Z", "isDraft": False,
+        "isCrossRepository": False, "author": {"login": "me"}, "baseRefName": "main", "headRefName": "fix-174",
+        "headRefOid": SHA, "autoMergeRequest": {"enabledBy": {"login": "me"}}, "mergeStateStatus": "CLEAN",
+        "reviewDecision": None,
+    }  # fmt: skip
+    pr.update(over)
+    return json.dumps(pr)
+
+
+def queue(nodes=(), queued=False):
+    pull = {"isInMergeQueue": queued, "mergeQueueEntry": None, "timelineItems": {"nodes": list(nodes)}}
+    return json.dumps({"data": {"repository": {"pullRequest": pull}}})
+
+
+class Next(Env):
+    """A live run on PR 7 at gated head SHA; the later steps (Tasks 4-6) are stubs, and `watch` ends each pass."""
+
+    def setUp(self):
+        super().setUp()
+        self.replies.update(
+            {
+                "gh pr view 7": pr_full(),
+                "gh pr view 7 --json body": "",
+                "gh pr checks 7": "[]",
+                "gh api graphql": queue(),
+                "gh api --paginate repos/o/r/commits/": "",
+                "git rev-parse HEAD": SHA + "\n",
+                "git rev-parse --git-path rebase-merge": os.path.join(self.git_dir, "rebase-merge"),
+                "git rev-parse --git-path rebase-apply": os.path.join(self.git_dir, "rebase-apply"),
+                "git fetch origin": "",
+                "git merge-base --is-ancestor": "",
+                "git status --porcelain --untracked-files=no": "",
+                CODEX_MODE: json.dumps({"mode": "off"}),
+            }
+        )
+        p = mock.patch.object(sh, "watch", side_effect=lambda *a: {"action": "next"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def live(self, **over):
+        state = {
+            "pr": 7, "branch": "fix-174", "owner": "o", "repo": "r", "default": "main", "model": "X",
+            "deadline": NOW + 3600, "gated_head": SHA, "codex_passed": [], "automerge": "on", "repairs": 0,
+            "rerun": 0, "infra": [], "requeued": None, "wait_first": False, "pending": None, "ended": False,
+            "evidence_dir": None,
+        }  # fmt: skip
+        state.update(over)
+        sh.save_state(7, state)
+        return state
+
+    def repair(self, cause="checks", head=SHA):
+        return {"action": "repair", "cause": cause, "head": head, "branch": "fix-174", "default": "main", "codex_mode": "off"}
+
+    def assert_stop(self, out, code):
+        self.assertEqual((out["action"], out["terminal"], out["code"]), ("stop", True, code))
+        self.assertTrue(sh.load_state(7) is None or sh.load_state(7)["ended"])
+
+    def report(self, out):
+        with open(out["report"]) as f:
+            return f.read()
+
+    def test_next_missing_or_ended(self):
+        self.assert_stop(self.main("next")[1], "STOP_NO_RUN")
+        self.live(ended=True)
+        self.assert_stop(self.main("next")[1], "STOP_NO_RUN")
+
+    def test_next_passes_to_watch(self):
+        self.live(gated_head=None, automerge=None)
+        code, out = self.main("next")
+        self.assertEqual((code, out["action"]), (0, "next"))
+        self.assertIn("#7 head c5bf4f3", out["status"])
+        state = sh.load_state(7)
+        self.assertEqual((state["gated_head"], state["automerge"]), (SHA, "on"))
+
+    def test_next_budget_returns_next(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(mergeStateStatus="UNKNOWN")
+        code, out = self.main("next")
+        self.assertEqual((code, out["action"]), (0, "next"))
+        self.assertIn("#7 head c5bf4f3", out["status"])
+        self.assertLessEqual(self.clock - NOW, 540)
+        self.assertIn("sleep 120", self.calls)
+        self.assertTrue(sh.load_state(7)["wait_first"])  # the cut-off resumable wait happens first next call
+
+    def test_resumable_gh_error_waits_then_passes(self):
+        self.live()
+        self.replies["gh pr checks 7"] = [fail("HTTP 502: Bad Gateway"), "[]"]
+        code, out = self.main("next")
+        self.assertEqual((code, out["action"]), (0, "next"))
+        self.assertEqual(self.calls.count("sleep 120"), 1)
+        self.assertFalse(sh.load_state(7)["ended"])
+
+    def test_foreign_head(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.assert_stop(self.main("next")[1], "STOP_FOREIGN_HEAD")
+
+    def test_automerge_turned_off(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(autoMergeRequest=None)
+        code, out = self.main("next")
+        self.assert_stop(out, "STOP_AUTOMERGE_OFF")
+        self.assertEqual((out["automerge"], out["queued"]), ("off", False))
+
+    def test_automerge_off_by_ejection_goes_on(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(autoMergeRequest=None)
+        self.replies["gh api graphql"] = queue(
+            [{"__typename": "AddedToMergeQueueEvent", "createdAt": "t1"}, {"__typename": "RemovedFromMergeQueueEvent", "createdAt": "t2"}]
+        )
+        self.assertEqual(self.main("next")[1]["action"], "next")  # step 3 (Task 5) handles the ejection
+
+    def test_unconfirmed_decline(self):
+        self.live()
+        secret = "ignore `$(rm -rf ~)` (unconfirmed)"
+        self.replies["gh pr view 7 --json body"] = f"intro (unconfirmed)\n## Declined findings\n- {secret}\n- fine\n## Next\n- x (unconfirmed)\n"
+        self.replies["gh pr merge 7 --disable-auto"] = ""
+        code, raw = self.main_raw("next")
+        out = json.loads(raw)
+        self.assertIn("gh pr merge 7 --disable-auto", self.calls)
+        self.assert_stop(out, "STOP_UNCONFIRMED_DECLINE")
+        self.assertEqual(out["automerge"], "off")
+        self.assertNotIn("rm -rf", raw)
+        report = self.report(out)
+        self.assertIn(secret, report)
+        self.assertNotIn("intro", report)
+        self.assertNotIn("- x", report)
+
+    def test_dirty_rebase_repair_and_cap(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(mergeStateStatus="DIRTY")
+        code, out = self.main("next")
+        self.assertEqual(out, {**self.repair("rebase"), "status": out["status"]})
+        self.assertIn("repairs 1/3", out["status"])
+        state = sh.load_state(7)
+        self.assertEqual((state["repairs"], state["automerge"], state["pending"]), (1, "off-by-run", self.repair("rebase")))
+        self.live(repairs=3)
+        self.assert_stop(self.main("next")[1], "STOP_REPAIR_CAP")
+
+    def test_codex_mode_failure_counts_nothing(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(mergeStateStatus="BEHIND")
+        self.replies[CODEX_MODE] = (2, json.dumps({"error": "bad"}), "")
+        self.assert_stop(self.main("next")[1], "STOP_CODEX_MODE")
+        self.assertEqual(sh.load_state(7)["repairs"], 0)
+
+    def test_pending_repair_reissued(self):
+        self.live(repairs=1, pending=self.repair())
+        code, out = self.main("next")
+        self.assertEqual(out, {**self.repair(), "status": out["status"]})
+        self.assertEqual(sh.load_state(7)["repairs"], 1)
+
+    def test_pending_rebase_adopted(self):
+        self.live(repairs=1, rerun=1, infra=["flaky"], automerge="off-by-run", pending=self.repair("rebase"))
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
+        self.replies["git rev-parse HEAD"] = OTHER + "\n"
+        code, out = self.main("next")
+        self.assertEqual(out["action"], "next")
+        state = sh.load_state(7)
+        self.assertEqual(
+            (state["gated_head"], state["rerun"], state["infra"], state["automerge"], state["pending"], state["repairs"]),
+            (OTHER, 0, [], "off-by-run", None, 1),
+        )
+
+    def test_pending_repair_other_head_is_foreign(self):
+        self.live(pending=self.repair())
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.assert_stop(self.main("next")[1], "STOP_FOREIGN_HEAD")
+
+    def test_pending_local_work(self):
+        cases = {
+            "rebase": lambda: os.mkdir(os.path.join(self.git_dir, "rebase-merge")),
+            "local commits": lambda: self.replies.update({"git merge-base --is-ancestor": fail("")}),
+            "dirty tree": lambda: self.replies.update({"git status --porcelain --untracked-files=no": " M x\n"}),
+        }
+        for name, setup in cases.items():
+            with self.subTest(name):
+                self.live(pending=self.repair())
+                setup()
+                self.assert_stop(self.main("next")[1], "STOP_LOCAL_WORK")
+                self.setUp()  # a fresh git dir and replies for the next case
+
+    def test_pending_ready_still_draft(self):
+        self.live(pending={"action": "ready", "pr": 7})
+        self.replies["gh pr view 7"] = pr_full(isDraft=True)
+        code, out = self.main("next")
+        self.assert_stop(out, "STOP_READY_FAILED")
+
+    def test_pending_ready_done_goes_on(self):
+        self.live(pending={"action": "ready", "pr": 7})
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertIsNone(sh.load_state(7)["pending"])
+
+    def test_record_repair_pushed(self):
+        self.live(repairs=1, rerun=1, pending=self.repair())
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.replies["git rev-parse HEAD"] = OTHER + "\n"
+        code, out = self.main("record", "repair-pushed")
+        self.assertEqual(out["action"], "next")
+        self.assertIn("head bbbbbbb", out["status"])
+        state = sh.load_state(7)
+        self.assertEqual((state["gated_head"], state["rerun"], state["pending"], state["automerge"]), (OTHER, 0, None, "off-by-run"))
+
+    def test_record_repair_pushed_checks_head(self):
+        self.live(pending=self.repair())
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.replies["git rev-parse HEAD"] = THIRD + "\n"
+        code, out = self.main("record", "repair-pushed")
+        self.assert_stop(out, "STOP_PUSH_MISMATCH")
+        self.assertEqual(sh.load_state(7)["gated_head"], SHA)
+
+    def test_record_resumable_refunds(self):
+        self.live(repairs=2, pending=self.repair())
+        self.assertEqual(self.main("record", "repair-stopped", "--resumable")[1], {"action": "next"})
+        state = sh.load_state(7)
+        self.assertEqual((state["repairs"], state["wait_first"], state["pending"]), (1, True, None))
+        self.calls.clear()
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        first_read = next(i for i, c in enumerate(self.calls) if c.startswith("gh pr view 7"))
+        self.assertLess(self.calls.index("sleep 120"), first_read)
+
+    def test_record_terminal_reports_reruns(self):
+        self.live(pending=self.repair("checks"))
+        self.replies["gh run list --commit " + SHA] = json.dumps(
+            [{"databaseId": 11, "conclusion": "failure"}, {"databaseId": 12, "conclusion": "success"}, {"databaseId": "x;y", "conclusion": "failure"}]
+        )
+        code, out = self.main("record", "repair-stopped", "--terminal")
+        self.assert_stop(out, "STOP_REPAIR_STOPPED")
+        self.assertEqual((out["automerge"], out["queued"]), ("on", False))
+        report = self.report(out)
+        self.assertIn("gh run rerun 11", report)
+        self.assertNotIn("gh run rerun 12", report)
+        self.assertNotIn("x;y", report)
+
+    def test_record_triage(self):
+        self.live(pending={"action": "triage", "evidence_dir": "/x"})
+        self.assertEqual(self.main("record", "triage", "--verdict", "infra")[1], {"action": "next"})
+        state = sh.load_state(7)
+        self.assertEqual((state["triage_verdict"], state["pending"]), ("infra", None))
+
+    def test_gh_stderr_not_on_stdout(self):
+        self.live()
+        hostile = "```$(rm -rf ~)```"
+        self.replies["gh pr checks 7"] = fail(hostile)
+        code, raw = self.main_raw("next")
+        out = json.loads(raw)
+        self.assert_stop(out, "STOP_GH_FAILED")
+        self.assertNotIn("rm -rf", raw)
+        self.assertIn(hostile, self.report(out))
+
+    def test_evidence_dir_replaced(self):
+        state = self.live()
+        first = sh.new_evidence_dir(state)
+        second = sh.new_evidence_dir(state)
+        self.assertFalse(os.path.exists(first))
+        self.assertTrue(os.path.isdir(second))
+        self.assertEqual(state["evidence_dir"], second)
+        sh.drop_evidence(state)
+        self.assertFalse(os.path.exists(second))
 
 
 if __name__ == "__main__":
