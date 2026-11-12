@@ -919,12 +919,15 @@ class Next(NextBase):
         self.assertEqual(sh.load_state(7)["pending"], self.claimed("codex"))
 
     def test_claim_refused(self):
-        mismatch, taken = "no pending repair for this head and cause", "another repair subagent already claimed this repair"
+        mismatch, taken = "no pending repair for this head and cause", "already-claimed"
+        triage = {"action": "triage", "evidence_dir": None, "cause": "checks", "head": SHA}  # only `action` differs
         for name, state, argv, reason in (
             ("wrong head", {"pending": self.repair("codex")}, ["--head", OTHER, "--cause", "codex"], mismatch),
             ("wrong cause", {"pending": self.repair("codex")}, ["--head", SHA, "--cause", "checks"], mismatch),
             ("already claimed", {"pending": self.claimed("codex")}, ["--head", SHA, "--cause", "codex"], taken),
             ("no pending repair", {}, ["--head", SHA, "--cause", "codex"], mismatch),
+            ("pending triage", {"pending": triage}, ["--head", SHA, "--cause", "checks"], mismatch),
+            ("invalid head", {"pending": self.repair("codex")}, ["--head", SHA.upper(), "--cause", "codex"], "--head is not a 40-hex SHA"),
             ("ended run", {"ended": True, "pending": self.repair("codex")}, ["--head", SHA, "--cause", "codex"], "STOP_NO_RUN"),
         ):
             with self.subTest(name):
@@ -935,11 +938,6 @@ class Next(NextBase):
         os.remove(self.state_file())
         self.assertEqual(self.main("claim", "--head", SHA, "--cause", "codex"), (1, {"ok": False, "reason": "STOP_NO_RUN"}))
         self.assertFalse(os.path.exists(self.state_file()))
-
-    def test_second_claim_fails(self):
-        self.live(pending=self.repair())
-        self.assertEqual(self.main("claim", "--head", SHA, "--cause", "checks")[0], 0)
-        self.assertEqual(self.main("claim", "--head", SHA, "--cause", "checks")[0], 1)
 
     def test_claim_busy(self):
         self.live(pending=self.repair())
@@ -969,6 +967,27 @@ class Next(NextBase):
         out = self.main("next")[1]
         self.assert_stop(out, "STOP_DEADLINE")
         self.assertIn("git log", self.report(out))
+        self.assertTrue(os.path.isdir(evidence))  # its subagent may still read it
+
+    def test_next_replays_the_stop_that_ended_the_run(self):
+        self.live(pending=self.claimed())
+        stop = self.main("record", "repair-stopped", "--terminal")[1]
+        self.assert_stop(stop, "STOP_REPAIR_STOPPED")
+        self.assertEqual(self.main("next"), (0, stop))  # same code and script-written report path
+
+    def test_record_resumable_on_claimed_repair_refunds(self):
+        self.live(repairs=2, pending=self.claimed())
+        self.assertEqual(self.main("record", "repair-stopped", "--resumable")[1], {"action": "next"})
+        state = sh.load_state(7)
+        self.assertEqual((state["repairs"], state["pending"]), (1, None))
+
+    def test_merged_during_claimed_repair_keeps_evidence(self):
+        evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
+        self.addCleanup(lambda: os.path.isdir(evidence) and os.rmdir(evidence))
+        self.live(pending={**self.claimed(), "evidence_dir": evidence}, evidence_dir=evidence)
+        self.replies["gh pr view 7"] = pr_full(state="MERGED")
+        self.assertEqual(self.main("next")[1]["action"], "done")
+        self.assertTrue(sh.load_state(7)["ended"])
         self.assertTrue(os.path.isdir(evidence))  # its subagent may still read it
 
     def test_start_with_claimed_repair_stops_and_keeps_the_run(self):

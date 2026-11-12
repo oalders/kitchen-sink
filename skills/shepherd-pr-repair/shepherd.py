@@ -15,7 +15,11 @@ for a refused claim, 2 for a tool error):
                        A repair subagent's step 1: claim the live run's pending,
                        unclaimed repair of that head and cause. Exit 0 with
                        {"ok":true} (claimed) or {"action":"busy"}; exit 1 with
-                       {"ok":false,"reason":...} (refused, nothing written).
+                       {"ok":false,"reason":...} (refused, nothing written;
+                       "already-claimed" when another subagent holds it).
+
+A `next` or `record` on a run that a stop or tool error ended prints
+that same object again.
 
 State lives in `<git-dir>/kitchen-sink/shepherd/<n>.json`; see
 docs/superpowers/specs/2026-11-12-shepherd-pr-script-design.md.
@@ -27,6 +31,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -51,6 +56,7 @@ GH_WAIT_MARGIN = 35  # a `gh-wait` slice ends this long before the budget: its l
 MIN_SLICE = 30
 UNKNOWN_WAIT = 30
 EVIDENCE_PREFIX = "shepherd-evidence-"
+ALREADY_CLAIMED = "already-claimed"  # `claim`'s refusal for a held repair; the repair skill keys `refused` on it
 MATCH_TIMEOUT = 30  # the remediation regexes are user-supplied
 LOG_LINES, LOG_BYTES = 300, 65536  # an evidence log's tail
 REPORT_LOG_LINES = 20
@@ -107,6 +113,14 @@ class Stop(Exception):
         super().__init__(code)
         self.code, self.terminal, self.report = code, terminal, report
         self.fields = fields or {}  # extra validated stdout fields: automerge, queued
+
+
+class Replay(Stop):
+    """An ended run's stored `final` object, printed again as it was (its report file is the script's own)."""
+
+    def __init__(self, final):
+        super().__init__(final["code"], True, [])
+        self.final = final
 
 
 class Resumable(Exception):
@@ -235,9 +249,13 @@ def end_state(n):
         save_state(n, state)
 
 
-def emit_stop(stop):
+def stop_object(stop):
     report = write_report(stop.report)
-    return emit({"action": "stop", "terminal": stop.terminal, "code": stop.code, "report": report, **stop.fields})
+    return {"action": "stop", "terminal": stop.terminal, "code": stop.code, "report": report, **stop.fields}
+
+
+def emit_stop(stop):
+    return emit(stop_object(stop))
 
 
 def find_pr():
@@ -252,6 +270,8 @@ def find_pr():
 
 def live_state(n):
     state = load_state(n)
+    if state is not None and state["ended"] and state.get("final"):
+        raise Replay(state["final"])  # e.g. `next` after a repair subagent's `record` ended the run
     if state is None or state["ended"]:
         raise Stop("STOP_NO_RUN", True, [f"No live /shepherd-pr run for PR #{n}; run /shepherd-pr."])
     return state
@@ -261,13 +281,25 @@ def claimed(state):
     return bool((state["pending"] or {}).get("claimed"))
 
 
-def finish(state, keep_evidence=False):
-    """End the run: every stop and done."""
+def finish(state, keep_evidence=False, final=None):
+    """End the run: every stop and done. `final` is the stop or tool error printed, which `live_state` replays."""
     if keep_evidence:
         state["evidence_dir"] = None  # a claimed repair's subagent may still read it: leave it in the temp dir
     drop_evidence(state)
-    state["ended"] = True
+    state.update(ended=True, final=final)
     save_state(state["pr"], state)
+
+
+def end_on_failure(state, step, keep_claimed=False):
+    """Run `step`; a stop or tool error ends the run with that object stored as `final`, then prints it."""
+    try:
+        return step()
+    except Stop as stop:
+        final = stop_object(stop)
+    except Exception as e:  # noqa: BLE001 - a tool error ends the run too
+        final = tool_error_object("CMD_FAILED", f"{type(e).__name__}: {e}")
+    finish(state, keep_evidence=keep_claimed and claimed(state), final=final)
+    raise Replay(final)
 
 
 def drop_evidence(state):
@@ -340,7 +372,7 @@ def _start_with_pr(n, branch, model, minutes):
         return emit_stop(Stop("STOP_REPAIR_CLAIMED", True, [
             f"A repair subagent claimed this run's {pending['cause']} repair of {pending['head']} and may still be running.",
             "If none is running in any session, run"
-            f" `python3 '{os.path.abspath(__file__)}' record repair-stopped --terminal` to end the run,"
+            f" `python3 {shlex.quote(os.path.abspath(__file__))} record repair-stopped --terminal` to end the run,"
             " then /shepherd-pr again.",
         ]))  # fmt: skip
     pr = gh_json(
@@ -1233,11 +1265,7 @@ def cmd_next(_args):
     n = _pr_or_stop()
     with locked(n):
         state = live_state(n)
-        try:
-            action = next_loop(state, time.time() + BUDGET)
-        except Exception:  # every stop, and a tool error: the agent ends the run on both
-            finish(state, keep_evidence=claimed(state))
-            raise
+        action = end_on_failure(state, lambda: next_loop(state, time.time() + BUDGET), keep_claimed=True)
         if action["action"] == "done":
             finish(state, keep_evidence=claimed(state))
         else:
@@ -1325,11 +1353,7 @@ def cmd_record(args):
     n = _pr_or_stop()
     with locked(n):
         state = live_state(n)
-        try:
-            action = RECORDERS[args.event](state, args)
-        except Exception:  # every stop, and a tool error: the agent ends the run on both
-            finish(state)
-            raise
+        action = end_on_failure(state, lambda: RECORDERS[args.event](state, args))
         save_state(n, state)
         return emit(action)
 
@@ -1337,6 +1361,9 @@ def cmd_record(args):
 def cmd_claim(args):
     """A repair subagent's step 1: it can't see the conversation that dispatched it, so the state is the check, and
     claiming under the lock lets only one subagent take a handed-out repair."""
+    if not rules.valid_sha(args.head):
+        emit({"ok": False, "reason": "--head is not a 40-hex SHA"})
+        return 1
     try:
         n = _pr_or_stop()
         with locked(n):
@@ -1346,7 +1373,7 @@ def cmd_claim(args):
             if {k: pending.get(k) for k in want} != want:
                 reason = "no pending repair for this head and cause"
             elif pending.get("claimed"):
-                reason = "another repair subagent already claimed this repair"
+                reason = ALREADY_CLAIMED
             else:
                 pending["claimed"] = True
                 save_state(n, state)
@@ -1382,14 +1409,21 @@ def main(argv=None):
         return args.func(args)
     except Busy:
         return emit({"action": "busy"})
+    except Replay as replay:
+        emit(replay.final)
+        return 0 if "action" in replay.final else 2
     except Stop as stop:
         return emit_stop(stop)
     except Exception as e:  # noqa: BLE001 - every call must print one JSON object
         return _tool_error("CMD_FAILED", f"{type(e).__name__}: {e}")
 
 
+def tool_error_object(code, detail):
+    return {"code": code, "report": write_report([fence(detail)])}
+
+
 def _tool_error(code, detail):
-    print(json.dumps({"code": code, "report": write_report([fence(detail)])}, separators=(",", ":")))
+    emit(tool_error_object(code, detail))
     return 2
 
 
