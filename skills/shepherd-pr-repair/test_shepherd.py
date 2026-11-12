@@ -587,35 +587,55 @@ class Next(NextBase):
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(len(self.lookups()), 2)
 
-    def rebasing(self, head_name="refs/heads/fix-174"):
+    def rebasing(self, head_name="refs/heads/fix-174", kind="rebase-merge"):
         """A conflicted rebase: HEAD detached, and git's rebase dir names the branch being rebased."""
-        rebase_dir = os.path.join(self.git_dir, "rebase-merge")
+        for other in ("rebase-merge", "rebase-apply"):  # subtests reuse one git dir
+            shutil.rmtree(os.path.join(self.git_dir, other), ignore_errors=True)
+        rebase_dir = os.path.join(self.git_dir, kind)
         os.mkdir(rebase_dir)
-        self.addCleanup(shutil.rmtree, rebase_dir)
+        self.addCleanup(shutil.rmtree, rebase_dir, ignore_errors=True)
         with open(os.path.join(rebase_dir, "head-name"), "w") as f:
             f.write(head_name + "\n")
         self.replies["git branch --show-current"] = "\n"
         self.replies[self.LOOKUP] = fail("not on any branch")  # `gh pr view` on a detached HEAD
 
-    def test_next_mid_rebase_trusts_the_pointer(self):
-        self.live(automerge="off-by-run", pending={**self.repair("rebase"), "claimed": True})
-        sh.save_pointer(7, "fix-174")
-        self.rebasing()
-        self.assertEqual(self.main("next")[1]["action"], "repairing")
-        self.assertEqual(self.lookups(), [])
+    def test_mid_rebase_trusts_the_pointer(self):
+        cases = {
+            "next": (("next",), "action", "repairing"),
+            "next, rebase-apply": (("next",), "action", "repairing"),
+            "record": (("record", "repair-stopped", "--terminal"), "code", "STOP_REPAIR_STOPPED"),
+            "claim": (("claim", "--head", SHA, "--cause", "rebase"), "reason", sh.ALREADY_CLAIMED),
+        }
+        for name, (argv, field, want) in cases.items():
+            with self.subTest(name):
+                self.calls.clear()
+                self.live(automerge="off-by-run", pending={**self.repair("rebase"), "claimed": True})
+                sh.save_pointer(7, "fix-174")
+                self.rebasing(kind="rebase-apply" if "apply" in name else "rebase-merge")
+                self.assertEqual(self.main(*argv)[1].get(field), want)
+                self.assertEqual(self.lookups(), [])
 
     def test_next_mid_rebase_of_another_branch_falls_back(self):
-        self.live(automerge="off-by-run", pending={**self.repair("rebase"), "claimed": True})
-        sh.save_pointer(7, "fix-174")
-        self.rebasing("refs/heads/other")
-        self.assertEqual(self.main("next")[1]["code"], "STOP_NO_PR")
-        self.assertEqual(len(self.lookups()), 1)
+        for head_name in ("refs/heads/other", "detached HEAD"):  # git writes `detached HEAD` for a rebase started detached
+            with self.subTest(head_name):
+                self.calls.clear()
+                self.live(automerge="off-by-run", pending={**self.repair("rebase"), "claimed": True})
+                sh.save_pointer(7, "fix-174")
+                self.rebasing(head_name)
+                self.assertEqual(self.main("next")[1]["code"], "STOP_NO_PR")
+                self.assertEqual(len(self.lookups()), 1)
 
     def test_start_mid_rebase(self):
-        sh.save_pointer(7, "fix-174")
-        self.rebasing()
-        for name, pending, code in (("claimed", {**self.repair("rebase"), "claimed": True}, "STOP_REPAIR_CLAIMED"), ("unclaimed", self.repair("rebase"), "STOP_DETACHED")):
+        claimed = {**self.repair("rebase"), "claimed": True}
+        cases = (
+            ("claimed", "refs/heads/fix-174", claimed, "STOP_REPAIR_CLAIMED"),
+            ("unclaimed", "refs/heads/fix-174", self.repair("rebase"), "STOP_DETACHED"),
+            ("claimed, another branch", "refs/heads/other", claimed, "STOP_DETACHED"),
+        )
+        for name, head_name, pending, code in cases:
             with self.subTest(name):
+                sh.save_pointer(7, "fix-174")
+                self.rebasing(head_name)
                 self.live(pending=pending)
                 before = self.read_state_bytes()
                 out = self.main("start", "--model", "X")[1]

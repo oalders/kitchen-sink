@@ -19,7 +19,7 @@ Hand-off (`start` returned `handoff`): say first that no PR exists and you're ha
 
 Loop:
 
-1. `<script> start --model '<version>'`, `<version>` being the running model's version as in the review footer of `docs/attribution.md` (e.g. `Opus 4.8`; the script puts it in the `@codex review` trigger). `handoff`: the hand-off above. `busy`: stop, saying a `/shepherd-pr` run is still active in this checkout. `next`: step 2. Otherwise act on it as in step 3 (a `stop`, `STOP_REPAIR_CLAIMED` included, ends the run as any stop does).
+1. `<script> start --model '<version>'`, `<version>` being the running model's version as in the review footer of `docs/attribution.md` (e.g. `Opus 4.8`; the script puts it in the `@codex review` trigger). `handoff`: the hand-off above. `busy`: stop, saying a `/shepherd-pr` run is still active in this checkout. `next`: step 2. Otherwise act on it as in step 3 (a `stop` ends this command's run; `STOP_REPAIR_CLAIMED` leaves the script's run live for the claimed repair).
 2. `<script> next` with `run_in_background: true` (it can run about 9 minutes); run nothing else until its completion notification, then read its stdout.
 3. Act on the action:
    - `next`: step 2.

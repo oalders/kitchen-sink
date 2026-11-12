@@ -565,8 +565,9 @@ def current_branch():
     if path:
         with contextlib.suppress(OSError), open(os.path.join(path, "head-name")) as f:
             head = f.read().strip()
-            if head.startswith("refs/heads/"):
-                return head.removeprefix("refs/heads/"), True
+            name = head.removeprefix("refs/heads/")
+            if head.startswith("refs/heads/") and rules.valid_ref(name):  # the file is git's, but checked as any ref is
+                return name, True
     return branch, False
 
 
