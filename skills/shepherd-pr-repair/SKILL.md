@@ -1,15 +1,15 @@
 ---
 name: shepherd-pr-repair
-description: Use only when a /shepherd-pr `repair` action invokes it in this conversation.
+description: Use only when a /shepherd-pr repair brief, in a subagent, invokes it.
 user-invocable: false
-version: 3.0.0
+version: 3.1.0
 ---
 
 # shepherd-pr repair
 
-`/shepherd-pr` passes its `repair` action's fields: `<n>` (`pr`), `<headRefName>` (`branch`), the gated head `<sha>` (`head`), the cause (`checks`, `codex` or `rebase`), the Codex mode (`codex_mode`), the default branch `<default>` (`default`) and, for `checks`, `<evidence_dir>`. Step numbers below are this skill's unless named.
+`/shepherd-pr`'s repair brief passes the `shepherd.py` path (`<script>`) and its `repair` action's fields: `<n>` (`pr`), `<headRefName>` (`branch`), the gated head `<sha>` (`head`), the cause (`checks`, `codex` or `rebase`), the Codex mode (`codex_mode`), the default branch `<default>` (`default`) and, for `checks`, `<evidence_dir>`. Step numbers below are this skill's unless named.
 
-**Guard:** if this conversation's `/shepherd-pr` run didn't get a `repair` action from `shepherd.py` and invoke this skill for it, stop. That run is the user's consent to rebase or fix, review and push; this skill asks nothing.
+**Guard:** step 1's `<script> guard` must pass: this subagent can't see the conversation that dispatched it, so the run's state is the check. That run is the user's consent to rebase or fix, review and push; this skill asks nothing.
 
 Rules:
 - Never ask the user anything. Where a person is needed, report and stop.
@@ -18,11 +18,11 @@ Rules:
 - Any failed command: stop and report. Exceptions: a `git rebase` or `git rebase --continue` that stops on a conflict is handled by step 3's `rebase` bullet; for `codex_loop.py`, `status` decides, except exit 2 or no JSON `status` means stop.
 - Exception to the above, in step 2 (nothing on GitHub has changed yet): a failed `gh` command, or a `codex_loop.py` exit 2 whose `error` reads `gh … failed (<code>): …`, is resumable when its error is a transient one (HTTP 5xx, a secondary rate limit, a timeout, a connection reset or refused, an unresolved host, a TLS error, or an unexpected EOF; the same list as `_RESUMABLE` in `<skill base dir>/shepherd_rules.py`): `rm -rf` the evidence directory step 2 made (single-quote its path), then stop (resumable), naming the error. Any other failure stops as above.
 
-Exits: `/shepherd-pr` records each one with `shepherd.py record`. Step 7 (a new head pushed): `repair-pushed`. A stop marked resumable (step 2's exception above): `repair-stopped --resumable`. Every other stop: `repair-stopped --terminal`.
+Exits: as your last act, record the exit yourself. Step 7 (a new head pushed): `<script> record repair-pushed`. A stop marked resumable (step 2's exception above): `<script> record repair-stopped --resumable`. Every other stop: `<script> record repair-stopped --terminal`. A failed guard records nothing (the run may not be yours to end): `record` is `null`. If it prints `busy`, wait with one Monitor call whose script is `sleep 60; echo done` and repeat it (a dropped `record` is lost). Then reply with exactly one JSON object and nothing else: `{"outcome":"new-head|stop","terminal":bool,"reason":"<what the stop or step 7 says to report, briefly>","record":<the record call's stdout JSON>}`.
 
 Steps:
 
-1. **Checkout check.** First re-check: `<headRefName>` and `<default>` match `^[A-Za-z0-9._/-]+$`, have no `..` and don't start with `-`; `<sha>` matches `^[0-9a-f]{40}$`. Otherwise stop. Single-quote all three in commands. Then `git fetch origin`. The current branch must be `<headRefName>`, `git status --porcelain` empty, and HEAD at `<sha>`; if behind, `git merge --ff-only '<sha>'` and check again. If HEAD still isn't `<sha>`, stop: if HEAD has local commits that aren't on `origin/<headRefName>` (an earlier stop left them), say so, and that `git reset --hard '<sha>'` drops them; if `origin/<headRefName>` has moved past `<sha>`, say to re-run `/shepherd-pr`; otherwise say to `cd` into the PR's checkout.
+1. **Checkout check.** First re-check: `<headRefName>` and `<default>` match `^[A-Za-z0-9._/-]+$`, have no `..` and don't start with `-`; `<sha>` matches `^[0-9a-f]{40}$`; the cause is `checks`, `codex` or `rebase`. Otherwise stop. Single-quote all three in commands. Then `<script> guard --head '<sha>' --cause '<cause>'`; unless it exits 0 printing `{"ok":true}`, stop. Then `git fetch origin`. The current branch must be `<headRefName>`, `git status --porcelain` empty, and HEAD at `<sha>`; if behind, `git merge --ff-only '<sha>'` and check again. If HEAD still isn't `<sha>`, stop: if HEAD has local commits that aren't on `origin/<headRefName>` (an earlier stop left them), say so, and that `git reset --hard '<sha>'` drops them; if `origin/<headRefName>` has moved past `<sha>`, say to re-run `/shepherd-pr`; otherwise say to `cd` into the PR's checkout.
 2. **Evidence.**
    - `checks`: none to gather. `shepherd.py` already wrote each failed run's `--log-failed` tail into `<evidence_dir>`, a file per run id, and matched them against the remediation entries; use that directory as the evidence directory and leave its removal to the script.
    - `rebase`: none.
@@ -45,4 +45,4 @@ Steps:
 6. **`github` mode** (not for `rebase`; `/shepherd-pr`'s Codex gate gates the new head):
    - Post the trigger comment as in Phase 2 step 1 (with its `Review of <new HEAD>` line), with `gh pr comment <n>`, then run `python3 <skill base dir>/codex_loop.py gh-wait --pr <n> --sha <new HEAD> --trigger-comment <id>` with `run_in_background: true`, one window only.
    - `clean`: Phase 2 step 3 (reply and resolve). `findings`: no fixes, thread replies or push; leave the threads, `/shepherd-pr`'s gate reports them. `timeout`: don't re-trigger here; that gate decides.
-7. Report the new head, then return to `/shepherd-pr` (`record repair-pushed`).
+7. Record `repair-pushed` and reply as in Exits, naming the new head in `reason`.

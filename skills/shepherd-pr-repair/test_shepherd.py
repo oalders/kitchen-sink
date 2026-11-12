@@ -832,12 +832,12 @@ class Next(NextBase):
         self.assertEqual([c for c in self.calls if c.startswith("sleep")], ["sleep 5", "sleep 5"])
 
     def test_record_repair_pushed_out_of_budget_while_waiting(self):
-        self.live(pending=self.repair())
+        self.live(pending={**self.repair(), "dispatched": True})  # the record clears it, so the next pass adopts the push
         self.replies["gh pr view 7"] = pr_full()
         with mock.patch.object(sh, "sleep_within", side_effect=sh.OutOfBudget):
             out = self.main("record", "repair-pushed")[1]
         state = sh.load_state(7)
-        self.assertEqual((out["action"], state["wait_first"], state["pending"] is not None), ("next", True, True))
+        self.assertEqual((out["action"], state["wait_first"], state["pending"]), ("next", True, self.repair()))
 
     def test_record_repair_pushed_needs_new_head(self):
         self.live(rerun=1, infra=["flaky"], pending=self.repair())
@@ -909,6 +909,53 @@ class Next(NextBase):
         self.assertEqual(self.main("record", "triage", "--verdict", "infra")[1], {"action": "next"})
         state = sh.load_state(7)
         self.assertEqual((state["triage_verdict"], state["pending"]), ({"cause": "checks", "verdict": "infra"}, None))
+
+    def test_record_repair_dispatched(self):
+        self.live(pending=self.repair())
+        self.assertEqual(self.main("record", "repair-dispatched")[1], {"action": "dispatched"})
+        self.assertTrue(sh.load_state(7)["pending"]["dispatched"])
+        self.live()
+        self.assert_stop(self.main("record", "repair-dispatched")[1], "STOP_NO_REPAIR")
+
+    def test_dispatched_repair_is_repairing(self):
+        evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
+        self.addCleanup(lambda: os.path.isdir(evidence) and os.rmdir(evidence))
+        pending = {**self.repair(), "evidence_dir": evidence, "dispatched": True}
+        self.live(automerge="off-by-run", pending=pending, evidence_dir=evidence)
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)  # its push landed before its `record`
+        self.replies["git rev-parse HEAD"] = OTHER + "\n"
+        self.assertEqual(self.main("next")[1]["action"], "repairing")
+        state = sh.load_state(7)
+        self.assertEqual((state["gated_head"], state["pending"]), (SHA, pending))
+        self.assertTrue(os.path.isdir(evidence))
+
+    def test_dispatched_repair_deadline(self):
+        self.live(deadline=NOW - 1, pending={**self.repair(), "dispatched": True})
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertIn("git log", self.report(out))
+
+    def test_start_busy_with_dispatched_repair(self):
+        self.live(pending={**self.repair(), "dispatched": True})
+        before = self.read_state_bytes()
+        self.assertEqual(self.main("start", "--model", "X")[1], {"action": "busy"})
+        self.assertEqual(self.read_state_bytes(), before)
+        self.live(deadline=NOW - 1, pending={**self.repair(), "dispatched": True})
+        self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})
+
+    def test_guard(self):
+        self.live(pending={**self.repair("codex"), "dispatched": True})
+        before = self.read_state_bytes()
+        self.assertEqual(self.main("guard", "--head", SHA, "--cause", "codex"), (0, {"ok": True}))
+        for argv in (["--head", OTHER, "--cause", "codex"], ["--head", SHA, "--cause", "checks"]):
+            with self.subTest(argv):
+                code, out = self.main("guard", *argv)
+                self.assertEqual((code, out["ok"]), (1, False))
+        self.assertEqual(self.read_state_bytes(), before)
+        self.live(pending=self.repair("codex"))  # handed out but not dispatched
+        self.assertEqual(self.main("guard", "--head", SHA, "--cause", "codex")[0], 1)
+        self.live(ended=True)
+        self.assertEqual(self.main("guard", "--head", SHA, "--cause", "codex")[0], 1)
 
     def test_gh_stderr_not_on_stdout(self):
         self.live()

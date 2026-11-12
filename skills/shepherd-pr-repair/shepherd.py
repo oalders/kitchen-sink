@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """State machine for /shepherd-pr: carries the current branch's PR to merged.
 
-Subcommands print exactly one JSON object on stdout (exit 0 for an action, 2
-for a tool error):
+Subcommands print exactly one JSON object on stdout (exit 0 for an action, 1
+for a failed guard, 2 for a tool error):
 
   start --model NAME   Check the branch and PR, then write a fresh state file.
                        Returns next, handoff, busy or stop.
   next                 Pass over the PR until the agent is needed or about 9
                        minutes are used. Returns any action.
-  record EVENT         Report what only the agent knows: repair-pushed,
-                       repair-stopped --resumable|--terminal, or
+  record EVENT         Report what only the agent knows: repair-dispatched,
+                       repair-pushed, repair-stopped --resumable|--terminal, or
                        triage --verdict infra|not-infra.
+  guard --head SHA --cause CAUSE
+                       Read-only: pass (exit 0, {"ok":true}) only for the live
+                       run's dispatched repair of that head and cause.
 
 State lives in `<git-dir>/kitchen-sink/shepherd/<n>.json`; see
 docs/superpowers/specs/2026-11-12-shepherd-pr-script-design.md.
@@ -323,6 +326,9 @@ def _pr_failure(pr, viewer, repo, branch):
 
 
 def _start_with_pr(n, branch, model, minutes):
+    old = load_state(n)
+    if old and not old["ended"] and (old["pending"] or {}).get("dispatched") and time.time() < old["deadline"]:
+        return emit({"action": "busy"})  # its repair subagent is still running; a reset would hand out a second one
     pr = gh_json(
         ["pr", "view", str(n), "--json", "number,state,isCrossRepository,author,baseRefName,headRefName,headRefOid"]
     )
@@ -433,6 +439,8 @@ def check_deadline(state, snap=None):
     """The run's soft deadline: before each resumable wait, each watch poll and after each Codex wait."""
     if time.time() >= state["deadline"]:
         lines = ["The run's deadline passed; run /shepherd-pr again to continue."]
+        if (state["pending"] or {}).get("dispatched"):
+            lines.append("A repair subagent may still be running and push; check `git log` and the PR before re-running.")
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
 
@@ -1180,6 +1188,9 @@ def pass_once(state, snap, budget_end):
     if pr["state"] == "MERGED":
         return {"action": "done", "merged": True}
     check_limits(state, snap)
+    if (state["pending"] or {}).get("dispatched"):  # its subagent reads evidence_dir and leaves local work: touch neither
+        check_deadline(state, snap)
+        return {"action": "repairing"}  # until its `record`, whatever the PR's head
     reissue = handle_pending(state, snap) if state["pending"] else None  # may adopt a pushed head first
     step1_checks(state, snap)
     check_declines(state, snap)
@@ -1223,9 +1234,17 @@ def cmd_next(_args):
 # --- record --------------------------------------------------------------------
 
 
+def record_repair_dispatched(state, _args):
+    if (state["pending"] or {}).get("action") != "repair":
+        raise Stop("STOP_NO_REPAIR", True, ["No repair is pending to dispatch; run /shepherd-pr again."])
+    state["pending"]["dispatched"] = True
+    return {"action": "dispatched"}
+
+
 def record_repair_pushed(state, _args):
     if (state["pending"] or {}).get("action") != "repair":
         return {"action": "next"}  # nothing handed out (or `next` already adopted it): the pass re-reads
+    state["pending"].pop("dispatched", None)  # its subagent is done: a deferred adopt below falls to the next pass
     for lag in range(3):  # GitHub's headRefOid can trail a push by a moment; `next` would re-issue the repair
         try:
             snap, local = read_pr(state), local_head()
@@ -1290,7 +1309,12 @@ def record_triage(state, args):
     return {"action": "next"}
 
 
-RECORDERS = {"repair-pushed": record_repair_pushed, "repair-stopped": record_repair_stopped, "triage": record_triage}
+RECORDERS = {
+    "repair-dispatched": record_repair_dispatched,
+    "repair-pushed": record_repair_pushed,
+    "repair-stopped": record_repair_stopped,
+    "triage": record_triage,
+}
 
 
 def cmd_record(args):
@@ -1308,6 +1332,25 @@ def cmd_record(args):
         return emit(action)
 
 
+def cmd_guard(args):
+    """A repair subagent's step 1: it can't see the conversation that dispatched it, so the state is the check."""
+    reason = None
+    try:
+        n = _pr_or_stop()
+        with locked(n):
+            pending = live_state(n)["pending"] or {}
+    except Stop as stop:
+        reason = stop.code
+    else:
+        want = {"action": "repair", "dispatched": True, "head": args.head, "cause": args.cause}
+        if {k: pending.get(k) for k in want} != want:
+            reason = "no dispatched repair for this head and cause"
+    if reason:
+        emit({"ok": False, "reason": reason})
+        return 1
+    return emit({"ok": True})
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1322,6 +1365,10 @@ def main(argv=None):
     how.add_argument("--terminal", action="store_true")
     r.add_argument("--verdict", choices=("infra", "not-infra"))
     r.set_defaults(func=cmd_record)
+    g = sub.add_parser("guard")
+    g.add_argument("--head", required=True)
+    g.add_argument("--cause", required=True, choices=("checks", "codex", "rebase"))
+    g.set_defaults(func=cmd_guard)
     args = p.parse_args(argv)
     global hard_end
     hard_end = time.time() + HARD_CAP

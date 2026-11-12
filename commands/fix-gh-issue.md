@@ -35,7 +35,7 @@ If it can't be loaded at any point, stop at once, mark nothing ready, ask nothin
 
 On the **direct implementation** path (not `superpowers:subagent-driven-development`), dispatch implementation, the test cycle, and each round of review fixes to a `general-purpose` subagent via the `Agent` tool. Everything else stays in the caller: issue fetch, history check, complexity assessment, brainstorming, choice of approach, the review fan-out and fix-and-re-review loop, verification, PR creation, and the step 11 ready decision.
 
-**Why (read before changing it):** a subagent has no `Agent`/`Task` tool, so it cannot run `/code-review-intense-flow`, any specialist reviewer, or any other skill that fans out to subagents — those degrade silently or fail there. Meanwhile the implement/test/fix loop's file reads and edits are bulk the caller doesn't need; keeping them in a subagent stops one issue from filling the caller's context.
+**Why (read before changing it):** the reviews stay in the caller so it, not the subagent that wrote the code, judges the findings and runs the fix-and-re-review loop. Meanwhile the implement/test/fix loop's file reads and edits are bulk the caller doesn't need; keeping them in a subagent stops one issue from filling the caller's context.
 
 The brief:
 - This command file as the working spec (the **Guiding principles** bind it), plus the issue number, the simplest fix from step 4, brainstorming output (if any), chosen approach, branch name, and working directory.
@@ -208,7 +208,7 @@ Write them as part of implementation, not as review remediation:
 #### 8. Code review (required)
 
 - Run **`/code-review-intense-flow`** (via the Skill tool) on the final HEAD, whatever the change size — on the SDD path too, even though tasks were reviewed along the way. It is the single source of truth for routing: general reviewer (always), `/security-review` (unless doc-only), frontend/seo/geo/playwright by path, and new-route e2e detection. Don't substitute `/code-review-flow`, a single specialist, or hand-picked reviewers; that drops the always-on general and security passes.
-- **Caller only**: it fans out via `Task`, so never run it inside the implementation subagent.
+- **Caller only**: never run it inside the implementation subagent; the caller judges its findings and runs the loop below.
 - **Enforced by the `require-review-before-pr` hook**: `gh pr create`/`gh pr ready` are denied on a `fix-NNN` branch until intense-flow has run on the current HEAD, so every fix commit needs a re-review. Never chain `git commit` with `gh pr create`/`ready` in one Bash call.
 
 **Fix-and-re-review loop:**
