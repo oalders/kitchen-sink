@@ -39,9 +39,9 @@ class Busy(Exception):
 
 
 class Stop(Exception):
-    def __init__(self, code, terminal, report, pr=None):
+    def __init__(self, code, terminal, report):
         super().__init__(code)
-        self.code, self.terminal, self.report, self.pr = code, terminal, report, pr
+        self.code, self.terminal, self.report = code, terminal, report
 
 
 def run(cmd, check=True, **kw):
@@ -87,7 +87,8 @@ def save_state(n, state):
 
 @contextlib.contextmanager
 def locked(n):
-    with open(os.path.join(state_dir(), f"{n}.lock"), "w") as f:
+    fd = os.open(os.path.join(state_dir(), f"{n}.lock"), os.O_WRONLY | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "w") as f:
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -110,12 +111,15 @@ def write_report(lines):
     return path
 
 
+def end_state(n):
+    """Mark an existing state file ended; the caller holds the lock."""
+    state = load_state(n)
+    if state is not None:
+        state["ended"] = True
+        save_state(n, state)
+
+
 def emit_stop(stop):
-    if stop.pr is not None:
-        state = load_state(stop.pr)
-        if state is not None:
-            state["ended"] = True
-            save_state(stop.pr, state)
     return emit({"action": "stop", "terminal": stop.terminal, "code": stop.code, "report": write_report(stop.report)})
 
 
@@ -123,7 +127,7 @@ def emit_stop(stop):
 
 
 def _first_failure(checks):
-    """Return the (code, message) of the first (failed, code, message) triple that failed."""
+    """Return (code, message) for the first check whose `failed` flag is true, else None."""
     for failed, code, message in checks:
         if failed:
             return code, message
@@ -190,6 +194,8 @@ def cmd_start(args):
     if not rules.valid_model(args.model):
         raise Stop("STOP_BAD_MODEL", True, ["--model must match ^[A-Za-z0-9. -]{1,40}$."])
     proc = run(["git", "config", "--local", "--get", TIMEOUT_KEY], check=False)
+    if proc.returncode not in (0, 1):  # 1 means the key is unset
+        raise GhError(proc.args, proc.returncode, proc.stderr)
     try:
         minutes = rules.timeout_minutes(proc.stdout.strip() if proc.returncode == 0 else None)
     except rules.RuleError as e:
@@ -207,7 +213,7 @@ def cmd_start(args):
         try:
             return _start_with_pr(n, branch, args.model, minutes)
         except Stop as stop:
-            stop.pr = n
+            end_state(n)
             raise
 
 
@@ -224,8 +230,8 @@ def main(argv=None):
         return emit({"action": "busy"})
     except Stop as stop:
         return emit_stop(stop)
-    except GhError as e:
-        return _tool_error("GH_FAILED", str(e))
+    except Exception as e:  # noqa: BLE001 - every call must print one JSON object
+        return _tool_error("CMD_FAILED", f"{type(e).__name__}: {e}")
 
 
 def _tool_error(code, detail):

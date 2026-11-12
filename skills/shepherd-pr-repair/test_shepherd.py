@@ -77,6 +77,8 @@ class Env(unittest.TestCase):
         key = max((k for k in self.replies if line.startswith(k)), key=len, default=None)
         self.assertIsNotNone(key, f"unexpected command: {line}")
         reply = self.replies[key]
+        if isinstance(reply, Exception):
+            raise reply
         rc, out, err = reply if isinstance(reply, tuple) else (0, reply, "")
         if check and rc != 0:
             raise sh.GhError(cmd, rc, err)
@@ -159,7 +161,30 @@ class TestStart(Env):
             code, out = self.main("start", "--model", "bad;model")
             self.assertEqual((out["action"], out["terminal"]), ("stop", True))
             codes.add(out["code"])
+            self.assertFalse(os.path.exists(self.state_file()))
         self.assertEqual(len(codes), len(cases) + 1)
+
+    def test_rejected_start_ends_live_state(self):
+        self.main("start", "--model", "X")
+        self.replies["gh pr view 7"] = pr_view(isCrossRepository=True)
+        self.assertEqual(self.main("start", "--model", "X")[1]["action"], "stop")
+        self.assertTrue(sh.load_state(7)["ended"])
+        lock = os.path.join(self.git_dir, "kitchen-sink", "shepherd", "7.lock")
+        self.assertEqual(os.stat(lock).st_mode & 0o777, 0o600)
+
+    def test_tool_errors_print_one_json_object(self):
+        cases = {
+            "non-json gh": {"gh pr view 7": "not json"},
+            "git config failure": {"git config --local --get": (128, "", "fatal")},
+            "missing gh": {"gh api user": FileNotFoundError("gh")},
+        }
+        for name, replies in cases.items():
+            with self.subTest(name):
+                self.reset_replies()
+                self.replies.update(replies)
+                code, out = self.main("start", "--model", "X")
+                self.assertEqual((code, out["code"]), (2, "CMD_FAILED"))
+                self.assertFalse(os.path.exists(self.state_file()))
 
     def test_lock_busy(self):
         self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})
