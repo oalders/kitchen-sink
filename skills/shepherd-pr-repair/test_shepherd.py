@@ -279,6 +279,29 @@ class TestRules(unittest.TestCase):
             self.assertFalse(rules.is_resumable_gh_error(merge, err), err)
 
 
+class TestRun(unittest.TestCase):
+    """The real `run`: every call has a timeout, capped by the process's hard end."""
+
+    def test_timeout_is_a_resumable_gh_error(self):
+        cmd = ["gh", "pr", "view", "7"]
+        with mock.patch.object(sh.subprocess, "run", side_effect=subprocess.TimeoutExpired(cmd, 60)) as fake, \
+                mock.patch.object(sh, "hard_end", None):  # fmt: skip
+            with self.assertRaises(sh.GhError) as caught:
+                sh.run(cmd)
+        self.assertEqual(fake.call_args.kwargs["timeout"], sh.CALL_TIMEOUT)
+        self.assertTrue(rules.is_resumable_gh_error(cmd, caught.exception.stderr))
+
+    def test_timeout_capped_by_hard_end(self):
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(sh.subprocess, "run", return_value=ok) as fake, \
+                mock.patch.object(sh.time, "time", return_value=NOW), mock.patch.object(sh, "hard_end", NOW + 5):  # fmt: skip
+            sh.run(["gh"])
+            self.assertEqual(fake.call_args.kwargs["timeout"], 5)
+            with mock.patch.object(sh, "hard_end", NOW), self.assertRaises(sh.GhError):
+                sh.run(["gh"])  # past the hard end: no call at all
+        self.assertEqual(fake.call_count, 1)
+
+
 class TestStart(Env):
     def test_start_writes_state(self):
         code, out = self.main("start", "--model", "Opus 5.5")
@@ -387,6 +410,13 @@ class Next(Env):
 
     def setUp(self):
         super().setUp()
+        self.reset_next_replies()
+        p = mock.patch.object(sh, "watch", side_effect=lambda *a: {"action": "next"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def reset_next_replies(self):
+        self.reset_replies()
         self.replies.update(
             {
                 "gh pr view 7": pr_full(),
@@ -398,14 +428,11 @@ class Next(Env):
                 "git rev-parse --git-path rebase-merge": os.path.join(self.git_dir, "rebase-merge"),
                 "git rev-parse --git-path rebase-apply": os.path.join(self.git_dir, "rebase-apply"),
                 "git fetch origin": "",
-                "git merge-base --is-ancestor": "",
+                "git merge-base --is-ancestor HEAD ": "",  # local HEAD is on the PR's head; any other ancestry is unexpected
                 "git status --porcelain --untracked-files=no": "",
                 CODEX_MODE: json.dumps({"mode": "off"}),
             }
         )
-        p = mock.patch.object(sh, "watch", side_effect=lambda *a: {"action": "next"})
-        p.start()
-        self.addCleanup(p.stop)
 
     def live(self, **over):
         state = {
@@ -515,15 +542,37 @@ class Next(Env):
         self.assertEqual(sh.load_state(7)["repairs"], 0)
 
     def test_pending_repair_reissued(self):
-        self.live(repairs=1, pending=self.repair())
+        evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
+        self.addCleanup(lambda: os.path.isdir(evidence) and os.rmdir(evidence))
+        pending = {**self.repair(), "evidence_dir": evidence}
+        self.live(repairs=1, pending=pending, evidence_dir=evidence)
         code, out = self.main("next")
-        self.assertEqual(out, {**self.repair(), "status": out["status"]})
+        self.assertEqual(out, {**pending, "status": out["status"]})
         self.assertEqual(sh.load_state(7)["repairs"], 1)
+        self.assertTrue(os.path.isdir(evidence))  # the re-issued repair still reads it
+
+    def test_pending_repair_not_reissued_past_step1(self):
+        cases = {
+            "merged": ({"gh pr view 7": pr_full(state="MERGED")}, "done"),
+            "closed": ({"gh pr view 7": pr_full(state="CLOSED")}, "STOP_CLOSED"),
+            "declined": ({"gh pr view 7 --json body": "## Declined findings\n- a (unconfirmed)\n", "gh pr merge 7 --disable-auto": ""}, "STOP_UNCONFIRMED_DECLINE"),
+        }
+        for name, (replies, want) in cases.items():
+            with self.subTest(name):
+                self.reset_next_replies()
+                self.replies.update(replies)
+                self.live(automerge="off-by-run", pending=self.repair())
+                out = self.main("next")[1]
+                if want == "done":
+                    self.assertEqual(out["action"], "done")
+                else:
+                    self.assert_stop(out, want)
 
     def test_pending_rebase_adopted(self):
         self.live(repairs=1, rerun=1, infra=["flaky"], automerge="off-by-run", pending=self.repair("rebase"))
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
         self.replies["git rev-parse HEAD"] = OTHER + "\n"
+        self.replies[f"git merge-base --is-ancestor {SHA} {OTHER}"] = fail("")  # a rebase: OTHER doesn't descend from SHA
         code, out = self.main("next")
         self.assertEqual(out["action"], "next")
         state = sh.load_state(7)
@@ -538,17 +587,24 @@ class Next(Env):
         self.assert_stop(self.main("next")[1], "STOP_FOREIGN_HEAD")
 
     def test_pending_local_work(self):
+        rebase_dir = os.path.join(self.git_dir, "rebase-merge")
         cases = {
-            "rebase": lambda: os.mkdir(os.path.join(self.git_dir, "rebase-merge")),
-            "local commits": lambda: self.replies.update({"git merge-base --is-ancestor": fail("")}),
+            "rebase": lambda: os.mkdir(rebase_dir),
+            "local commits": lambda: self.replies.update({"git merge-base --is-ancestor HEAD ": fail("")}),
             "dirty tree": lambda: self.replies.update({"git status --porcelain --untracked-files=no": " M x\n"}),
+            "fetch timed out": lambda: self.replies.update({"git fetch origin": sh.GhError(["git"], "timeout", "timed out")}),
         }
         for name, setup in cases.items():
             with self.subTest(name):
-                self.live(pending=self.repair())
-                setup()
-                self.assert_stop(self.main("next")[1], "STOP_LOCAL_WORK")
-                self.setUp()  # a fresh git dir and replies for the next case
+                self.assert_local_work_stops(setup, "STOP_FETCH_FAILED" if name.startswith("fetch") else "STOP_LOCAL_WORK")
+                if os.path.isdir(rebase_dir):
+                    os.rmdir(rebase_dir)
+
+    def assert_local_work_stops(self, setup, code):
+        self.reset_next_replies()
+        self.live(pending=self.repair())
+        setup()
+        self.assert_stop(self.main("next")[1], code)
 
     def test_pending_ready_still_draft(self):
         self.live(pending={"action": "ready", "pr": 7})
@@ -570,6 +626,13 @@ class Next(Env):
         self.assertIn("head bbbbbbb", out["status"])
         state = sh.load_state(7)
         self.assertEqual((state["gated_head"], state["rerun"], state["pending"], state["automerge"]), (OTHER, 0, None, "off-by-run"))
+
+    def test_record_repair_pushed_needs_new_head(self):
+        self.live(rerun=1, infra=["flaky"], pending=self.repair())
+        code, out = self.main("record", "repair-pushed")
+        self.assert_stop(out, "STOP_NO_NEW_HEAD")
+        state = sh.load_state(7)
+        self.assertEqual((state["rerun"], state["infra"]), (1, ["flaky"]))  # nothing adopted
 
     def test_record_repair_pushed_checks_head(self):
         self.live(pending=self.repair())
@@ -601,6 +664,32 @@ class Next(Env):
         self.assertIn("gh run rerun 11", report)
         self.assertNotIn("gh run rerun 12", report)
         self.assertNotIn("x;y", report)
+
+    def test_record_terminal_ends_run_when_git_fails(self):
+        self.live(pending=self.repair("checks"))
+        self.replies["git rev-parse HEAD"] = (128, "", "fatal: not a git repository")
+        self.replies["gh pr view 7"] = sh.GhError(["gh"], 1, "HTTP 404")
+        self.assert_stop(self.main("record", "repair-stopped", "--terminal")[1], "STOP_REPAIR_STOPPED")
+
+    def test_tool_error_in_next_ends_run(self):
+        self.live()
+        self.replies["gh api graphql"] = "not json"
+        code, out = self.main("next")
+        self.assertEqual((code, out["code"]), (2, "CMD_FAILED"))
+        self.assertTrue(sh.load_state(7)["ended"])
+
+    def test_codex_mode_timeout_counts_nothing(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(mergeStateStatus="DIRTY")
+        self.replies[CODEX_MODE] = sh.GhError(["python3"], "timeout", "timed out")
+        self.assert_stop(self.main("next")[1], "STOP_CODEX_MODE")
+        self.assertEqual(sh.load_state(7)["repairs"], 0)
+
+    def test_gh_timeout_is_resumable(self):
+        self.live()
+        self.replies["gh pr checks 7"] = [sh.GhError(["gh", "pr", "checks"], "timeout", "timed out"), "[]"]
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.calls.count("sleep 120"), 1)
 
     def test_record_triage(self):
         self.live(pending={"action": "triage", "evidence_dir": "/x"})

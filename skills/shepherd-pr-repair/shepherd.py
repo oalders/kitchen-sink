@@ -35,6 +35,9 @@ import shepherd_rules as rules  # noqa: E402
 TIMEOUT_KEY = "kitchen-sink.shepherdTimeoutMinutes"
 CODEX_LOOP = os.path.join(HERE, "..", "codex-review-loop", "codex_loop.py")
 BUDGET = 540  # seconds of work per `next`, under the Bash tool's 600 s cap
+HARD_CAP = 580  # no subprocess outlives this, whatever the budget left it
+CALL_TIMEOUT = 60
+hard_end = None  # set by main()
 RESUMABLE_WAIT = 120
 POLL = 15
 UNKNOWN_WAIT = 30
@@ -77,8 +80,16 @@ class OutOfBudget(Exception):
     """A wait would overrun this `next` call; return `next` and let the agent call again."""
 
 
-def run(cmd, check=True, **kw):
-    proc = subprocess.run(cmd, capture_output=True, text=True, **kw)
+def run(cmd, check=True, timeout=CALL_TIMEOUT, **kw):
+    """A hung call becomes a GhError ("timed out", resumable for `gh`) and never runs past HARD_CAP."""
+    if hard_end is not None:
+        timeout = min(timeout, hard_end - time.time())
+    try:
+        if timeout <= 0:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kw)
+    except subprocess.TimeoutExpired:
+        raise GhError(cmd, "timeout", "timed out") from None
     if check and proc.returncode != 0:
         raise GhError(cmd, proc.returncode, proc.stderr)
     return proc
@@ -362,7 +373,7 @@ def next_loop(state, budget_end):
         while time.time() < budget_end:
             try:
                 snap = read_pr(state)
-                action = (handle_pending(state, snap) if state["pending"] else None) or pass_once(state, snap, budget_end)
+                action = pass_once(state, snap, budget_end)
             except OutOfBudget:
                 action = {"action": "next"}
             except (GhError, Resumable) as e:
@@ -390,7 +401,11 @@ def local_work_guard(head):
     for name in ("rebase-merge", "rebase-apply"):
         if os.path.exists(run(["git", "rev-parse", "--git-path", name]).stdout.strip()):
             raise Stop("STOP_LOCAL_WORK", True, ["A rebase is in progress, possibly the repair's; `git rebase --abort` ends it."])
-    if run(["git", "fetch", "origin"], check=False).returncode != 0:
+    try:
+        fetched = run(["git", "fetch", "origin"], check=False).returncode == 0
+    except GhError:  # timed out
+        fetched = False
+    if not fetched:
         raise Stop("STOP_FETCH_FAILED", True, ["`git fetch origin` failed."])
     if run(["git", "merge-base", "--is-ancestor", "HEAD", head], check=False).returncode != 0:
         raise Stop("STOP_LOCAL_WORK", True, [f"Local HEAD has commits not on the PR's head {head}."])
@@ -421,9 +436,9 @@ def handle_pending(state, snap):
     return None
 
 
-def step1_checks(state, snap):
-    """Step 1 on every pass: the PR's limits, then the later-pass checks against the state file."""
-    pr, queue = snap["pr"], snap["queue"]
+def check_limits(state, snap):
+    """The PR's limits, checked by `start` and on every pass."""
+    pr = snap["pr"]
     failure = _pr_failure(pr, snap["viewer"], snap["repo"], state["branch"])
     repo = snap["repo"]
     if failure is None and (repo["owner"]["login"], repo["name"], repo["defaultBranchRef"]["name"]) != (
@@ -432,6 +447,11 @@ def step1_checks(state, snap):
         failure = ("STOP_REPO_CHANGED", "The repo or its default branch changed since /shepherd-pr started.")
     if failure:
         raise Stop(failure[0], True, [failure[1]])
+
+
+def step1_checks(state, snap):
+    """Step 1's later-pass checks against the state file."""
+    pr, queue = snap["pr"], snap["queue"]
     head = pr["headRefOid"]
     if state["gated_head"] not in (None, head):
         raise Stop("STOP_FOREIGN_HEAD", True, [f"Someone else pushed {head}; decide whether to gate it, then re-run /shepherd-pr."])
@@ -480,13 +500,12 @@ def wait_unknown(state, head, budget_end):
 
 
 def codex_mode():
-    cmd = [sys.executable, CODEX_LOOP, "mode"]
-    proc = run(cmd, check=False, timeout=60)
     try:
-        mode = json.loads(proc.stdout).get("mode")
-    except ValueError:
-        mode = None
-    if proc.returncode != 0 or mode not in ("off", "local", "github"):
+        proc = run([sys.executable, CODEX_LOOP, "mode"], check=False)
+        mode = json.loads(proc.stdout).get("mode") if proc.returncode == 0 else None
+    except (GhError, ValueError) as e:
+        raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", str(e)]) from None
+    if mode not in ("off", "local", "github"):
         raise Stop("STOP_CODEX_MODE", True, ["`codex_loop.py mode` failed:", proc.stdout, proc.stderr])
     return mode
 
@@ -525,9 +544,13 @@ def pass_once(state, snap, budget_end):
     pr = snap["pr"]
     if pr["state"] == "MERGED":
         return {"action": "done", "merged": True}
-    drop_evidence(state)
+    check_limits(state, snap)
+    reissue = handle_pending(state, snap) if state["pending"] else None  # may adopt a pushed head first
     step1_checks(state, snap)
     check_declines(state, snap)
+    if reissue:
+        return reissue
+    drop_evidence(state)  # after a re-issue's return: its repair still reads that directory
     if pr["mergeStateStatus"] == "UNKNOWN":
         wait_unknown(state, pr["headRefOid"], budget_end)
         return None
@@ -549,7 +572,7 @@ def cmd_next(_args):
         state = live_state(n)
         try:
             action = next_loop(state, time.time() + BUDGET)
-        except Stop:
+        except Exception:  # every stop, and a tool error: the agent ends the run on both
             finish(state)
             raise
         if action["action"] == "done":
@@ -566,14 +589,16 @@ def record_repair_pushed(state, _args):
     if (state["pending"] or {}).get("action") != "repair":
         return {"action": "next"}  # nothing handed out (or `next` already adopted it): the pass re-reads
     try:
-        snap = read_pr(state)
+        snap, local = read_pr(state), local_head()
     except GhError as e:
         if not rules.is_resumable_gh_error(e.cmd, e.stderr):
-            raise
+            raise Stop("STOP_GH_FAILED", True, [str(e)]) from None
         state["wait_first"] = True  # `pending` stays, so the next pass adopts the push
         return {"action": "next"}
     head = snap["pr"]["headRefOid"]
-    if head != local_head():  # never take a SHA from the agent
+    if head == state["pending"]["head"]:  # the skill said it pushed, but GitHub has no new head
+        raise Stop("STOP_NO_NEW_HEAD", True, [f"The PR's head is still {head}; the repair's push didn't land."], stop_fields(snap))
+    if head != local:  # never take a SHA from the agent
         raise Stop("STOP_PUSH_MISMATCH", True, [f"The PR's head {head} is not local HEAD."], stop_fields(snap))
     adopt(state, head)
     return with_status({"action": "next"}, state, snap)
@@ -586,13 +611,17 @@ def record_repair_stopped(state, args):
             state.update(repairs=max(0, state["repairs"] - 1), pending=None)
         state["wait_first"] = True
         return {"action": "next"}
-    lines = ["The repair stopped; run /shepherd-pr once its report is dealt with."]
-    if pending and pending["cause"] == "checks" and local_head() == state["gated_head"]:
-        lines += rerun_hints(state["gated_head"])
+    lines, fields = ["The repair stopped; run /shepherd-pr once its report is dealt with."], {}
+    # The hints and fields are extras: no failure may keep this stop from ending the run.
+    try:
+        if pending and pending["cause"] == "checks" and local_head() == state["gated_head"]:
+            lines += rerun_hints(state["gated_head"])
+    except Exception:  # noqa: BLE001
+        pass
     try:
         fields = stop_fields(read_pr(state))
-    except GhError:
-        fields = {}  # the stop still ends the run; the report just can't say
+    except Exception:  # noqa: BLE001
+        pass
     raise Stop("STOP_REPAIR_STOPPED", True, lines, fields)
 
 
@@ -625,7 +654,7 @@ def cmd_record(args):
         state = live_state(n)
         try:
             action = RECORDERS[args.event](state, args)
-        except Stop:
+        except Exception:  # every stop, and a tool error: the agent ends the run on both
             finish(state)
             raise
         save_state(n, state)
@@ -647,6 +676,8 @@ def main(argv=None):
     r.add_argument("--verdict", choices=("infra", "not-infra"))
     r.set_defaults(func=cmd_record)
     args = p.parse_args(argv)
+    global hard_end
+    hard_end = time.time() + HARD_CAP
     try:
         return args.func(args)
     except Busy:
