@@ -15,6 +15,7 @@ Move that logic into a stdlib Python script with unit tests, and keep the run's 
 - **Goal:** the script does the mechanical GitHub work itself (user decision, approach B below): it only hands control back when judgment is needed.
 - **Non-goal:** changing what the limits mean. Counters stay **per run** (user decision): `start` resets them, so re-running `/shepherd-pr` is still the user choosing to continue. The rerun and re-enqueue limits remain per head across runs because they are counted from GitHub (run `attempt`, `RemovedFromMergeQueueEvent`s), as today.
 - **Non-goal:** #178's stop log and `stats`, #176's single-subagent repair. Stop codes are added (the tests need them anyway); the log stays in #178.
+  - Since done: #176 landed later (the `shepherd-pr-repair` skill in one subagent, guarded by `shepherd.py claim`).
 - **Non-goal:** loosening or tightening any stop. Behaviour is ported, not redesigned. Where porting exposes a rule that only existed for compaction recovery, it is deleted.
 - **Anti-goal:** untrusted text (PR title/body, file paths, check names, bot output, logs) reaching a field the agent puts on a command line, or being printed outside a file.
 - **Anti-goal:** the script merging directly, force-pushing, or posting anything but the `@codex review` trigger.
@@ -70,7 +71,7 @@ This supersedes the watch-only recovery design, `2026-10-31-shepherd-pr-counters
 
 ### Subcommands
 
-All print exactly one JSON object on stdout; exit 0 for an action, 2 for a tool error. A tool error's stdout carries only a fixed `code`; `gh` stderr and any other detail go to the report file.
+All print exactly one JSON object on stdout; exit 0 for an action, 1 for a refused `claim`, 2 for a tool error. A tool error's stdout carries only a fixed `code`; `gh` stderr and any other detail go to the report file.
 
 - **`start --model <name>`**: `<name>` must match `^[A-Za-z0-9. -]{1,40}$` (it goes into the public `@codex review` trigger's footer, `docs/attribution.md`, which the script can't detect). Then today's fail-fast key check, detached-HEAD check, PR lookup and every ref/SHA/owner regex, the cross-repo/author/default-branch limits, and the branch-mismatch check. No PR on a `fix-NNN` branch with the no-PR preconditions met → `{"action":"handoff","issue":<digits>}`, writing nothing. After the hand-off, if `/fix-gh-issue`'s outstanding list isn't exactly "nothing outstanding", the agent stops terminally as today; otherwise it runs `start` again (the one allowed second `start`), which now finds the draft PR. With a PR, `start` writes a fresh state file, with the deadline computed then (as today: once `<n>` is set, after any hand-off), and returns `{"action":"next"}` (or a stop).
 - **`next`**: each call does at most about 9 minutes of work (user decision): passes until the agent is needed, a wait slice runs out, or the call's budget is used, then returns. A call that only ran out of time returns `{"action":"next"}` with `status`; the agent prints it and runs `next` again. So an interrupted agent stops writes within minutes and the user sees a status line at least that often. It re-reads GitHub every pass (today's step 1 reads) and applies, in order, today's steps 1–6 minus the judgment parts:
@@ -85,7 +86,7 @@ All print exactly one JSON object on stdout; exit 0 for an action, 2 for a tool 
   - Handing out a `repair` counts it, sets `automerge` `off-by-run` (the skill runs `--disable-auto` before it pushes, as today), and sets `pending`.
   - Before any pass, if `pending` is set (the agent came back via `next` without a `record`, e.g. after compaction):
     - A rebase in progress, HEAD with commits not on `headRefOid`, or a dirty tracked tree → terminal stop naming what's local (today's recovered-pass guard).
-    - Pending `repair`, head unchanged: return the same `repair` action again, without counting another repair (the agent may never have started it).
+    - Pending `repair`, head unchanged: return the same `repair` action again, without counting another repair (the agent may never have started it); a third hand-out no subagent claimed stops with `STOP_REPAIR_UNCLAIMED`.
     - Pending `repair`, `headRefOid` equal to local HEAD: the repair's push landed before its `record`; apply `repair-pushed`'s effects. This holds for a rebase, whose head doesn't descend from `gated_head`. Any other new head is still foreign.
     - Pending `triage`: re-gather the evidence and hand out the triage again; counters unchanged.
     - Pending `ready`: as in step 4 above.
@@ -95,6 +96,8 @@ All print exactly one JSON object on stdout; exit 0 for an action, 2 for a tool 
   - `repair-stopped --resumable`: refunds the repair (as today's "repairs one lower") and sets `wait_first`.
   - `repair-stopped --terminal`: marks the run ended and returns a `stop` action with `automerge`, `queued` and, for cause `checks` with HEAD still at the gated head, today's list of `gh run rerun <id>` commands to try first in the report.
   - `triage --verdict infra|not-infra`.
+- **`claim --head <sha> --cause <cause>`** (#176, the repair subagent's step 1): under the lock, marks the pending, unclaimed `repair` of that head and cause `claimed` and prints `{"ok":true}`; otherwise exit 1 with `{"ok":false,"reason":…}`, writing nothing. While a repair is claimed, `next` returns `{"action":"repairing"}` (bounded by the deadline) and touches neither `evidence_dir` nor local work until the subagent's `record`; a stop then leaves `evidence_dir` in place. `start` on a live run with a claimed repair stops with `STOP_REPAIR_CLAIMED`, leaving the run live. Mid-rebase (HEAD detached), the current branch is the one the rebase is on, so these calls still find the run.
+- **`final` replay:** the stop, tool error or `done` that ended a run is stored as `final`; a later `next`, `record` or `claim` on that run prints it again (a refused `claim` names its `code`), so a reply lost to the subagent or a compaction isn't turned into `STOP_NO_RUN`.
 
 ### Actions
 

@@ -107,7 +107,7 @@ Run from the repo's main checkout. Gather facts first, then ask.
    ```
    Use plain `git worktree add`, not a wrapper script (such as `add-worktree`) that may start its own Claude session on the issue.
 5. **`cd` into the worktree in its own Bash call**, then confirm `git branch --show-current` prints `fix-<N>`. The `require-review-before-pr` hook only gates the review on that branch.
-6. **Run `/fix-gh-issue <N> autonomous sha256=<hash>`** (the policy file's hash, which it checks against its own fetch) via the Skill tool, in this session (it fans out to subagents, so it can't run inside one). If 2.4 or 2.5 failed, don't run it: the issue needs a human, and 2.7 only finishes its entry.
+6. **Run `/fix-gh-issue <N> autonomous sha256=<hash>`** (the policy file's hash, which it checks against its own fetch) via the Skill tool, in this session. If 2.4 or 2.5 failed, don't run it: the issue needs a human, and 2.7 only finishes its entry.
 7. **Record and merge.** First add its final line's `pr`, `state`, and `ci` to the entry as `result: pr=… state=… ci=…` (they aren't issue text; the reason is). Then append its directives to `<run>.directives` (Read + Edit, per Rules), and `rm -f "${TMPDIR:-/tmp}/<repo>/issue-<N>.txt"` in case it stopped before deleting it. `cd` into the worktree in its own Bash call (`fix-gh-issue` may have left you elsewhere), apply section 3, finish the run log entry (`outcome:`, PR, reason, follow-up issues), `cd` back to the policy's `checkout`, and continue.
 
 Stop the loop when the queue is empty, the PR cap is reached, the policy check fails, or three issues in a row end on a network failure.

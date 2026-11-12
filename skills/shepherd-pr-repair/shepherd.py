@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """State machine for /shepherd-pr: carries the current branch's PR to merged.
 
-Subcommands print exactly one JSON object on stdout (exit 0 for an action, 2
-for a tool error):
+Subcommands print exactly one JSON object on stdout (exit 0 for an action, 1
+for a refused claim, 2 for a tool error):
 
   start --model NAME   Check the branch and PR, then write a fresh state file.
                        Returns next, handoff, busy or stop.
@@ -11,6 +11,15 @@ for a tool error):
   record EVENT         Report what only the agent knows: repair-pushed,
                        repair-stopped --resumable|--terminal, or
                        triage --verdict infra|not-infra.
+  claim --head SHA --cause CAUSE
+                       A repair subagent's step 1: claim the live run's pending,
+                       unclaimed repair of that head and cause. Exit 0 with
+                       {"ok":true} (claimed) or {"action":"busy"}; exit 1 with
+                       {"ok":false,"reason":...} (refused, nothing written;
+                       "already-claimed" when another subagent holds it).
+
+A `next` or `record` on a run that a stop, tool error or `done` ended prints
+that same object again.
 
 State lives in `<git-dir>/kitchen-sink/shepherd/<n>.json`; see
 docs/superpowers/specs/2026-11-12-shepherd-pr-script-design.md.
@@ -22,6 +31,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -46,6 +56,8 @@ GH_WAIT_MARGIN = 35  # a `gh-wait` slice ends this long before the budget: its l
 MIN_SLICE = 30
 UNKNOWN_WAIT = 30
 EVIDENCE_PREFIX = "shepherd-evidence-"
+MAX_UNCLAIMED = 2  # hand-outs of one repair no subagent claimed (a compaction re-issues once); a third would loop
+ALREADY_CLAIMED = "already-claimed"  # `claim`'s refusal for a held repair: a stable reason for the subagent's report
 MATCH_TIMEOUT = 30  # the remediation regexes are user-supplied
 LOG_LINES, LOG_BYTES = 300, 65536  # an evidence log's tail
 REPORT_LOG_LINES = 20
@@ -102,6 +114,14 @@ class Stop(Exception):
         super().__init__(code)
         self.code, self.terminal, self.report = code, terminal, report
         self.fields = fields or {}  # extra validated stdout fields: automerge, queued
+
+
+class Replay(Stop):
+    """An ended run's stored `final` object, printed again as it was (its report file is the script's own)."""
+
+    def __init__(self, final):
+        super().__init__(final.get("code") or final["action"], True, [])  # `done` has no code
+        self.final = final
 
 
 class Resumable(Exception):
@@ -226,13 +246,17 @@ def end_state(n):
     """Mark an existing state file ended; the caller holds the lock."""
     state = load_state(n)
     if state is not None:
-        state["ended"] = True
+        state.update(ended=True, final=None)  # an earlier run's `final` would replay over this stop
         save_state(n, state)
 
 
-def emit_stop(stop):
+def stop_object(stop):
     report = write_report(stop.report)
-    return emit({"action": "stop", "terminal": stop.terminal, "code": stop.code, "report": report, **stop.fields})
+    return {"action": "stop", "terminal": stop.terminal, "code": stop.code, "report": report, **stop.fields}
+
+
+def emit_stop(stop):
+    return emit(stop_object(stop))
 
 
 def find_pr():
@@ -247,16 +271,36 @@ def find_pr():
 
 def live_state(n):
     state = load_state(n)
+    if state is not None and state["ended"] and state.get("final"):
+        raise Replay(state["final"])  # e.g. `next` after a repair subagent's `record` ended the run
     if state is None or state["ended"]:
         raise Stop("STOP_NO_RUN", True, [f"No live /shepherd-pr run for PR #{n}; run /shepherd-pr."])
     return state
 
 
-def finish(state):
-    """End the run: every stop and done."""
+def claimed(state):
+    return bool((state["pending"] or {}).get("claimed"))
+
+
+def finish(state, keep_evidence=False, final=None):
+    """End the run: every stop and done. `final` is the stop, tool error or done printed, which `live_state` replays."""
+    if keep_evidence:
+        state["evidence_dir"] = None  # a claimed repair's subagent may still read it: leave it in the temp dir
     drop_evidence(state)
-    state["ended"] = True
+    state.update(ended=True, final=final)
     save_state(state["pr"], state)
+
+
+def end_on_failure(state, step, keep_claimed=False):
+    """Run `step`; a stop or tool error ends the run with that object stored as `final`, then prints it."""
+    try:
+        return step()
+    except Stop as stop:
+        final = stop_object(stop)
+    except Exception as e:  # noqa: BLE001 - a tool error ends the run too
+        final = tool_error_object("CMD_FAILED", f"{type(e).__name__}: {e}")
+    finish(state, keep_evidence=keep_claimed and claimed(state), final=final)
+    raise Replay(final)
 
 
 def drop_evidence(state):
@@ -322,7 +366,24 @@ def _pr_failure(pr, viewer, repo, branch):
     )
 
 
+def claimed_stop(n):
+    """STOP_REPAIR_CLAIMED when PR n's live run has a claimed repair (a reset would hand out a second), else None."""
+    old = load_state(n)
+    if old and not old["ended"] and claimed(old):
+        pending = old["pending"]
+        return Stop("STOP_REPAIR_CLAIMED", True, [
+            f"A repair subagent claimed this run's {pending['cause']} repair of {pending['head']} and may still be running.",
+            "If none is running in any session, run"
+            f" `python3 {shlex.quote(os.path.abspath(__file__))} record repair-stopped --terminal` to end the run,"
+            " then /shepherd-pr again.",
+        ])  # fmt: skip
+    return None
+
+
 def _start_with_pr(n, branch, model, minutes):
+    stop = claimed_stop(n)
+    if stop:
+        return emit_stop(stop)  # returned, not raised: `cmd_start` must not end the claimed run
     pr = gh_json(
         ["pr", "view", str(n), "--json", "number,state,isCrossRepository,author,baseRefName,headRefName,headRefOid"]
     )
@@ -349,6 +410,7 @@ def _start_with_pr(n, branch, model, minutes):
 
 
 def cmd_start(args):
+    detached = Stop("STOP_DETACHED", True, ["HEAD is detached; check out the PR's branch."])
     if not rules.valid_model(args.model):
         raise Stop("STOP_BAD_MODEL", True, ["--model must match ^[A-Za-z0-9. -]{1,40}$."])
     proc = run(["git", "config", "--local", "--get", TIMEOUT_KEY], check=False)
@@ -358,9 +420,12 @@ def cmd_start(args):
         minutes = rules.timeout_minutes(proc.stdout.strip() if proc.returncode == 0 else None)
     except rules.RuleError as e:
         raise Stop("STOP_BAD_TIMEOUT", True, [str(e), "Fix or unset the key."]) from None
-    branch = run(["git", "branch", "--show-current"]).stdout.strip()
-    if not branch:
-        raise Stop("STOP_DETACHED", True, ["HEAD is detached; check out the PR's branch."])
+    branch, rebasing = current_branch()
+    pointer = load_pointer()
+    if rebasing and pointer and pointer["branch"] == branch:
+        raise claimed_stop(pointer["pr"]) or detached  # a claimed repair's subagent may be mid-rebase
+    if not branch or rebasing:
+        raise detached
     n, error = find_pr()
     if n is None:
         return _handoff(branch, error)
@@ -433,6 +498,8 @@ def check_deadline(state, snap=None):
     """The run's soft deadline: before each resumable wait, each watch poll and after each Codex wait."""
     if time.time() >= state["deadline"]:
         lines = ["The run's deadline passed; run /shepherd-pr again to continue."]
+        if claimed(state):
+            lines.append("A repair subagent may still be running and push; check `git log` and the PR before re-running.")
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
 
@@ -482,13 +549,34 @@ def local_head():
     return run(["git", "rev-parse", "HEAD"]).stdout.strip()
 
 
+def rebase_dir():
+    """The state directory of the rebase in progress, else None."""
+    for name in ("rebase-merge", "rebase-apply"):
+        path = run(["git", "rev-parse", "--git-path", name]).stdout.strip()
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def current_branch():
+    """(branch, rebasing): the checked-out branch, or, while a rebase has HEAD detached, the branch it rebases."""
+    branch = run(["git", "branch", "--show-current"]).stdout.strip()
+    path = None if branch else rebase_dir()
+    if path:
+        with contextlib.suppress(OSError), open(os.path.join(path, "head-name")) as f:
+            head = f.read().strip()
+            name = head.removeprefix("refs/heads/")
+            if head.startswith("refs/heads/") and rules.valid_ref(name):  # the file is git's, but checked as any ref is
+                return name, True
+    return branch, False
+
+
 def local_work_guard(head):
     """Pending work the agent may have abandoned (compaction): stop rather than build on or lose it."""
     if not rules.valid_sha(head):
         raise Stop("STOP_BAD_SHA", True, ["headRefOid is not a 40-hex SHA."])
-    for name in ("rebase-merge", "rebase-apply"):
-        if os.path.exists(run(["git", "rev-parse", "--git-path", name]).stdout.strip()):
-            raise Stop("STOP_LOCAL_WORK", True, ["A rebase is in progress, possibly the repair's; `git rebase --abort` ends it."])
+    if rebase_dir():
+        raise Stop("STOP_LOCAL_WORK", True, ["A rebase is in progress, possibly the repair's; `git rebase --abort` ends it."])
     cmd = ["git", "fetch", "origin"]
     try:
         proc = run(cmd, check=False)
@@ -637,7 +725,13 @@ def repair_action(state, cause, evidence_dir=None):
 
 def hand_out(state, action):
     """A repair, new or re-issued: auto-merge off by this run (the skill disables it before pushing), pending."""
-    state.update(automerge="off-by-run", pending=action, queue_watch=None)  # the repair's push starts the watch over
+    issued = action.pop("issued", 0) + 1  # a re-issue carries pending's count; a claim clears it
+    if issued > MAX_UNCLAIMED:
+        raise Stop("STOP_REPAIR_UNCLAIMED", True, [
+            f"The repair subagent stopped before claiming this run's {action['cause']} repair of {action['head']} twice.",
+            "Check the subagent's reported reason, then run /shepherd-pr again.",
+        ])  # fmt: skip
+    state.update(automerge="off-by-run", pending={**action, "issued": issued}, queue_watch=None)  # the repair's push starts the watch over
     return dict(action)
 
 
@@ -1180,6 +1274,9 @@ def pass_once(state, snap, budget_end):
     if pr["state"] == "MERGED":
         return {"action": "done", "merged": True}
     check_limits(state, snap)
+    if claimed(state):  # its subagent reads evidence_dir and leaves local work: touch neither
+        check_deadline(state, snap)
+        return {"action": "repairing"}  # until its `record`, whatever the PR's head
     reissue = handle_pending(state, snap) if state["pending"] else None  # may adopt a pushed head first
     step1_checks(state, snap)
     check_declines(state, snap)
@@ -1196,7 +1293,7 @@ def pass_once(state, snap, budget_end):
 
 def _pr_or_stop():
     pointer = load_pointer()
-    if pointer and pointer["branch"] == run(["git", "branch", "--show-current"]).stdout.strip():
+    if pointer and pointer["branch"] == current_branch()[0]:  # mid-rebase too: a claimed repair's subagent may be in one
         return pointer["pr"]  # `check_limits` re-checks the PR's headRefName against the branch every pass
     n, error = find_pr()
     if n is None:
@@ -1208,13 +1305,9 @@ def cmd_next(_args):
     n = _pr_or_stop()
     with locked(n):
         state = live_state(n)
-        try:
-            action = next_loop(state, time.time() + BUDGET)
-        except Exception:  # every stop, and a tool error: the agent ends the run on both
-            finish(state)
-            raise
+        action = end_on_failure(state, lambda: next_loop(state, time.time() + BUDGET), keep_claimed=True)
         if action["action"] == "done":
-            finish(state)
+            finish(state, keep_evidence=claimed(state), final=action)  # a lost `done` replays, not STOP_NO_RUN
         else:
             save_state(n, state)
         return emit(action)
@@ -1226,6 +1319,7 @@ def cmd_next(_args):
 def record_repair_pushed(state, _args):
     if (state["pending"] or {}).get("action") != "repair":
         return {"action": "next"}  # nothing handed out (or `next` already adopted it): the pass re-reads
+    state["pending"].pop("claimed", None)  # its subagent is done: a deferred adopt below falls to the next pass
     for lag in range(3):  # GitHub's headRefOid can trail a push by a moment; `next` would re-issue the repair
         try:
             snap, local = read_pr(state), local_head()
@@ -1299,13 +1393,36 @@ def cmd_record(args):
     n = _pr_or_stop()
     with locked(n):
         state = live_state(n)
-        try:
-            action = RECORDERS[args.event](state, args)
-        except Exception:  # every stop, and a tool error: the agent ends the run on both
-            finish(state)
-            raise
+        action = end_on_failure(state, lambda: RECORDERS[args.event](state, args))
         save_state(n, state)
         return emit(action)
+
+
+def cmd_claim(args):
+    """A repair subagent's step 1: it can't see the conversation that dispatched it, so the state is the check, and
+    claiming under the lock lets only one subagent take a handed-out repair."""
+    if not rules.valid_sha(args.head):
+        emit({"ok": False, "reason": "--head is not a 40-hex SHA"})
+        return 1
+    try:
+        n = _pr_or_stop()
+        with locked(n):
+            state = live_state(n)
+            pending = state["pending"] or {}
+            want = {"action": "repair", "head": args.head, "cause": args.cause}
+            if {k: pending.get(k) for k in want} != want:
+                reason = "no pending repair for this head and cause"
+            elif pending.get("claimed"):
+                reason = ALREADY_CLAIMED
+            else:
+                pending.pop("issued", None)  # claimed: only hand-outs since a claim count toward MAX_UNCLAIMED
+                pending["claimed"] = True
+                save_state(n, state)
+                return emit({"ok": True})
+    except Stop as stop:
+        reason = stop.code
+    emit({"ok": False, "reason": reason})
+    return 1
 
 
 def main(argv=None):
@@ -1322,6 +1439,10 @@ def main(argv=None):
     how.add_argument("--terminal", action="store_true")
     r.add_argument("--verdict", choices=("infra", "not-infra"))
     r.set_defaults(func=cmd_record)
+    c = sub.add_parser("claim")
+    c.add_argument("--head", required=True)
+    c.add_argument("--cause", required=True, choices=("checks", "codex", "rebase"))
+    c.set_defaults(func=cmd_claim)
     args = p.parse_args(argv)
     global hard_end
     hard_end = time.time() + HARD_CAP
@@ -1329,14 +1450,21 @@ def main(argv=None):
         return args.func(args)
     except Busy:
         return emit({"action": "busy"})
+    except Replay as replay:
+        emit(replay.final)
+        return 0 if "action" in replay.final else 2
     except Stop as stop:
         return emit_stop(stop)
     except Exception as e:  # noqa: BLE001 - every call must print one JSON object
         return _tool_error("CMD_FAILED", f"{type(e).__name__}: {e}")
 
 
+def tool_error_object(code, detail):
+    return {"code": code, "report": write_report([fence(detail)])}
+
+
 def _tool_error(code, detail):
-    print(json.dumps({"code": code, "report": write_report([fence(detail)])}, separators=(",", ":")))
+    emit(tool_error_object(code, detail))
     return 2
 
 
