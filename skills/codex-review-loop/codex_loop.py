@@ -46,8 +46,6 @@ ROUNDS_RANGE = range(1, 6)
 ROUNDS_DEFAULT = 3
 BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox"
 BWRAP_MARKER = "error building bubblewrap command"
-# A quote or backtick before the marker on its line means echoed source, not Codex's error.
-BWRAP_RE = re.compile(rf"^[^\"'`\n]*?{re.escape(BWRAP_MARKER)}", re.I | re.M)
 MODES = ("off", "local", "github")
 BOT_LOGIN = "chatgpt-codex-connector[bot]"
 BLOCKING = {"P0", "P1", "P2"}
@@ -232,7 +230,7 @@ def blind_review_reason(text, stderr, result, bypass):
     if result["blocking"] or result["advisory"]:
         return None
     # With the bypass, Codex builds no bubblewrap sandbox, so the marker can only be echoed text.
-    if not bypass and BWRAP_RE.search(f"{text}\n{stderr}"):
+    if not bypass and BWRAP_MARKER in f"{text}\n{stderr}".lower():
         return f"Codex's sandbox failed to start ({BWRAP_MARKER})"
     first = next((l.strip() for l in text.splitlines() if l.strip()), "")
     if first.lower().startswith("review blocked"):
@@ -285,18 +283,19 @@ def cmd_local_review(args):
         msg = f"{' '.join(cmd)} exited {proc.returncode}"
         if proc.returncode == 101:
             msg += " (a Codex panic, see openai/codex#55242; retried once)"
-        if not sandbox["enabled"] and BWRAP_RE.search(log):
+        if not sandbox["enabled"] and BWRAP_MARKER in log.lower():
             msg += bypass_hint(sandbox)
         raise ToolError(f"{msg}: {log[-4096:]} (log: {log_path})")
     with open(out_path, encoding="utf-8") as fh:
         text = fh.read()
-    if not text.strip():
-        raise ToolError(f"codex review produced no output ({out_path}; log: {log_path})")
     result = parse_local_review(text)
+    # Checked before the empty-output error: a sandbox failure can exit 0 with an empty -o file.
     reason = blind_review_reason(text, log, result, sandbox["enabled"])
     if reason:
         msg = f"codex review could not inspect the diff: {reason} (raw output: {out_path})"
         raise ToolError(msg + bypass_hint(sandbox))
+    if not text.strip():
+        raise ToolError(f"codex review produced no output ({out_path}; log: {log_path})")
     result["outer_sandbox"] = sandbox
     result["raw_output"] = out_path
     result["summary"] = text.strip().splitlines()[0]
