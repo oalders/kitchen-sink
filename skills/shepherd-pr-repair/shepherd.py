@@ -1317,7 +1317,7 @@ def pass_once(state, snap, budget_end):
     action = codex_gate(state, snap, budget_end)
     if action:
         return action
-    # A verdict serves only the first pass through step 3 after its `record`; a cut-off pass or failed `gh` keeps it.
+    # A verdict serves only the first pass after its `record` to reach step 3 or its watch; a cut-off or failed `gh` keeps it.
     try:
         action = show_and_act(state, snap) or watch(state, snap, budget_end)
     except Resumable:
