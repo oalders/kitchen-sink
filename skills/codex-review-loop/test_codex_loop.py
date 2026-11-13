@@ -95,9 +95,28 @@ BLOCKED_OUTPUT = (
 )
 
 
+# Real Codex v0.167.0 stderr with the bypass off in an outer sandbox: exit 0, empty -o file.
+CAPTURED_BWRAP_STDERR = (
+    'OpenAI Codex v0.167.0\n'
+    '--------\n'
+    'workdir: /home/olaf/.worktree/kitchen-sink/2026-11-13/fix-173\n'
+    'model: gpt-6.1-sol\n'
+    'provider: openai\n'
+    'approval: never\n'
+    'sandbox: workspace-write [workdir, /tmp, $TMPDIR]\n'
+    'reasoning effort: medium\n'
+    'reasoning summaries: none\n'
+    '--------\n'
+    'user\n'
+    "changes against '5b5f0819574ecab0bffd73e4aa0320448471ca37'\n"
+    'codex\n'
+    'Unable to assess correctness: running the requested git diff failed because the execution sandbox could not start (`error building bubblewrap command: Permission denied`). No code was inspected; this verdict is not a confirmed defect. Please provide the diff or restore command execution.\n'
+)
+
+
 class BlindReview(unittest.TestCase):
-    def reason(self, text, stderr=""):
-        return cl.blind_review_reason(text, stderr, cl.parse_local_review(text))
+    def reason(self, text, stderr="", bypass=False):
+        return cl.blind_review_reason(text, stderr, cl.parse_local_review(text), bypass)
 
     def test_review_blocked_summary_is_blind(self):
         self.assertIsNotNone(self.reason(BLOCKED_OUTPUT))
@@ -106,6 +125,9 @@ class BlindReview(unittest.TestCase):
     def test_bubblewrap_in_stderr_is_blind(self):
         stderr = "exec failed: error building bubblewrap command: Permission denied"
         self.assertIsNotNone(self.reason(CLEAN_OUTPUT, stderr))
+
+    def test_bubblewrap_error_under_bypass_not_blind(self):
+        self.assertIsNone(self.reason(CLEAN_OUTPUT, "exec failed: " + cl.BWRAP_MARKER + ": x", bypass=True))
 
     def test_clean_review_is_not_blind(self):
         self.assertIsNone(self.reason(CLEAN_OUTPUT, "WARNING: something"))
@@ -375,12 +397,37 @@ class LocalReviewIntegration(unittest.TestCase):
         with open(os.path.join(self.tmp.name, name), "w") as fh:
             fh.write(content)
 
-    def test_bwrap_failure_in_log_is_tool_error(self):
-        self.write_control("stderr.txt", f"{cl.BWRAP_MARKER}: no permissions\n")
+    def test_captured_bwrap_failure_is_tool_error(self):
+        self.write_control("stderr.txt", CAPTURED_BWRAP_STDERR)
+        rc, out, _ = self.run_review("", False)
+        self.assertEqual(rc, 2)
+        self.assertIn("sandbox failed to start", out["error"])
+        self.assertIn("ask the user to run", out["error"])
+        self.assertEqual(self.calls(), 1)
+
+    def test_bwrap_error_under_bypass_passes(self):
+        echo = 'BWRAP_MARKER = "error building bubblewrap command"\n'
+        self.write_control("stderr.txt", echo + f"exec failed: {cl.BWRAP_MARKER}: x\n")
+        rc, out, argv = self.run_review(CLEAN_OUTPUT, True)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out["clean"])
+        self.assertIn(cl.BYPASS_FLAG, argv)
+
+    def test_bwrap_failure_with_nonzero_exit_under_bypass_does_not_suggest_bypass(self):
+        self.write_control("stderr.txt", f"exec failed: {cl.BWRAP_MARKER}: x\n")
+        self.write_control("exit.txt", "1")
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, True)
+        self.assertEqual(rc, 2)
+        self.assertIn("exited 1", out["error"])
+        self.assertNotIn("ask the user to run", out["error"])
+
+    def test_bwrap_failure_with_nonzero_exit_suggests_bypass(self):
+        self.write_control("stderr.txt", f"exec failed: {cl.BWRAP_MARKER}: no permissions\n")
+        self.write_control("exit.txt", "1")
         rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
         self.assertEqual(rc, 2)
-        self.assertIn("could not inspect the diff", out["error"])
-        self.assertEqual(self.calls(), 1)
+        self.assertIn("ask the user to run", out["error"])
+        self.assertNotIn("already on", out["error"])
 
     def test_panic_reports_log_tail(self):
         self.write_control("stderr.txt", "HEAD-OF-OUTPUT\n" + "x" * 70000 + "\nthread 'main' panicked: EAGAIN\n")
