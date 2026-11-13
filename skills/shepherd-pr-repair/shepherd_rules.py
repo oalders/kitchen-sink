@@ -28,7 +28,7 @@ def valid_id(s):
 
 def valid_model(s):
     """The model version (e.g. `Opus 5.5`), not the ID: it goes into the public
-    `@codex review` footer, whose shape the gh wrapper enforces."""
+    `@codex review` footer. Mirrors the trailer check in dot-files `bin/gh`."""
     return re.fullmatch(r"(Claude )?(Opus|Sonnet|Haiku|Fable) [0-9]+(\.[0-9]+)?", s) is not None
 
 

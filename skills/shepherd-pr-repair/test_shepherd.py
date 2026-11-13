@@ -165,6 +165,12 @@ class TestRules(unittest.TestCase):
         for bad in ("a..b", "a/b", ""):
             self.assertFalse(rules.valid_name(bad), bad)
 
+    def test_valid_model(self):
+        for ok in ("Opus 5.5", "Claude Sonnet 5.5", "Haiku 4", "Fable 1.0"):
+            self.assertTrue(rules.valid_model(ok), ok)
+        for bad in ("claude-opus-5-5", "opus 5.5", "Opus", "Opus 5.5.1", "Opus 5.5\n", ""):
+            self.assertFalse(rules.valid_model(bad), repr(bad))
+
     # --- decision rules: pure, so tested with literal inputs ---
 
     @staticmethod

@@ -4,7 +4,8 @@
 Subcommands print exactly one JSON object on stdout (exit 0 for an action, 1
 for a refused claim, 2 for a tool error):
 
-  start --model NAME   Check the branch and PR, then write a fresh state file.
+  start --model VERSION
+                       Check the branch and PR, then write a fresh state file.
                        Returns next, handoff, busy or stop.
   next                 Pass over the PR until the agent is needed or about 9
                        minutes are used. Returns any action.
