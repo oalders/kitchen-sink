@@ -420,7 +420,7 @@ def _start_with_pr(n, branch, model, minutes):
 def cmd_start(args):
     detached = Stop("STOP_DETACHED", True, ["HEAD is detached; check out the PR's branch."])
     if not rules.valid_model(args.model):
-        raise Stop("STOP_BAD_MODEL", True, ["--model must match ^[A-Za-z0-9. -]{1,40}$."])
+        raise Stop("STOP_BAD_MODEL", True, ["--model must be the running model's version, e.g. \"Opus 5.5\" (not the model ID claude-opus-5-5)."])
     proc = run(["git", "config", "--local", "--get", TIMEOUT_KEY], check=False)
     if proc.returncode not in (0, 1):  # 1 means the key is unset
         raise GhError(proc.args, proc.returncode, proc.stderr)

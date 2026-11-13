@@ -398,7 +398,7 @@ class TestStart(Env):
                 "git rev-list --count origin/main..HEAD": "2\n",
             }
         )
-        code, out = self.main("start", "--model", "X")
+        code, out = self.main("start", "--model", "Opus 5.5")
         self.assertEqual((code, out), (0, {"action": "handoff", "issue": 12}))
         self.assertFalse(os.path.exists(os.path.join(self.git_dir, "kitchen-sink", "shepherd", "12.json")))
 
@@ -414,14 +414,15 @@ class TestStart(Env):
         for name, (replies, code) in cases.items():
             with self.subTest(name):
                 self.replies.update(replies)
-                rc, out = self.main("start", "--model", "X")
+                rc, out = self.main("start", "--model", "Opus 5.5")
                 self.assertEqual((rc, out["action"], out["terminal"], out["code"]), (0, "stop", True, code))
                 self.assertFalse(os.path.exists(self.state_file()))
                 self.reset_replies()  # fresh replies for the next case
-        with self.subTest("bad model"):
-            code, out = self.main("start", "--model", "bad;model")
-            self.assertEqual((out["action"], out["terminal"], out["code"]), ("stop", True, "STOP_BAD_MODEL"))
-            self.assertFalse(os.path.exists(self.state_file()))
+        for model in ("bad;model", "claude-opus-5-5"):
+            with self.subTest("bad model", model=model):
+                code, out = self.main("start", "--model", model)
+                self.assertEqual((out["action"], out["terminal"], out["code"]), ("stop", True, "STOP_BAD_MODEL"))
+                self.assertFalse(os.path.exists(self.state_file()))
 
     def test_start_handoff_stops(self):
         base = {
@@ -443,15 +444,15 @@ class TestStart(Env):
                 self.reset_replies()
                 self.replies.update(base)
                 self.replies.update(replies)
-                rc, out = self.main("start", "--model", "X")
+                rc, out = self.main("start", "--model", "Opus 5.5")
                 self.assertEqual((rc, out["action"], out["code"]), (0, "stop", code))
                 state_dir = os.path.join(self.git_dir, "kitchen-sink", "shepherd")
                 self.assertEqual([f for f in os.listdir(state_dir) if f.endswith(".json")] if os.path.isdir(state_dir) else [], [])
 
     def test_rejected_start_ends_live_state(self):
-        self.main("start", "--model", "X")
+        self.main("start", "--model", "Opus 5.5")
         self.replies["gh pr view 7"] = pr_view(isCrossRepository=True)
-        self.assertEqual(self.main("start", "--model", "X")[1]["action"], "stop")
+        self.assertEqual(self.main("start", "--model", "Opus 5.5")[1]["action"], "stop")
         self.assertTrue(sh.load_state(7)["ended"])
         lock = os.path.join(self.git_dir, "kitchen-sink", "shepherd", "7.lock")
         self.assertEqual(os.stat(lock).st_mode & 0o777, 0o600)
@@ -466,15 +467,15 @@ class TestStart(Env):
             with self.subTest(name):
                 self.reset_replies()
                 self.replies.update(replies)
-                code, out = self.main("start", "--model", "X")
+                code, out = self.main("start", "--model", "Opus 5.5")
                 self.assertEqual((code, out["code"]), (2, "CMD_FAILED"))
                 self.assertFalse(os.path.exists(self.state_file()))
 
     def test_lock_busy(self):
-        self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})
+        self.assertEqual(self.main("start", "--model", "Opus 5.5")[1], {"action": "next"})
         before = self.read_state_bytes()
         with sh.locked(7):
-            code, out = self.main("start", "--model", "X")
+            code, out = self.main("start", "--model", "Opus 5.5")
         self.assertEqual((code, out), (0, {"action": "busy"}))
         self.assertEqual(self.read_state_bytes(), before)
 
@@ -518,7 +519,7 @@ class TestStart(Env):
         self.assertEqual(sh.load_pointer(), {"branch": "fix-174", "pr": 7})
 
     def test_start_writes_pointer(self):
-        self.main("start", "--model", "X")
+        self.main("start", "--model", "Opus 5.5")
         self.assertEqual(sh.load_pointer(), {"branch": "fix-174", "pr": 7})
         path = os.path.join(self.git_dir, "kitchen-sink", "shepherd", "pointer.json")
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
@@ -686,7 +687,7 @@ class Next(NextBase):
                 self.rebasing(head_name)
                 self.live(pending=pending)
                 before = self.read_state_bytes()
-                out = self.main("start", "--model", "X")[1]
+                out = self.main("start", "--model", "Opus 5.5")[1]
                 self.assertEqual((out["action"], out["code"]), ("stop", code))
                 self.assertEqual(self.read_state_bytes(), before)
                 self.assertEqual(self.lookups(), [])  # decided from the pointer, before any PR lookup
@@ -1165,25 +1166,25 @@ class Next(NextBase):
         before = self.read_state_bytes()
         script = "/a dir/shepherd.py"  # the report's command line must quote it
         with mock.patch.object(sh, "__file__", script):
-            out = self.main("start", "--model", "X")[1]
+            out = self.main("start", "--model", "Opus 5.5")[1]
         self.assertEqual((out["action"], out["terminal"], out["code"]), ("stop", True, "STOP_REPAIR_CLAIMED"))
         self.assertIn(f"python3 {shlex.quote(script)} record repair-stopped --terminal", self.report(out))
         self.assertEqual(self.read_state_bytes(), before)  # still live: the real subagent can still record
         self.assert_stop(self.main("record", "repair-stopped", "--terminal")[1], "STOP_REPAIR_STOPPED")
-        self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})
+        self.assertEqual(self.main("start", "--model", "Opus 5.5")[1], {"action": "next"})
 
     def test_start_stop_clears_an_ended_runs_final(self):
         self.live(pending=self.claimed())
         self.assert_stop(self.main("record", "repair-stopped", "--terminal")[1], "STOP_REPAIR_STOPPED")
         self.replies["gh pr view 7"] = pr_full(state="CLOSED")
-        self.assertEqual(self.main("start", "--model", "X")[1]["code"], "STOP_CLOSED")
+        self.assertEqual(self.main("start", "--model", "Opus 5.5")[1]["code"], "STOP_CLOSED")
         self.assertEqual(self.main("next")[1]["code"], "STOP_NO_RUN")  # not the earlier run's STOP_REPAIR_STOPPED
 
     def test_start_resets_ended_or_unclaimed(self):
         for name, state in (("ended", {"ended": True, "pending": self.claimed()}), ("unclaimed", {"pending": self.repair()})):
             with self.subTest(name):
                 self.live(**state)
-                self.assertEqual(self.main("start", "--model", "X")[1], {"action": "next"})
+                self.assertEqual(self.main("start", "--model", "Opus 5.5")[1], {"action": "next"})
                 state = sh.load_state(7)
                 self.assertEqual((state["ended"], state["pending"]), (False, None))
 
@@ -1196,7 +1197,7 @@ class Next(NextBase):
                 self.live(pending={**self.repair(), "evidence_dir": evidence}, evidence_dir=evidence)
                 self.reset_replies()
                 self.replies.update(replies)
-                out = self.main("start", "--model", "X")[1]
+                out = self.main("start", "--model", "Opus 5.5")[1]
                 self.assertEqual(out["action"], {"reset": "next", "merged": "done", "stop": "stop"}[name])
                 self.assertFalse(os.path.exists(evidence))
 
@@ -1204,7 +1205,7 @@ class Next(NextBase):
         self.live()
         self.reset_replies()
         self.replies["gh api user"] = RuntimeError("boom")
-        self.assertEqual(self.main("start", "--model", "X")[1]["code"], "CMD_FAILED")
+        self.assertEqual(self.main("start", "--model", "Opus 5.5")[1]["code"], "CMD_FAILED")
         self.assertTrue(sh.load_state(7)["ended"])
 
     def test_deadline_checked_before_the_first_pass_acts(self):
