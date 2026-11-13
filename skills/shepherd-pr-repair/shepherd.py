@@ -511,6 +511,11 @@ def check_deadline(state, snap=None):
         lines = ["The run's deadline passed; run /shepherd-pr again to continue."]
         if claimed(state):
             lines.append("A repair subagent may still be running and push; check `git log` and the PR before re-running.")
+        gate = state.get("codex")
+        if snap is not None and snap["pr"]["reviewDecision"] in rules.REVIEW_BLOCKED:
+            lines.append("It was still waiting for a review decision; a reviewer must act.")
+        elif snap is not None and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["final"] and gate["head"] not in state["codex_passed"]:
+            lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
 
@@ -530,7 +535,8 @@ def next_loop(state, budget_end):
     try:
         if state["wait_first"]:
             state["wait_first"] = False
-            resumable_wait(state, budget_end)
+            if time.time() < state["deadline"]:  # past it, the pass's deadline check reports why with the PR's status
+                resumable_wait(state, budget_end)
         while time.time() < budget_end:
             try:
                 snap = read_pr(state)
@@ -812,6 +818,7 @@ def codex_gate(state, snap, budget_end):
     info = codex_info()
     if info["mode"] != "github":
         return codex_pass(state, head, gate, f"Codex gate not checked (mode `{info['mode']}`)")
+    polling = False  # codexTimeoutAction=stop after the last trigger's window: poll, no more triggers, until the deadline
     while True:
         if gate["trigger"] is None:
             result = gh_wait(state, head, 0)  # a check of existing reviews
@@ -819,7 +826,7 @@ def codex_gate(state, snap, budget_end):
             seconds = int(budget_end - time.time()) - GH_WAIT_MARGIN
             if seconds < MIN_SLICE:
                 raise OutOfBudget()
-            result = gh_wait(state, head, seconds, gate["trigger"], gate["windows"])
+            result = gh_wait(state, head, seconds) if polling else gh_wait(state, head, seconds, gate["trigger"], gate["windows"])
             if result.get("status") not in ("clean", "findings"):
                 check_deadline(state, snap)
         status = result.get("status")
@@ -853,11 +860,9 @@ def codex_gate(state, snap, budget_end):
             minutes = info["minutes"]
             window = f"{minutes * gate['windows']} min" if minutes else "the bot window"
             return codex_pass(state, head, gate, f"Codex gate: no review within {window}; passed by codexTimeoutAction=proceed")
-        raise Stop(
-            "STOP_CODEX_TIMEOUT", True,
-            ["The Codex bot hasn't reviewed this head; a silent bot is not approval.",
-             "Run /shepherd-pr again once it has, or to re-trigger."],
-        )  # fmt: skip
+        if polling:  # the next call re-checks the spent trigger at once, then polls again
+            raise OutOfBudget()
+        polling = True
 
 
 def fence(text):
@@ -1165,7 +1170,6 @@ def reread_action(state, snap, outcome):
 
 
 OPEN_STOPS = {
-    "review-required": ("STOP_REVIEW_REQUIRED", "A reviewer must act: review required or changes requested."),
     "dirty-queued": ("STOP_QUEUE_CONFLICT", "The PR conflicts with its base while queued; a person resolves it."),
     "turned-off": ("STOP_AUTOMERGE_OFF", "Auto-merge was turned off or the PR was dequeued; the user decides."),
 }
@@ -1176,7 +1180,7 @@ def open_action(state, snap):
     outcome = rules.open_outcome({**snap["pr"], **snap["queue"]}, snap["checks"], state["automerge"])
     if outcome == "rebase":
         return None  # the next pass's step 1 rebases it, without waiting
-    if outcome in ("pending", "resumable-off-by-run"):  # off by this run: step 4 re-enables it
+    if outcome in ("pending", "resumable-off-by-run", "review-required"):  # off by this run: step 4 re-enables it
         raise Resumable()
     code, message = OPEN_STOPS[outcome]
     raise Stop(code, True, [message])

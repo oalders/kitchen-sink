@@ -1358,26 +1358,34 @@ class Codex(NextBase):
     def test_codex_stop_retrigger(self):
         self.comments(555, 556)
         self.waits(self.timeout(), self.timeout(555, 1), self.timeout(556, 2))
-        out = self.main("next")[1]
-        self.assert_stop(out, "STOP_CODEX_TIMEOUT")
-        self.assertEqual(len(self.posts()), 2)  # never a third
+        self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertIn("--trigger-comment 556 --windows 1", self.gh_waits()[2])
-        self.assertEqual(len(self.gh_waits()), 3)
+        self.assertNotIn("--trigger-comment", self.gh_waits()[3])  # then polls, without a trigger
+        self.assertEqual(len(self.gh_waits()), 4)
         self.assertEqual(sh.load_state(7)["codex_passed"], [])
+        self.waits(self.timeout(556, 2), {"status": "clean"})
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertNotIn("--trigger-comment", self.gh_waits()[5])
+        self.assertEqual(len(self.posts()), 2)  # never a third
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
 
     def test_codex_stop_acknowledged_widens(self):
         self.comments(555)
         self.waits(self.timeout(), self.timeout(555, 1, True), self.timeout(555, 1, True))
-        self.assert_stop(self.main("next")[1], "STOP_CODEX_TIMEOUT")
+        self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertIn("--trigger-comment 555 --windows 2", self.gh_waits()[2])
         self.assertEqual(len(self.posts()), 1)
+        self.clock = NOW + 3600
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertIn("The Codex bot still hasn't reviewed this head", self.report(out))
 
     def test_codex_resumed_run_waits_once(self):
         self.waits(self.timeout(555, 2), self.timeout(555, 2))
-        self.assert_stop(self.main("next")[1], "STOP_CODEX_TIMEOUT")
+        self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(self.posts(), [])
         self.assertIn("--trigger-comment 555 --windows 1", self.gh_waits()[1])
-        self.assertEqual(len(self.gh_waits()), 2)
+        self.assertEqual(len(self.gh_waits()), 3)
 
     def test_codex_findings_repair(self):
         self.waits({"status": "findings"})
@@ -2184,9 +2192,12 @@ class Watch(NextBase):
 
     def test_open_outcomes(self):
         self.replies["gh pr view 7"] = pr_full(reviewDecision="REVIEW_REQUIRED")
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertIn("sleep 120", self.calls)  # waits for a reviewer
+        self.clock = NOW + 3600
         out = self.main("next")[1]
-        self.assert_stop(out, "STOP_REVIEW_REQUIRED")
-        self.assertEqual(out["automerge"], "on")
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertIn("still waiting for a review decision", self.report(out))
         self.setUp()
         self.replies["gh pr checks 7"] = [PENDING, checks(check())]
         self.replies["gh pr view 7"] = [pr_full(), pr_full(mergeStateStatus="BEHIND")]
