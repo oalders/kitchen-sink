@@ -186,9 +186,15 @@ def load_state(n):
 
 def _write_json(path, data):
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))  # mkstemp creates 0600
-    with os.fdopen(fd, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())  # a crash after the rename must not leave an empty state file
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
 
 
 def save_state(n, state):
@@ -381,9 +387,10 @@ def claimed_stop(n):
 
 
 def _start_with_pr(n, branch, model, minutes):
-    stop = claimed_stop(n)
-    if stop:
-        return emit_stop(stop)  # returned, not raised: `cmd_start` must not end the claimed run
+    old = load_state(n)
+    if old:
+        drop_evidence(old)  # stale on every path below; save so the kept state never names a deleted dir
+        save_state(n, old)
     pr = gh_json(
         ["pr", "view", str(n), "--json", "number,state,isCrossRepository,author,baseRefName,headRefName,headRefOid"]
     )
@@ -403,7 +410,7 @@ def _start_with_pr(n, branch, model, minutes):
             "gated_head": None, "codex_passed": [], "automerge": None, "repairs": 0, "rerun": 0, "infra": [],
             "requeued": None, "wait_first": False, "pending": None, "ended": False, "evidence_dir": None,
             "shown": None, "summary": None, "triage_verdict": None,
-            "disabled_at": (load_state(n) or {}).get("disabled_at"),  # the last run's dequeue is no ejection either
+            "disabled_at": (old or {}).get("disabled_at"),  # the last run's dequeue is no ejection either
         },
     )  # fmt: skip
     save_pointer(n, branch)
@@ -431,9 +438,12 @@ def cmd_start(args):
     if n is None:
         return _handoff(branch, error)
     with locked(n):
+        stop = claimed_stop(n)
+        if stop:
+            return emit_stop(stop)  # returned, not raised, and outside the `try`: the claimed run must not end
         try:
             return _start_with_pr(n, branch, args.model, minutes)
-        except Stop as stop:
+        except Exception:
             end_state(n)
             raise
 
@@ -496,7 +506,7 @@ def sleep_within(seconds, budget_end):
 
 
 def check_deadline(state, snap=None):
-    """The run's soft deadline: before each resumable wait, each watch poll and after each Codex wait."""
+    """The run's soft deadline: at each pass's start, before each resumable wait, each watch poll and after each Codex wait."""
     if time.time() >= state["deadline"]:
         lines = ["The run's deadline passed; run /shepherd-pr again to continue."]
         if claimed(state):
@@ -525,14 +535,11 @@ def next_loop(state, budget_end):
             try:
                 snap = read_pr(state)
                 action = pass_once(state, snap, budget_end)
-                state["triage_verdict"] = None  # a verdict serves only the first pass to run through after its `record`
             except OutOfBudget:
-                action = {"action": "next"}  # a cut-off pass keeps the verdict for the next call's
+                action = {"action": "next"}
             except (GhError, Resumable) as e:
                 if isinstance(e, GhError) and not rules.is_resumable_gh_error(e.cmd, e.stderr):
                     raise Stop("STOP_GH_FAILED", True, [fence(str(e))]) from None
-                if isinstance(e, Resumable):  # the pass ran through; a failed `gh` is retried with the verdict
-                    state["triage_verdict"] = None
                 action = None if resumable_wait(state, budget_end) else {"action": "next"}
             if action:
                 return with_status(action, state, snap)
@@ -641,7 +648,7 @@ def step1_checks(state, snap):
         if find_removal(state, snap)[0] is None:
             raise Stop("STOP_AUTOMERGE_OFF", True, ["Auto-merge was turned off or the PR was dequeued; the user decides."])
     if armed:
-        state["automerge"] = "on"
+        state["automerge"] = "on"  # armed again (by the user, or before the repair disabled it): a later disarm isn't the run's
     elif state["automerge"] is None:
         state["automerge"] = "off"
     state["gated_head"] = head
@@ -748,21 +755,26 @@ def hand_out(state, action):
 
 
 def gh_wait(state, head, timeout, trigger=None, windows=1):
-    """`codex_loop.py gh-wait`: its JSON result, or a Stop, or a GhError for a failed `gh` inside it."""
+    """`codex_loop.py gh-wait`: its JSON result, a Stop, a GhError for a failed `gh` inside it, or Resumable if it hangs."""
     cmd = [sys.executable, CODEX_LOOP, "gh-wait", "--pr", str(state["pr"]), "--sha", head, "--timeout", str(timeout)]
     cmd += ["--interval", str(POLL)]
     if trigger:
         cmd += ["--trigger-comment", trigger, "--windows", str(windows)]
-    proc = run(cmd, check=False, timeout=max(CALL_TIMEOUT, timeout + 30))
+    try:
+        proc = run(cmd, check=False, timeout=max(CALL_TIMEOUT, timeout + 30))
+    except GhError:  # check=False: only its timeout; gh-wait only reads, so waiting it out is safe
+        raise Resumable() from None
     try:
         out = json.loads(proc.stdout)
     except ValueError:
         out = None
     if proc.returncode == 2 or not isinstance(out, dict) or "status" not in out:
-        error = out.get("error") if isinstance(out, dict) else None
-        failed = re.match(r"gh .* failed \((\d+)\): (.*)", error, re.S) if isinstance(error, str) else None
-        if failed:  # a `gh` call inside gh-wait: resumable or terminal as any failed `gh`
-            raise GhError(["gh"], int(failed[1]), failed[2])
+        gh = out.get("gh") if isinstance(out, dict) else None
+        if (
+            isinstance(gh, dict) and isinstance(gh.get("cmd"), list) and all(isinstance(a, str) for a in gh["cmd"])
+            and type(gh.get("returncode")) is int and isinstance(gh.get("stderr"), str)
+        ):  # fmt: skip
+            raise GhError(gh["cmd"], gh["returncode"], gh["stderr"])  # resumable or terminal as any failed `gh`
         raise Stop("STOP_CODEX_ERROR", True, ["`codex_loop.py gh-wait` failed:", fence(f"{proc.stdout}\n{proc.stderr}")])
     return out
 
@@ -832,6 +844,10 @@ def codex_gate(state, snap, budget_end):
                 continue
             if result.get("action") == "stop" and result.get("triggers") == 1:
                 gate.update(trigger=post_trigger(state, head), windows=1, final=True)
+                continue
+            trigger = str(result.get("trigger") or "")
+            if result.get("action") == "stop" and result.get("triggers", 0) >= 2 and rules.valid_id(trigger):
+                gate.update(trigger=trigger, windows=1, final=True)  # the re-trigger's post failed after its write (a 5xx)
                 continue
         if result.get("action") == "proceed":
             minutes = info["minutes"]
@@ -1033,10 +1049,10 @@ def triage_action(state, cause, evidence_dir):
 
 
 def use_verdict(state, cause):
-    """`(verdict, None)` from `record triage` for this cause, used up; None when there is none for it."""
+    """`(verdict, None)` from `record triage` for this cause on the gated head, used up; None when there is none for it."""
     recorded = state["triage_verdict"]
-    if not recorded or recorded.get("cause") != cause:
-        return None  # another cause's verdict is left for it (and dropped after this pass)
+    if not recorded or (recorded.get("cause"), recorded.get("head")) != (cause, state["gated_head"]):
+        return None  # another cause's (left for it, dropped after this pass) or an earlier head's: its logs aren't these
     state["triage_verdict"] = None
     return recorded["verdict"], None
 
@@ -1176,8 +1192,9 @@ def checks_failed(state, snap):
         raise Stop("STOP_BAD_RUNS", True, ["`gh run list` returned runs in an unexpected shape; a person looks."])
     choice, ids = rules.rerun_choice(failed, runs, head, state["rerun"])
     if choice == "rerun":
-        state["rerun"] += 1
         rerun(ids)
+        state["rerun"] += 1
+        raise Resumable()
     if choice == "infra-rerun":
         return infra_rerun(state, ids)
     if choice == "stop":
@@ -1205,17 +1222,17 @@ def checks_failed(state, snap):
         if not {os.path.basename(p) for p in paths} <= set(selected):
             why = f"Entry {name} matched, but a failed run isn't this head's pull_request run; a person looks."
             raise Stop("STOP_INFRA_RUNS", True, [why])
+        rerun(selected)
         state["repairs"] += 1
         state["infra"].append(name)  # judge_logs passed it through rules.valid_name: the status line prints it
-        rerun(selected)
+        raise Resumable()
     return repair_action(state, "checks", out)
 
 
 def rerun(ids):
-    """A full re-run (never `--failed`), then the resumable wait and another pass."""
+    """A full re-run (never `--failed`); the caller counts it only once every rerun was issued, then waits resumably."""
     for run_id in ids:
         run(["gh", "run", "rerun", str(run_id)])
-    raise Resumable()
 
 
 def infra_rerun(state, ids):
@@ -1231,10 +1248,11 @@ def infra_rerun(state, ids):
         return triage_action(state, "checks", out)
     name = judged[len("match:") :] if judged.startswith("match:") else None
     if judged == "infra" or name and name not in state["infra"]:
+        rerun(ids)
         state["rerun"] += 1
         if name:
             state["infra"].append(name)  # validated by judge_logs, as above
-        rerun(ids)
+        raise Resumable()
     why = {
         "not-infra": "The log triage judged it not infrastructure.",
         "error": "`ci_remediation.py match` failed (untrusted):\n" + fence(detail or ""),
@@ -1281,9 +1299,9 @@ def pass_once(state, snap, budget_end):
     pr = snap["pr"]
     if pr["state"] == "MERGED":
         return {"action": "done", "merged": True}
+    check_deadline(state, snap)
     check_limits(state, snap)
     if claimed(state):  # its subagent reads evidence_dir and leaves local work: touch neither
-        check_deadline(state, snap)
         return {"action": "repairing"}  # until its `record`, whatever the PR's head
     reissue = handle_pending(state, snap) if state["pending"] else None  # may adopt a pushed head first
     step1_checks(state, snap)
@@ -1296,7 +1314,17 @@ def pass_once(state, snap, budget_end):
         return None
     if pr["mergeStateStatus"] in ("DIRTY", "BEHIND") and not snap["queue"]["isInMergeQueue"]:
         return repair_action(state, "rebase")  # in the queue: the queue tests against the base itself
-    return codex_gate(state, snap, budget_end) or show_and_act(state, snap) or watch(state, snap, budget_end)
+    action = codex_gate(state, snap, budget_end)
+    if action:
+        return action
+    # A verdict serves only the first pass after its `record` to reach step 3 or its watch; a cut-off or failed `gh` keeps it, a Resumable drops it.
+    try:
+        action = show_and_act(state, snap) or watch(state, snap, budget_end)
+    except Resumable:
+        state["triage_verdict"] = None
+        raise
+    state["triage_verdict"] = None
+    return action
 
 
 def _pr_or_stop():
@@ -1337,7 +1365,7 @@ def record_repair_pushed(state, _args):
             state["wait_first"] = True  # `pending` stays, so the next pass adopts the push
             return {"action": "next"}
         head = snap["pr"]["headRefOid"]
-        if head != state["pending"]["head"]:
+        if head != state["pending"]["head"] or local == state["pending"]["head"]:  # local HEAD unmoved: no push to wait for
             break
         if lag < 2:
             try:
@@ -1388,7 +1416,8 @@ def rerun_hints(sha):
 
 def record_triage(state, args):
     if (state["pending"] or {}).get("action") == "triage":
-        state.update(triage_verdict={"cause": state["pending"].get("cause"), "verdict": args.verdict}, pending=None)
+        verdict = {"cause": state["pending"].get("cause"), "head": state["gated_head"], "verdict": args.verdict}
+        state.update(triage_verdict=verdict, pending=None)  # no pass ran since the hand-out, so gated_head is the triaged head
     return {"action": "next"}
 
 

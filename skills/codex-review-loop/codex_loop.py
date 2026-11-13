@@ -59,13 +59,15 @@ BOT_CLEAN_MARKER = "Didn't find any major issues"
 
 
 class ToolError(Exception):
-    pass
+    def __init__(self, message, cmd=None, returncode=None, stderr=None):
+        super().__init__(message)
+        self.cmd, self.returncode, self.stderr = cmd, returncode, stderr
 
 
 def run(cmd, check=True, **kw):
     proc = subprocess.run(cmd, capture_output=True, text=True, **kw)
     if check and proc.returncode != 0:
-        raise ToolError(f"{' '.join(cmd)} failed ({proc.returncode}): {proc.stderr.strip()}")
+        raise ToolError(f"{' '.join(cmd)} failed ({proc.returncode}): {proc.stderr.strip()}", cmd, proc.returncode, proc.stderr)
     return proc
 
 
@@ -526,7 +528,10 @@ def main(argv=None):
     try:
         return args.func(args)
     except ToolError as exc:
-        print(json.dumps({"error": str(exc)}))
+        out = {"error": str(exc)}
+        if exc.cmd and exc.cmd[0] == "gh":  # shepherd.py waits out a transient `gh` failure, so it needs the parts
+            out["gh"] = {"cmd": exc.cmd, "returncode": exc.returncode, "stderr": exc.stderr}
+        print(json.dumps(out))
         return 2
 
 
