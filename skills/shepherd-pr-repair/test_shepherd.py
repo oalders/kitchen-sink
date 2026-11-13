@@ -1009,7 +1009,7 @@ class Next(NextBase):
         self.live(pending={"action": "triage", "evidence_dir": "/x", "cause": "checks"})
         self.assertEqual(self.main("record", "triage", "--verdict", "infra")[1], {"action": "next"})
         state = sh.load_state(7)
-        self.assertEqual((state["triage_verdict"], state["pending"]), ({"cause": "checks", "verdict": "infra"}, None))
+        self.assertEqual((state["triage_verdict"], state["pending"]), ({"cause": "checks", "head": SHA, "verdict": "infra"}, None))
 
     def claimed(self, cause="checks"):
         return {**self.repair(cause), "claimed": True}
@@ -1176,14 +1176,16 @@ class Next(NextBase):
                 self.assertEqual((state["ended"], state["pending"]), (False, None))
 
     def test_start_drops_the_old_runs_evidence(self):
-        for name, replies in (("reset", {}), ("merged", {"gh pr view 7": pr_view(state="MERGED")})):
+        stops = {"gh pr view 7": pr_view(isCrossRepository=True)}
+        for name, replies in (("reset", {}), ("merged", {"gh pr view 7": pr_view(state="MERGED")}), ("stop", stops)):
             with self.subTest(name):
                 evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
                 self.addCleanup(shutil.rmtree, evidence, ignore_errors=True)
                 self.live(pending={**self.repair(), "evidence_dir": evidence}, evidence_dir=evidence)
                 self.reset_replies()
                 self.replies.update(replies)
-                self.main("start", "--model", "X")
+                out = self.main("start", "--model", "X")[1]
+                self.assertEqual(out["action"], {"reset": "next", "merged": "done", "stop": "stop"}[name])
                 self.assertFalse(os.path.exists(evidence))
 
     def test_start_tool_error_ends_the_live_run(self):
@@ -1413,9 +1415,11 @@ class Codex(NextBase):
                 self.assert_stop(self.main("next")[1], "STOP_CODEX_ERROR")
 
     def test_codex_wait_timeout_is_resumable(self):
+        """A hung gh-wait (run's timeout GhError) waits and passes again; it never stops the run."""
         self.replies[self.GHWAIT] = [sh.GhError(["python3"], "timeout", "timed out"), (0, json.dumps({"status": "clean"}), "")]
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(self.calls.count("sleep 120"), 1)
+        self.assertFalse(sh.load_state(7)["ended"])
         self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
 
     def test_codex_retrigger_written_despite_5xx_is_adopted(self):
@@ -1424,7 +1428,7 @@ class Codex(NextBase):
         self.waits(self.timeout(), self.timeout(555, 1), self.timeout(556, 2), {"status": "clean"})
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(len(self.posts()), 2)  # never a third
-        self.assertIn("--trigger-comment 556 --windows 1", self.gh_waits()[3])
+        self.assertIn("--trigger-comment 556 --windows 1", self.gh_waits()[-1])  # the clean wait was on the adopted id
         self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
 
 
@@ -1616,7 +1620,7 @@ class Ejection(NextBase):
             self.clock += 600
             raise sh.OutOfBudget()
 
-        verdict = {"cause": "ejection", "verdict": "infra"}
+        verdict = {"cause": "ejection", "head": SHA, "verdict": "infra"}
         self.live(shown=SHA, triage_verdict=verdict)
         self.replies["gh run view 11 --log-failed"] = late
         self.assertEqual(self.main("next")[1]["action"], "next")
@@ -1630,7 +1634,7 @@ class Ejection(NextBase):
     def test_ejection_verdict_survives_an_early_resumable(self):
         """A pass that waits on mergeability never reaches step 3, so the verdict is still there for the next."""
         self.matches({"status": "none"}, 1)
-        self.live(shown=SHA, triage_verdict={"cause": "ejection", "verdict": "infra"})
+        self.live(shown=SHA, triage_verdict={"cause": "ejection", "head": SHA, "verdict": "infra"})
         unknown = pr_full(autoMergeRequest=None, mergeStateStatus="UNKNOWN")
         self.replies["gh pr view 7"] = [unknown, unknown, unknown, pr_full(autoMergeRequest=None)]
         self.assertEqual(self.main("next")[1]["action"], "next")
@@ -1639,14 +1643,39 @@ class Ejection(NextBase):
         state = sh.load_state(7)
         self.assertEqual((state["requeued"], state["triage_verdict"]), ("t2", None))
 
+    def test_ejection_verdict_survives_a_step3_gh_error(self):
+        """A resumable `gh` failure inside step 3 keeps the verdict: the next pass, after the wait, uses it."""
+        self.matches({"status": "none"}, 1)
+        self.live(shown=SHA, automerge="off", triage_verdict={"cause": "ejection", "head": SHA, "verdict": "infra"})
+        self.replies[f"gh api --paginate repos/o/r/commits/{SHA}/check-suites"] = [fail("HTTP 502"), ""]
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.calls.count("sleep 120"), 1)
+        self.assertFalse([c for c in self.calls if c.startswith(MATCH)])  # the verdict decided
+        state = sh.load_state(7)
+        self.assertEqual((state["requeued"], state["triage_verdict"]), ("t2", None))
+
     def test_ejection_ignores_checks_verdict(self):
         """A `checks` triage verdict never decides an ejection: the ejection judges its own logs."""
         self.matches({"status": "none"}, 1)
-        self.live(shown=SHA, triage_verdict={"cause": "checks", "verdict": "infra"})
+        self.live(shown=SHA, triage_verdict={"cause": "checks", "head": SHA, "verdict": "infra"})
         out = self.main("next")[1]
         self.assertEqual(out["action"], "triage")
         self.assertTrue([c for c in self.calls if c.startswith(MATCH)])
         self.assertNotIn(MERGE, self.calls)
+
+    def test_ejection_ignores_an_earlier_heads_verdict(self):
+        """A verdict kept past a rebase repair (step 3 never ran) was about the old head's logs, not the new one's."""
+        self.matches({"status": "none"}, 1)
+        verdict = {"cause": "ejection", "head": SHA, "verdict": "infra"}
+        self.live(shown=SHA, repairs=1, automerge="off-by-run", pending=self.repair("rebase"), triage_verdict=verdict)
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
+        self.replies["git rev-parse HEAD"] = OTHER + "\n"
+        out = self.main("next")[1]  # the pass adopts the pushed OTHER, then finds OTHER ejected
+        self.assertEqual(out["action"], "triage")
+        self.assertTrue([c for c in self.calls if c.startswith(MATCH)])  # re-judged
+        self.assertNotIn(f"gh pr merge 7 --auto --squash --match-head-commit {OTHER}", self.calls)
+        state = sh.load_state(7)
+        self.assertEqual((state["gated_head"], state["pending"]["cause"], state["triage_verdict"]), (OTHER, "ejection", None))
 
     def test_ejection_stop_drops_evidence(self):
         self.matches({"error": "x"}, 2)
@@ -1794,7 +1823,7 @@ class Ejection(NextBase):
         self.matches({"status": "none"}, 1)
         code, raw = self.main_raw("next")
         self.assertEqual(json.loads(raw)["action"], "triage")
-        self.live(shown=SHA, triage_verdict={"cause": "ejection", "verdict": "not-infra"})
+        self.live(shown=SHA, triage_verdict={"cause": "ejection", "head": SHA, "verdict": "not-infra"})
         code, raw = self.main_raw("next")
         out = json.loads(raw)
         self.assert_stop(out, "STOP_EJECTED")
@@ -1966,23 +1995,40 @@ class Watch(NextBase):
                     self.assertEqual(self.reruns(), [])
                     self.assertIn("gh run rerun 11", self.report(after))
 
-    def test_rerun_cut_off_counts_nothing(self):
+    def cut_off(self, failed, runs, rerun=0, late_at=1, replies=None):
+        """The hard end cuts the `late_at`-th `gh run rerun`: `next`, and no counter moves."""
+
         def late(cmd):
-            self.clock += 600  # the hard end cuts the rerun call
+            self.clock += 600
             raise sh.OutOfBudget()
 
-        cancelled = ({RUNS: json.dumps([gh_run(conclusion="cancelled")])}, {}, CANCELLED)
-        infra = ({RUNS: json.dumps([gh_run(attempt=2, conclusion="cancelled")]), JOBS: "21\n", "gh run view --job 21 --log": self.LOG},
-                 {"rerun": 1}, CANCELLED)  # fmt: skip
-        for name, (replies, over, failed) in {"rerun": cancelled, "infra rerun": infra, "infra match": ({}, {}, FAILED)}.items():
-            with self.subTest(name):
-                self.live(shown=SHA, **over)
-                self.replies.update({**replies, "gh pr checks 7": failed, "gh run rerun": late})
-                self.match()
-                self.assertEqual(self.main("next")[1]["action"], "next")
-                state = sh.load_state(7)
-                self.assertEqual((state["rerun"], state["repairs"], state["infra"]), (over.get("rerun", 0), 0, []))
-                self.setUp()
+        self.live(shown=SHA, rerun=rerun)
+        self.replies.update({"gh pr checks 7": failed, RUNS: json.dumps(runs), "gh run rerun": [""] * (late_at - 1) + [late]})
+        self.replies.update(replies or {})
+        self.match()
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        state = sh.load_state(7)
+        self.assertEqual((state["rerun"], state["repairs"], state["infra"]), (rerun, 0, []))
+
+    def test_plain_rerun_cut_off_counts_nothing(self):
+        self.cut_off(CANCELLED, [gh_run(conclusion="cancelled")])
+        self.assertEqual(self.reruns(), ["gh run rerun 11"])
+        self.assertNotIn(JOBS, self.calls)
+
+    def test_second_rerun_cut_off_counts_nothing(self):
+        self.cut_off(CANCELLED, [gh_run(conclusion="cancelled"), gh_run(id=12, conclusion="cancelled")], late_at=2)
+        self.assertEqual(self.reruns(), ["gh run rerun 11", "gh run rerun 12"])
+
+    def test_infra_rerun_cut_off_counts_nothing(self):
+        logs = {JOBS: "21\n", "gh run view --job 21 --log": self.LOG}
+        self.cut_off(CANCELLED, [gh_run(attempt=2, conclusion="cancelled")], rerun=1, replies=logs)
+        self.assertEqual(self.reruns(), ["gh run rerun 11"])
+        self.assertIn("gh run view --job 21 --log", self.calls)  # infra_rerun's evidence
+
+    def test_infra_match_rerun_cut_off_counts_nothing(self):
+        self.cut_off(FAILED, [gh_run()])
+        self.assertEqual(self.reruns(), ["gh run rerun 11"])
+        self.assertIn("gh run view 11 --log-failed", self.calls)  # the remediation match's evidence
 
     def test_reruns_spent(self):
         self.replies["gh pr checks 7"] = CANCELLED
@@ -2029,11 +2075,39 @@ class Watch(NextBase):
         self.replies[RUNS] = json.dumps([gh_run(attempt=2, conclusion="cancelled")])
         self.replies[JOBS] = "21\n"
         self.replies["gh run view --job 21 --log"] = self.LOG
-        self.live(shown=SHA, rerun=1, triage_verdict={"cause": "ejection", "verdict": "infra"})
+        self.live(shown=SHA, rerun=1, triage_verdict={"cause": "ejection", "head": SHA, "verdict": "infra"})
         out = self.main("next")[1]
         self.assertEqual(out["action"], "triage")
         self.assertEqual(self.reruns(), [])
         self.assertEqual(sh.load_state(7)["pending"]["cause"], "checks")
+
+    def test_infra_rerun_ignores_an_earlier_heads_verdict(self):
+        """A `checks` verdict on SHA, kept past a rebase repair, never decides OTHER's infra rerun."""
+        self.replies["gh pr checks 7"] = CANCELLED
+        self.replies[f"gh run list --commit {OTHER}"] = json.dumps([gh_run(attempt=2, conclusion="cancelled", headSha=OTHER)])
+        self.replies[JOBS] = "21\n"
+        self.replies["gh run view --job 21 --log"] = self.LOG
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.replies["git rev-parse HEAD"] = OTHER + "\n"
+        verdict = {"cause": "checks", "head": SHA, "verdict": "infra"}
+        self.live(shown=OTHER, repairs=1, pending=self.repair("rebase"), triage_verdict=verdict)
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "triage")
+        self.assertTrue([c for c in self.calls if c.startswith(MATCH)])  # re-judged
+        self.assertEqual(self.reruns(), [])
+        state = sh.load_state(7)
+        self.assertEqual((state["gated_head"], state["pending"]["cause"], state["triage_verdict"]), (OTHER, "checks", None))
+
+    def test_step3_resumable_drops_the_verdict(self):
+        """A rerun's Resumable is past step 3: the verdict it didn't use is dropped, not kept for a later pass."""
+        self.replies["gh pr checks 7"] = CANCELLED
+        self.replies[RUNS] = json.dumps([gh_run(conclusion="cancelled")])
+        self.replies["gh run rerun"] = [lambda cmd: setattr(self, "clock", self.clock + 450) or ""]  # no room to wait
+        self.live(shown=SHA, triage_verdict={"cause": "ejection", "head": SHA, "verdict": "infra"})
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.reruns(), ["gh run rerun 11"])
+        state = sh.load_state(7)
+        self.assertEqual((state["rerun"], state["wait_first"], state["triage_verdict"]), (1, True, None))
 
     def test_malformed_run_list(self):
         for name, listed in {

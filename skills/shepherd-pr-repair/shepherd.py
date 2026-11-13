@@ -389,7 +389,7 @@ def claimed_stop(n):
 def _start_with_pr(n, branch, model, minutes):
     old = load_state(n)
     if old:
-        drop_evidence(old)  # unclaimed, so no subagent reads it; every path below replaces or ends this run
+        drop_evidence(old)  # unclaimed, so no subagent reads it; no later path does either
         save_state(n, old)
     pr = gh_json(
         ["pr", "view", str(n), "--json", "number,state,isCrossRepository,author,baseRefName,headRefName,headRefOid"]
@@ -755,15 +755,15 @@ def hand_out(state, action):
 
 
 def gh_wait(state, head, timeout, trigger=None, windows=1):
-    """`codex_loop.py gh-wait`: its JSON result, or a Stop, or a GhError for a failed `gh` inside it."""
+    """`codex_loop.py gh-wait`: its JSON result, a Stop, a GhError for a failed `gh` inside it, or Resumable if it hangs."""
     cmd = [sys.executable, CODEX_LOOP, "gh-wait", "--pr", str(state["pr"]), "--sha", head, "--timeout", str(timeout)]
     cmd += ["--interval", str(POLL)]
     if trigger:
         cmd += ["--trigger-comment", trigger, "--windows", str(windows)]
     try:
         proc = run(cmd, check=False, timeout=max(CALL_TIMEOUT, timeout + 30))
-    except GhError as e:  # timed out: a hung `gh` inside it, as resumable as any
-        raise GhError(["gh", *cmd[2:]], e.returncode, e.stderr) from None
+    except GhError:  # check=False: only its timeout; gh-wait only reads, so waiting it out is safe
+        raise Resumable() from None
     try:
         out = json.loads(proc.stdout)
     except ValueError:
@@ -1049,10 +1049,10 @@ def triage_action(state, cause, evidence_dir):
 
 
 def use_verdict(state, cause):
-    """`(verdict, None)` from `record triage` for this cause, used up; None when there is none for it."""
+    """`(verdict, None)` from `record triage` for this cause on the gated head, used up; None when there is none for it."""
     recorded = state["triage_verdict"]
-    if not recorded or recorded.get("cause") != cause:
-        return None  # another cause's verdict is left for it (and dropped after this pass)
+    if not recorded or (recorded.get("cause"), recorded.get("head")) != (cause, state["gated_head"]):
+        return None  # another cause's (left for it, dropped after this pass) or an earlier head's: its logs aren't these
     state["triage_verdict"] = None
     return recorded["verdict"], None
 
@@ -1416,7 +1416,8 @@ def rerun_hints(sha):
 
 def record_triage(state, args):
     if (state["pending"] or {}).get("action") == "triage":
-        state.update(triage_verdict={"cause": state["pending"].get("cause"), "verdict": args.verdict}, pending=None)
+        verdict = {"cause": state["pending"].get("cause"), "head": state["gated_head"], "verdict": args.verdict}
+        state.update(triage_verdict=verdict, pending=None)  # no pass ran since the hand-out, so gated_head is the triaged head
     return {"action": "next"}
 
 

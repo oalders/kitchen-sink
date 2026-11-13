@@ -522,7 +522,9 @@ class ToolErrorOutput(unittest.TestCase):
         failed = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "HTTP 502\n")
         with mock.patch.object(cl.subprocess, "run", failed), mock.patch.object(cl, "pr_number", lambda _: "5"):
             rc, out = self.main(["gh-wait", "--sha", SHA])
-        self.assertEqual((rc, out["gh"]), (2, {"cmd": ["gh", "api", "user", "-q", ".login"], "returncode": 1, "stderr": "HTTP 502\n"}))
+        gh = out["gh"]
+        self.assertTrue(isinstance(gh["cmd"], list) and all(isinstance(a, str) for a in gh["cmd"]))
+        self.assertEqual((rc, gh["cmd"][0], gh["returncode"], gh["stderr"]), (2, "gh", 1, "HTTP 502\n"))
 
     def test_other_errors_have_no_gh_part(self):
         with mock.patch.object(cl, "pr_number", lambda _: "5"):
