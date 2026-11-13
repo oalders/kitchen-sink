@@ -511,6 +511,11 @@ def check_deadline(state, snap=None):
         lines = ["The run's deadline passed; run /shepherd-pr again to continue."]
         if claimed(state):
             lines.append("A repair subagent may still be running and push; check `git log` and the PR before re-running.")
+        gate = state.get("codex")
+        if snap is not None and snap["pr"]["reviewDecision"] in rules.REVIEW_BLOCKED:
+            lines.append("The PR still needs a review decision; a reviewer must act.")
+        elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
+            lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")  # pending: a repair, not the bot, is outstanding
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
 
@@ -530,7 +535,8 @@ def next_loop(state, budget_end):
     try:
         if state["wait_first"]:
             state["wait_first"] = False
-            resumable_wait(state, budget_end)
+            if time.time() < state["deadline"]:  # past it, the pass's deadline check reports why with the PR's status
+                resumable_wait(state, budget_end)
         while time.time() < budget_end:
             try:
                 snap = read_pr(state)
@@ -808,7 +814,7 @@ def codex_gate(state, snap, budget_end):
         return None
     gate = state.get("codex")
     if not gate or gate["head"] != head:
-        gate = state["codex"] = {"head": head, "trigger": None, "windows": 1, "final": False, "note": None}
+        gate = state["codex"] = {"head": head, "trigger": None, "windows": 1, "final": False, "note": None, "polling": False}
     info = codex_info()
     if info["mode"] != "github":
         return codex_pass(state, head, gate, f"Codex gate not checked (mode `{info['mode']}`)")
@@ -819,7 +825,7 @@ def codex_gate(state, snap, budget_end):
             seconds = int(budget_end - time.time()) - GH_WAIT_MARGIN
             if seconds < MIN_SLICE:
                 raise OutOfBudget()
-            result = gh_wait(state, head, seconds, gate["trigger"], gate["windows"])
+            result = gh_wait(state, head, seconds) if gate.get("polling") else gh_wait(state, head, seconds, gate["trigger"], gate["windows"])
             if result.get("status") not in ("clean", "findings"):
                 check_deadline(state, snap)
         status = result.get("status")
@@ -853,11 +859,10 @@ def codex_gate(state, snap, budget_end):
             minutes = info["minutes"]
             window = f"{minutes * gate['windows']} min" if minutes else "the bot window"
             return codex_pass(state, head, gate, f"Codex gate: no review within {window}; passed by codexTimeoutAction=proceed")
-        raise Stop(
-            "STOP_CODEX_TIMEOUT", True,
-            ["The Codex bot hasn't reviewed this head; a silent bot is not approval.",
-             "Run /shepherd-pr again once it has, or to re-trigger."],
-        )  # fmt: skip
+        if gate.get("polling"):  # .get: a gate saved before this key existed has none
+            raise OutOfBudget()
+        # fails closed: only a clean bot review of the head passes, so poll to the deadline
+        gate.update(polling=True, final=True)  # final: a polling timeout skips the re-trigger steps above
 
 
 def fence(text):
@@ -1165,7 +1170,6 @@ def reread_action(state, snap, outcome):
 
 
 OPEN_STOPS = {
-    "review-required": ("STOP_REVIEW_REQUIRED", "A reviewer must act: review required or changes requested."),
     "dirty-queued": ("STOP_QUEUE_CONFLICT", "The PR conflicts with its base while queued; a person resolves it."),
     "turned-off": ("STOP_AUTOMERGE_OFF", "Auto-merge was turned off or the PR was dequeued; the user decides."),
 }
@@ -1176,7 +1180,7 @@ def open_action(state, snap):
     outcome = rules.open_outcome({**snap["pr"], **snap["queue"]}, snap["checks"], state["automerge"])
     if outcome == "rebase":
         return None  # the next pass's step 1 rebases it, without waiting
-    if outcome in ("pending", "resumable-off-by-run"):  # off by this run: step 4 re-enables it
+    if outcome in ("pending", "resumable-off-by-run", "review-required"):  # each clears on its own: checks finish, step 4 re-arms, a reviewer acts
         raise Resumable()
     code, message = OPEN_STOPS[outcome]
     raise Stop(code, True, [message])

@@ -1358,26 +1358,43 @@ class Codex(NextBase):
     def test_codex_stop_retrigger(self):
         self.comments(555, 556)
         self.waits(self.timeout(), self.timeout(555, 1), self.timeout(556, 2))
-        out = self.main("next")[1]
-        self.assert_stop(out, "STOP_CODEX_TIMEOUT")
-        self.assertEqual(len(self.posts()), 2)  # never a third
+        self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertIn("--trigger-comment 556 --windows 1", self.gh_waits()[2])
-        self.assertEqual(len(self.gh_waits()), 3)
+        self.assertNotIn("--trigger-comment", self.gh_waits()[3])  # then polls, without a trigger
+        self.assertEqual(len(self.gh_waits()), 4)
         self.assertEqual(sh.load_state(7)["codex_passed"], [])
+        self.waits({"status": "clean"})
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertNotIn("--trigger-comment", self.gh_waits()[4])  # still polling: no re-check of the spent trigger
+        self.assertEqual(len(self.gh_waits()), 5)
+        self.assertEqual(len(self.posts()), 2)  # never a third
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
 
     def test_codex_stop_acknowledged_widens(self):
         self.comments(555)
         self.waits(self.timeout(), self.timeout(555, 1, True), self.timeout(555, 1, True))
-        self.assert_stop(self.main("next")[1], "STOP_CODEX_TIMEOUT")
+        self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertIn("--trigger-comment 555 --windows 2", self.gh_waits()[2])
         self.assertEqual(len(self.posts()), 1)
+        self.clock = NOW + 3600
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertIn("The Codex bot still hasn't reviewed this head", self.report(out))
 
-    def test_codex_resumed_run_waits_once(self):
+    def test_deadline_during_codex_repair_omits_codex_line(self):
+        gate = {"head": SHA, "trigger": "555", "windows": 1, "final": True, "note": None, "polling": False}
+        self.live(deadline=NOW - 1, codex=gate, pending={**self.repair("codex"), "claimed": True})
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertNotIn("Codex bot", self.report(out))  # the bot returned findings; it isn't silent
+
+    def test_codex_resumed_run_waits_once_then_polls(self):
         self.waits(self.timeout(555, 2), self.timeout(555, 2))
-        self.assert_stop(self.main("next")[1], "STOP_CODEX_TIMEOUT")
+        self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(self.posts(), [])
         self.assertIn("--trigger-comment 555 --windows 1", self.gh_waits()[1])
-        self.assertEqual(len(self.gh_waits()), 2)
+        self.assertEqual(len(self.gh_waits()), 3)
+        self.assertNotIn("--trigger-comment", self.gh_waits()[2])  # the spent window gives way to polling
 
     def test_codex_findings_repair(self):
         self.waits({"status": "findings"})
@@ -2183,10 +2200,21 @@ class Watch(NextBase):
         self.assertEqual((out["automerge"], out["queued"]), ("off", False))
 
     def test_open_outcomes(self):
-        self.replies["gh pr view 7"] = pr_full(reviewDecision="REVIEW_REQUIRED")
-        out = self.main("next")[1]
-        self.assert_stop(out, "STOP_REVIEW_REQUIRED")
-        self.assertEqual(out["automerge"], "on")
+        for decision in sh.rules.REVIEW_BLOCKED:
+            with self.subTest(decision):
+                self.setUp()
+                self.replies["gh pr view 7"] = pr_full(reviewDecision=decision)
+                self.assertEqual(self.main("next")[1]["action"], "next")
+                self.assertEqual(self.calls.count(f"sleep {sh.RESUMABLE_WAIT}"), sh.BUDGET // sh.RESUMABLE_WAIT)  # waits for a reviewer until the budget cuts a wait
+                self.assertTrue(sh.load_state(7)["wait_first"])
+                self.assertEqual(sh.load_state(7)["automerge"], "on")
+                self.clock = NOW + 3600
+                self.calls.clear()
+                out = self.main("next")[1]
+                self.assert_stop(out, "STOP_DEADLINE")
+                self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)  # past the deadline, wait_first doesn't wait
+                self.assertIn("The PR still needs a review decision", self.report(out))
+                self.assertIn("#7 head c5bf4f3", self.report(out))
         self.setUp()
         self.replies["gh pr checks 7"] = [PENDING, checks(check())]
         self.replies["gh pr view 7"] = [pr_full(), pr_full(mergeStateStatus="BEHIND")]
