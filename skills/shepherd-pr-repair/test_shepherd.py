@@ -1363,9 +1363,10 @@ class Codex(NextBase):
         self.assertNotIn("--trigger-comment", self.gh_waits()[3])  # then polls, without a trigger
         self.assertEqual(len(self.gh_waits()), 4)
         self.assertEqual(sh.load_state(7)["codex_passed"], [])
-        self.waits(self.timeout(556, 2), {"status": "clean"})
+        self.waits({"status": "clean"})
         self.assertEqual(self.main("next")[1]["action"], "next")
-        self.assertNotIn("--trigger-comment", self.gh_waits()[5])
+        self.assertNotIn("--trigger-comment", self.gh_waits()[4])  # still polling: no re-check of the spent trigger
+        self.assertEqual(len(self.gh_waits()), 5)
         self.assertEqual(len(self.posts()), 2)  # never a third
         self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
 
@@ -1379,6 +1380,13 @@ class Codex(NextBase):
         out = self.main("next")[1]
         self.assert_stop(out, "STOP_DEADLINE")
         self.assertIn("The Codex bot still hasn't reviewed this head", self.report(out))
+
+    def test_deadline_during_codex_repair_omits_codex_line(self):
+        gate = {"head": SHA, "trigger": "555", "windows": 1, "final": True, "note": None, "polling": False}
+        self.live(deadline=NOW - 1, codex=gate, pending={**self.repair("codex"), "claimed": True})
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertNotIn("Codex bot", self.report(out))  # the bot returned findings; it isn't silent
 
     def test_codex_resumed_run_waits_once(self):
         self.waits(self.timeout(555, 2), self.timeout(555, 2))

@@ -514,8 +514,8 @@ def check_deadline(state, snap=None):
         gate = state.get("codex")
         if snap is not None and snap["pr"]["reviewDecision"] in rules.REVIEW_BLOCKED:
             lines.append("The PR still needs a review decision; a reviewer must act.")
-        elif snap is not None and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
-            lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")
+        elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
+            lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")  # pending: a repair, not the bot, is outstanding
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
 
@@ -814,11 +814,10 @@ def codex_gate(state, snap, budget_end):
         return None
     gate = state.get("codex")
     if not gate or gate["head"] != head:
-        gate = state["codex"] = {"head": head, "trigger": None, "windows": 1, "final": False, "note": None}
+        gate = state["codex"] = {"head": head, "trigger": None, "windows": 1, "final": False, "note": None, "polling": False}
     info = codex_info()
     if info["mode"] != "github":
         return codex_pass(state, head, gate, f"Codex gate not checked (mode `{info['mode']}`)")
-    polling = False  # codexTimeoutAction=stop after the last trigger's window: poll, no more triggers, until the deadline
     while True:
         if gate["trigger"] is None:
             result = gh_wait(state, head, 0)  # a check of existing reviews
@@ -826,7 +825,7 @@ def codex_gate(state, snap, budget_end):
             seconds = int(budget_end - time.time()) - GH_WAIT_MARGIN
             if seconds < MIN_SLICE:
                 raise OutOfBudget()
-            result = gh_wait(state, head, seconds) if polling else gh_wait(state, head, seconds, gate["trigger"], gate["windows"])
+            result = gh_wait(state, head, seconds) if gate.get("polling") else gh_wait(state, head, seconds, gate["trigger"], gate["windows"])
             if result.get("status") not in ("clean", "findings"):
                 check_deadline(state, snap)
         status = result.get("status")
@@ -860,9 +859,9 @@ def codex_gate(state, snap, budget_end):
             minutes = info["minutes"]
             window = f"{minutes * gate['windows']} min" if minutes else "the bot window"
             return codex_pass(state, head, gate, f"Codex gate: no review within {window}; passed by codexTimeoutAction=proceed")
-        if polling:  # the next call re-checks the spent trigger at once, then polls again
+        if gate.get("polling"):  # get: a gate stored by a run started before this key
             raise OutOfBudget()
-        polling = True
+        gate.update(polling=True, final=True)  # codexTimeoutAction=stop after the last trigger's window: poll, no more triggers, until the deadline
 
 
 def fence(text):
