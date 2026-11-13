@@ -414,6 +414,7 @@ class LocalReviewIntegration(unittest.TestCase):
         self.write_control("exit.txt", "1")
         rc, out, _ = self.run_review(CLEAN_OUTPUT, True)
         self.assertEqual(rc, 2)
+        self.assertIn("exited 1", out["error"])
         self.assertNotIn("ask the user to run", out["error"])
 
     def test_bwrap_failure_with_nonzero_exit_suggests_bypass(self):
