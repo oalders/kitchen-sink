@@ -1394,6 +1394,7 @@ class Codex(NextBase):
         self.assertEqual(self.posts(), [])
         self.assertIn("--trigger-comment 555 --windows 1", self.gh_waits()[1])
         self.assertEqual(len(self.gh_waits()), 3)
+        self.assertNotIn("--trigger-comment", self.gh_waits()[2])  # the spent window gives way to polling
 
     def test_codex_findings_repair(self):
         self.waits({"status": "findings"})
