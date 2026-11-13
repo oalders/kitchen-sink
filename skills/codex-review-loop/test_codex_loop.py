@@ -110,6 +110,16 @@ class BlindReview(unittest.TestCase):
     def test_indented_bubblewrap_line_is_blind(self):
         self.assertIsNotNone(self.reason(CLEAN_OUTPUT, "log\n  exec failed: error building bubblewrap command: x"))
 
+    def test_prefixed_bubblewrap_log_line_is_blind(self):
+        stderr = "2026-11-13T00:00:00Z ERROR codex_core: exec failed: " + cl.BWRAP_MARKER + ": x"
+        self.assertIsNotNone(self.reason(CLEAN_OUTPUT, stderr))
+
+    def test_bubblewrap_error_under_bypass_not_blind(self):
+        self.assertIsNone(self.reason(CLEAN_OUTPUT, "exec failed: " + cl.BWRAP_MARKER + ": x", bypass=True))
+
+    def test_blank_lines_do_not_backtrack(self):
+        self.assertIsNone(cl.BWRAP_RE.search("\n" * 100_000))
+
     def test_echoed_bubblewrap_source_line_not_blind(self):
         self.assertIsNone(self.reason(CLEAN_OUTPUT, 'BWRAP_MARKER = "error building bubblewrap command"'))
 
@@ -400,6 +410,7 @@ class LocalReviewIntegration(unittest.TestCase):
         rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
         self.assertEqual(rc, 2)
         self.assertIn("ask the user to run", out["error"])
+        self.assertNotIn("already on", out["error"])
 
     def test_panic_reports_log_tail(self):
         self.write_control("stderr.txt", "HEAD-OF-OUTPUT\n" + "x" * 70000 + "\nthread 'main' panicked: EAGAIN\n")
