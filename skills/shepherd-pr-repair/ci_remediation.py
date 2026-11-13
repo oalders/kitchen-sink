@@ -24,6 +24,10 @@ Subcommands (all print JSON on stdout):
 
 Log text is only searched, never executed or echoed into a command.
 
+`match` has no internal timeout (Python's `re` can't be interrupted in-process), so
+a caller must run it under a subprocess timeout, as shepherd.py does with
+MATCH_TIMEOUT; avoid nested quantifiers such as `(a+)+` in entries.
+
 Exit codes: 0 = success / match, 1 = no match, 2 = usage, tool or config error.
 """
 

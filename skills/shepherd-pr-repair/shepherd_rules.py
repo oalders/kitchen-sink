@@ -227,8 +227,8 @@ def status_line(state, pr, checks):
 
 # skills/shepherd-pr-repair/SKILL.md (Rules) lists these in prose; keep the two in sync.
 _RESUMABLE = re.compile(
-    r"HTTP 5\d\d\b|secondary rate limit|timeout|timed out|connection reset|connection refused"
-    r"|no such host|could not resolve host|TLS|tls:|unexpected EOF",
+    r"HTTP 5\d\d\b|secondary rate limit|\btimeout\b|timed out|connection reset|connection refused"
+    r"|no such host|could not resolve host|\bTLS\b|unexpected EOF",
     re.IGNORECASE,
 )
 
@@ -236,7 +236,7 @@ _RESUMABLE = re.compile(
 # Git's transient failures have no stable wording, so only clearly permanent ones stop a `git fetch`.
 _FETCH_PERMANENT = re.compile(
     r"does not appear to be a git repository|Repository not found|Authentication failed|Permission denied"
-    r"|could not read Username|No such remote|not a git repository",
+    r"|could not read Username|No such remote|not a git repository|returned error: 40[134]|Host key verification failed",
     re.IGNORECASE,
 )
 
@@ -247,6 +247,6 @@ def is_permanent_fetch_error(stderr):
 
 def is_resumable_gh_error(cmd, stderr):
     """A failed `gh` is worth waiting out unless repeating it could do harm."""
-    if "--disable-auto" in cmd or cmd[:3] == ["gh", "run", "rerun"]:
+    if cmd[:1] != ["gh"] or "--disable-auto" in cmd or cmd[:3] == ["gh", "run", "rerun"]:
         return False
     return _RESUMABLE.search(stderr) is not None

@@ -138,6 +138,9 @@ class TestRules(unittest.TestCase):
             "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
             "fatal: No such remote 'origin'",
             "fatal: not a git repository (or any of the parent directories): .git",
+            "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403",
+            "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 404",
+            "Host key verification failed.",
         )
         transient = (
             "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 503",
@@ -327,8 +330,10 @@ class TestRules(unittest.TestCase):
             self.assertTrue(rules.is_resumable_gh_error(merge, err), err)
         self.assertFalse(rules.is_resumable_gh_error(["gh", "pr", "merge", "7", "--disable-auto"], "secondary rate limit"))
         self.assertFalse(rules.is_resumable_gh_error(["gh", "run", "rerun", "5"], "HTTP 502"))
-        for err in ("HTTP 404", "HTTP 422: nope", "HTTP 5000", "bad flag"):
+        for err in ("HTTP 404", "HTTP 422: nope", "HTTP 5000", "bad flag", "HTTP 422: timeout_minutes is invalid",
+                    "HTTP 404: Not Found (repos/o/TLSKit)"):
             self.assertFalse(rules.is_resumable_gh_error(merge, err), err)
+        self.assertFalse(rules.is_resumable_gh_error(["git", "rev-parse", "HEAD"], "timed out"))  # only `gh` is waited out
 
 
 class TestRun(unittest.TestCase):
@@ -470,6 +475,14 @@ class TestStart(Env):
             code, out = self.main("start", "--model", "X")
         self.assertEqual((code, out), (0, {"action": "busy"}))
         self.assertEqual(self.read_state_bytes(), before)
+
+    def test_failed_state_write_keeps_the_old_file_and_no_temp(self):
+        sh.save_state(7, {"pr": 7})
+        before = self.read_state_bytes()
+        with mock.patch.object(sh.os, "fsync", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            sh.save_state(7, {"pr": 8})
+        self.assertEqual(self.read_state_bytes(), before)
+        self.assertEqual(os.listdir(os.path.dirname(self.state_file())), ["7.json"])
 
     def test_state_dir_is_private(self):
         path = os.path.join(self.git_dir, "kitchen-sink", "shepherd")
@@ -914,6 +927,7 @@ class Next(NextBase):
     def test_record_repair_pushed_out_of_budget_while_waiting(self):
         self.live(pending={**self.repair(), "claimed": True})  # the record clears it, so the next pass adopts the push
         self.replies["gh pr view 7"] = pr_full()
+        self.replies["git rev-parse HEAD"] = OTHER + "\n"
         with mock.patch.object(sh, "sleep_within", side_effect=sh.OutOfBudget):
             out = self.main("record", "repair-pushed")[1]
         state = sh.load_state(7)
@@ -921,11 +935,18 @@ class Next(NextBase):
 
     def test_record_repair_pushed_needs_new_head(self):
         self.live(rerun=1, infra=["flaky"], pending=self.repair())
+        self.replies["git rev-parse HEAD"] = OTHER + "\n"  # committed locally, so GitHub may only lag
         code, out = self.main("record", "repair-pushed")
         self.assert_stop(out, "STOP_NO_NEW_HEAD")
         self.assertEqual(len([c for c in self.calls if c.startswith("gh pr view 7")]), 3)
         state = sh.load_state(7)
         self.assertEqual((state["rerun"], state["infra"]), (1, ["flaky"]))  # nothing adopted
+
+    def test_record_repair_pushed_unmoved_local_head_stops_at_once(self):
+        self.live(pending=self.repair())  # local HEAD is still the pending head
+        self.assert_stop(self.main("record", "repair-pushed")[1], "STOP_NO_NEW_HEAD")
+        self.assertEqual(len([c for c in self.calls if c.startswith("gh pr view 7")]), 1)
+        self.assertFalse([c for c in self.calls if c.startswith("sleep")])
 
     def test_record_repair_pushed_checks_head(self):
         self.live(pending=self.repair())
@@ -1154,6 +1175,30 @@ class Next(NextBase):
                 state = sh.load_state(7)
                 self.assertEqual((state["ended"], state["pending"]), (False, None))
 
+    def test_start_drops_the_old_runs_evidence(self):
+        for name, replies in (("reset", {}), ("merged", {"gh pr view 7": pr_view(state="MERGED")})):
+            with self.subTest(name):
+                evidence = tempfile.mkdtemp(prefix=sh.EVIDENCE_PREFIX)
+                self.addCleanup(shutil.rmtree, evidence, ignore_errors=True)
+                self.live(pending={**self.repair(), "evidence_dir": evidence}, evidence_dir=evidence)
+                self.reset_replies()
+                self.replies.update(replies)
+                self.main("start", "--model", "X")
+                self.assertFalse(os.path.exists(evidence))
+
+    def test_start_tool_error_ends_the_live_run(self):
+        self.live()
+        self.reset_replies()
+        self.replies["gh api user"] = RuntimeError("boom")
+        self.assertEqual(self.main("start", "--model", "X")[1]["code"], "CMD_FAILED")
+        self.assertTrue(sh.load_state(7)["ended"])
+
+    def test_deadline_checked_before_the_first_pass_acts(self):
+        self.live(deadline=NOW - 1, automerge="off")
+        self.replies["gh pr view 7"] = pr_full(autoMergeRequest=None)
+        self.assert_stop(self.main("next")[1], "STOP_DEADLINE")
+        self.assertFalse([c for c in self.calls if c.startswith("gh pr merge")])
+
     def test_gh_stderr_not_on_stdout(self):
         self.live()
         hostile = "```$(rm -rf ~)```"
@@ -1335,8 +1380,12 @@ class Codex(NextBase):
         self.assertEqual(self.main("next")[1]["cause"], "codex")
         self.assertNotIn("gh pr merge 7 --disable-auto", self.calls)
 
+    def gh_failure(self, stderr):
+        cmd = ["gh", "api", "repos/o/r/pulls/7/reviews"]
+        return (2, json.dumps({"error": "x", "gh": {"cmd": cmd, "returncode": 1, "stderr": stderr}}), "")
+
     def test_codex_gh_error_resumable(self):
-        err = (2, json.dumps({"error": "gh api repos/o/r/pulls/7/reviews failed (1): HTTP 502"}), "")
+        err = self.gh_failure("HTTP 502")
         self.replies[self.GHWAIT] = [err, (0, json.dumps({"status": "clean"}), "")]
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(self.calls.count("sleep 120"), 1)
@@ -1353,8 +1402,30 @@ class Codex(NextBase):
         self.assertEqual(self.calls.count("sleep 120"), 0)
 
     def test_codex_non_resumable_gh_error_terminal(self):
-        self.replies[self.GHWAIT] = (2, json.dumps({"error": "gh api x failed (1): HTTP 404"}), "")
+        self.replies[self.GHWAIT] = self.gh_failure("HTTP 404")
         self.assert_stop(self.main("next")[1], "STOP_GH_FAILED")
+
+    def test_codex_malformed_gh_failure_is_a_codex_error(self):
+        for gh in ({"cmd": "gh api", "returncode": 1, "stderr": "HTTP 502"}, {"cmd": ["gh"], "returncode": "1", "stderr": "HTTP 502"}):
+            with self.subTest(gh):
+                self.live(model="Opus 5.5")
+                self.replies[self.GHWAIT] = (2, json.dumps({"error": "gh api x failed (1): HTTP 502", "gh": gh}), "")
+                self.assert_stop(self.main("next")[1], "STOP_CODEX_ERROR")
+
+    def test_codex_wait_timeout_is_resumable(self):
+        self.replies[self.GHWAIT] = [sh.GhError(["python3"], "timeout", "timed out"), (0, json.dumps({"status": "clean"}), "")]
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.calls.count("sleep 120"), 1)
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+
+    def test_codex_retrigger_written_despite_5xx_is_adopted(self):
+        url = "https://github.com/o/r/pull/7#issuecomment-555\n"
+        self.replies["gh pr comment 7 --body-file"] = [url, sh.GhError(["gh", "pr", "comment"], 1, "HTTP 502")]
+        self.waits(self.timeout(), self.timeout(555, 1), self.timeout(556, 2), {"status": "clean"})
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(len(self.posts()), 2)  # never a third
+        self.assertIn("--trigger-comment 556 --windows 1", self.gh_waits()[3])
+        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
 
 
 QSHA = "e" * 40  # the merge queue's temporary commit
@@ -1552,6 +1623,18 @@ class Ejection(NextBase):
         self.assertEqual(sh.load_state(7)["triage_verdict"], verdict)
         self.replies["gh run view 11 --log-failed"] = log
         self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertFalse([c for c in self.calls if c.startswith(MATCH)])  # the verdict decided
+        state = sh.load_state(7)
+        self.assertEqual((state["requeued"], state["triage_verdict"]), ("t2", None))
+
+    def test_ejection_verdict_survives_an_early_resumable(self):
+        """A pass that waits on mergeability never reaches step 3, so the verdict is still there for the next."""
+        self.matches({"status": "none"}, 1)
+        self.live(shown=SHA, triage_verdict={"cause": "ejection", "verdict": "infra"})
+        unknown = pr_full(autoMergeRequest=None, mergeStateStatus="UNKNOWN")
+        self.replies["gh pr view 7"] = [unknown, unknown, unknown, pr_full(autoMergeRequest=None)]
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertIn("sleep 120", self.calls)
         self.assertFalse([c for c in self.calls if c.startswith(MATCH)])  # the verdict decided
         state = sh.load_state(7)
         self.assertEqual((state["requeued"], state["triage_verdict"]), ("t2", None))
@@ -1882,6 +1965,24 @@ class Watch(NextBase):
                     self.assertEqual(after["code"], "STOP_RERUNS_SPENT")
                     self.assertEqual(self.reruns(), [])
                     self.assertIn("gh run rerun 11", self.report(after))
+
+    def test_rerun_cut_off_counts_nothing(self):
+        def late(cmd):
+            self.clock += 600  # the hard end cuts the rerun call
+            raise sh.OutOfBudget()
+
+        cancelled = ({RUNS: json.dumps([gh_run(conclusion="cancelled")])}, {}, CANCELLED)
+        infra = ({RUNS: json.dumps([gh_run(attempt=2, conclusion="cancelled")]), JOBS: "21\n", "gh run view --job 21 --log": self.LOG},
+                 {"rerun": 1}, CANCELLED)  # fmt: skip
+        for name, (replies, over, failed) in {"rerun": cancelled, "infra rerun": infra, "infra match": ({}, {}, FAILED)}.items():
+            with self.subTest(name):
+                self.live(shown=SHA, **over)
+                self.replies.update({**replies, "gh pr checks 7": failed, "gh run rerun": late})
+                self.match()
+                self.assertEqual(self.main("next")[1]["action"], "next")
+                state = sh.load_state(7)
+                self.assertEqual((state["rerun"], state["repairs"], state["infra"]), (over.get("rerun", 0), 0, []))
+                self.setUp()
 
     def test_reruns_spent(self):
         self.replies["gh pr checks 7"] = CANCELLED

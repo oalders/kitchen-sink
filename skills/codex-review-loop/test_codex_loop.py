@@ -512,6 +512,25 @@ def gh_wait(argv, comments, monotonic, minutes="15", sleep=None):
     return rc, json.loads(out.getvalue())
 
 
+class ToolErrorOutput(unittest.TestCase):
+    def main(self, argv):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = cl.main(argv)
+        return rc, json.loads(out.getvalue())
+
+    def test_failed_gh_reports_its_parts(self):
+        failed = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "HTTP 502\n")
+        with mock.patch.object(cl.subprocess, "run", failed), mock.patch.object(cl, "pr_number", lambda _: "5"):
+            rc, out = self.main(["gh-wait", "--sha", SHA])
+        self.assertEqual((rc, out["gh"]), (2, {"cmd": ["gh", "api", "user", "-q", ".login"], "returncode": 1, "stderr": "HTTP 502\n"}))
+
+    def test_other_errors_have_no_gh_part(self):
+        with mock.patch.object(cl, "pr_number", lambda _: "5"):
+            rc, out = self.main(["gh-wait", "--sha", SHA, "--windows", "0"])
+        self.assertEqual(rc, 2)
+        self.assertNotIn("gh", out)
+
+
 class GhWaitTriggerWindow(unittest.TestCase):
     def test_window_counts_from_trigger(self):
         # 15-minute window, trigger 10 minutes old: 5 minutes left.
