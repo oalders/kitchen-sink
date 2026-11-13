@@ -2191,13 +2191,20 @@ class Watch(NextBase):
         self.assertEqual((out["automerge"], out["queued"]), ("off", False))
 
     def test_open_outcomes(self):
-        self.replies["gh pr view 7"] = pr_full(reviewDecision="REVIEW_REQUIRED")
-        self.assertEqual(self.main("next")[1]["action"], "next")
-        self.assertIn("sleep 120", self.calls)  # waits for a reviewer
-        self.clock = NOW + 3600
-        out = self.main("next")[1]
-        self.assert_stop(out, "STOP_DEADLINE")
-        self.assertIn("still waiting for a review decision", self.report(out))
+        for decision in sh.rules.REVIEW_BLOCKED:
+            with self.subTest(decision):
+                self.setUp()
+                self.replies["gh pr view 7"] = pr_full(reviewDecision=decision)
+                self.assertEqual(self.main("next")[1]["action"], "next")
+                self.assertEqual(self.calls.count("sleep 120"), sh.BUDGET // sh.RESUMABLE_WAIT)  # waits for a reviewer until the budget cuts a wait
+                self.assertTrue(sh.load_state(7)["wait_first"])
+                self.clock = NOW + 3600
+                self.calls.clear()
+                out = self.main("next")[1]
+                self.assert_stop(out, "STOP_DEADLINE")
+                self.assertNotIn("sleep 120", self.calls)  # past the deadline, wait_first doesn't wait
+                self.assertIn("The PR still needs a review decision", self.report(out))
+                self.assertIn("#7 head c5bf4f3", self.report(out))
         self.setUp()
         self.replies["gh pr checks 7"] = [PENDING, checks(check())]
         self.replies["gh pr view 7"] = [pr_full(), pr_full(mergeStateStatus="BEHIND")]

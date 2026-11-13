@@ -513,8 +513,8 @@ def check_deadline(state, snap=None):
             lines.append("A repair subagent may still be running and push; check `git log` and the PR before re-running.")
         gate = state.get("codex")
         if snap is not None and snap["pr"]["reviewDecision"] in rules.REVIEW_BLOCKED:
-            lines.append("It was still waiting for a review decision; a reviewer must act.")
-        elif snap is not None and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["final"] and gate["head"] not in state["codex_passed"]:
+            lines.append("The PR still needs a review decision; a reviewer must act.")
+        elif snap is not None and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
             lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
@@ -1180,7 +1180,7 @@ def open_action(state, snap):
     outcome = rules.open_outcome({**snap["pr"], **snap["queue"]}, snap["checks"], state["automerge"])
     if outcome == "rebase":
         return None  # the next pass's step 1 rebases it, without waiting
-    if outcome in ("pending", "resumable-off-by-run", "review-required"):  # off by this run: step 4 re-enables it
+    if outcome in ("pending", "resumable-off-by-run", "review-required"):  # each clears on its own: checks finish, step 4 re-arms, a reviewer acts
         raise Resumable()
     code, message = OPEN_STOPS[outcome]
     raise Stop(code, True, [message])
