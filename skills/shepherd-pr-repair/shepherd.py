@@ -862,7 +862,7 @@ def codex_gate(state, snap, budget_end):
         if gate.get("polling"):  # .get: a gate saved before this key existed has none
             raise OutOfBudget()
         # fails closed: only a clean bot review of the head passes, so poll to the deadline
-        gate.update(polling=True, final=True)
+        gate.update(polling=True, final=True)  # final: a polling timeout skips the re-trigger steps above
 
 
 def fence(text):

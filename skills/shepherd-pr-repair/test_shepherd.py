@@ -1388,7 +1388,7 @@ class Codex(NextBase):
         self.assert_stop(out, "STOP_DEADLINE")
         self.assertNotIn("Codex bot", self.report(out))  # the bot returned findings; it isn't silent
 
-    def test_codex_resumed_run_waits_once(self):
+    def test_codex_resumed_run_waits_once_then_polls(self):
         self.waits(self.timeout(555, 2), self.timeout(555, 2))
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(self.posts(), [])

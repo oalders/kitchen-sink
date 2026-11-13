@@ -69,7 +69,7 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
    URL=$(gh pr comment --body-file <scratch>/codex-trigger.md)  # "@codex review", blank, "Review of $SHA" (its own line), blank, footer
    python3 "$CL" gh-wait --sha "$SHA" --trigger-comment "${URL##*issuecomment-}"  # window: bot_wait.minutes from the trigger
    ```
-   **Do not push between the trigger and the result.** The bot reviews whatever HEAD is when it runs, and its 👍 is tied to a SHA only by the trigger it is on, so a push would make that tag wrong. `gh-wait` reports `trigger` (latest id) and `triggers` (count) of your own triggers for `--sha`; without `--trigger-comment` it counts a bot 👍 on any of them as clean, but times its wait from now, not from a trigger.
+   **Do not push between the trigger and the result.** The bot reviews whatever HEAD is when it runs, and its 👍 counts for the SHA on the trigger's `Review of` line, so after a push it would pass a commit the bot never reviewed. `gh-wait` reports `trigger` (latest id) and `triggers` (count) of your own triggers for `--sha`.
 2. Act on the `status`, not the exit code (every timeout or pending exits 1); exit `2` (no `status`) is a tool error: STOP and report.
    - **`clean`**: go to step 3.
    - **`findings`**: run `python3 "$CL" gh-threads` and triage the findings as in Phase 1.

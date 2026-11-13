@@ -313,8 +313,8 @@ def classify_bot_activity(head_sha, reviews, issue_comments, trigger_reactions=(
     A findings review is a PR review whose commit_id is head_sha. A clean pass
     is either an issue comment carrying the clean marker and a Reviewed commit
     that prefixes head_sha, or the bot's +1 reaction on one of the viewer's
-    `@codex review` triggers for head_sha (a reaction carries no sha, but
-    the trigger is the viewer's own and tagged with head_sha, so a +1 counts).
+    `@codex review` triggers for head_sha (a reaction carries no sha; the
+    caller passes only those triggers, so a +1 on another sha's trigger never counts).
     """
     for review in reviews:
         if review.get("user", {}).get("login") != BOT_LOGIN:
