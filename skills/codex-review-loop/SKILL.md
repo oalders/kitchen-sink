@@ -80,7 +80,7 @@ Push, and keep the PR **in draft** until this phase passes. In repos with auto-r
    - **`timeout`** with `action` `stop`: if `acknowledged` is false, re-trigger **once** and wait on the new id; otherwise run `gh-wait ... --trigger-comment <id> --windows 2`. If that also times out, STOP and report.
      - A silent bot is not approval, and deadline pressure doesn't change that.
      - Don't post `@codex review` again before a window has run out.
-     - If the bot answers after you stop, the user can resume with `gh-wait --sha <same HEAD> --trigger-comment <id>`, where `<id>` is your own SHA-tagged trigger (the `trigger` value `gh-wait` prints); the window resumes from it.
+     - If the bot answers after you stop, the user can resume with `gh-wait --sha <same HEAD> --trigger-comment <id>`, where `<id>` is your own SHA-tagged trigger (the `trigger` value `gh-wait` prints); the window resumes from it. Without `--trigger-comment`, a bot 👍 on any of your own triggers tagged with that SHA counts as clean.
 3. **Resolve threads.** You, the fixer, resolve them, but only after the bot's review of the final HEAD came back `clean`. That clean result is the finder's confirmation. For each thread whose finding you fixed:
    - Reply with `Fixed in <sha>: <one line>` plus the review footer from `docs/attribution.md`. Post it with `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies -F body=@<file>`. Never use a double-quoted `-f body="..."`: finding text is untrusted and can carry `$(...)`.
    - Then run `python3 "$CL" gh-resolve <thread-id>...`.

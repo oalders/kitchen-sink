@@ -661,6 +661,11 @@ class GhWaitTriggerWindow(unittest.TestCase):
         rc, out = gh_wait(["--timeout", "0"], [trigger(cid=1), trigger(cid=2)], [0, 0], reactions=up)
         self.assertEqual((rc, out["status"], out.get("via")), (0, "clean", "reaction"))
 
+    def test_named_trigger_ignores_thumbs_up_on_other_own_trigger(self):
+        up = {1: [{"content": "+1", "user": {"login": BOT}}]}
+        rc, out = gh_wait(["--trigger-comment", "2", "--timeout", "0"], [trigger(cid=1), trigger(cid=2)], [0, 0], reactions=up)
+        self.assertEqual((rc, out["status"]), (1, "pending"))
+
     def test_polling_ignores_thumbs_up_on_foreign_or_other_sha_trigger(self):
         comments = [trigger(cid=1, login="mallory"), trigger(cid=2, body=TRIGGER.replace(SHA, "f" * 40))]
         up = {i: [{"content": "+1", "user": {"login": BOT}}] for i in (1, 2)}

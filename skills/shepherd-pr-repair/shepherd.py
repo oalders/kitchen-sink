@@ -859,9 +859,10 @@ def codex_gate(state, snap, budget_end):
             minutes = info["minutes"]
             window = f"{minutes * gate['windows']} min" if minutes else "the bot window"
             return codex_pass(state, head, gate, f"Codex gate: no review within {window}; passed by codexTimeoutAction=proceed")
-        if gate.get("polling"):  # get: a gate stored before this key existed isn't polling
+        if gate.get("polling"):  # .get: a gate saved before this key existed has none
             raise OutOfBudget()
-        gate.update(polling=True, final=True)  # any non-proceed timeout polls to the deadline on purpose: fails closed, only a clean bot review of the head passes
+        # fails closed: only a clean bot review of the head passes, so poll to the deadline
+        gate.update(polling=True, final=True)
 
 
 def fence(text):
