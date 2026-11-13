@@ -96,8 +96,8 @@ BLOCKED_OUTPUT = (
 
 
 class BlindReview(unittest.TestCase):
-    def reason(self, text, stderr=""):
-        return cl.blind_review_reason(text, stderr, cl.parse_local_review(text))
+    def reason(self, text, stderr="", bypass=False):
+        return cl.blind_review_reason(text, stderr, cl.parse_local_review(text), bypass)
 
     def test_review_blocked_summary_is_blind(self):
         self.assertIsNotNone(self.reason(BLOCKED_OUTPUT))
@@ -106,6 +106,12 @@ class BlindReview(unittest.TestCase):
     def test_bubblewrap_in_stderr_is_blind(self):
         stderr = "exec failed: error building bubblewrap command: Permission denied"
         self.assertIsNotNone(self.reason(CLEAN_OUTPUT, stderr))
+
+    def test_indented_bubblewrap_line_is_blind(self):
+        self.assertIsNotNone(self.reason(CLEAN_OUTPUT, "log\n  exec failed: error building bubblewrap command: x"))
+
+    def test_echoed_bubblewrap_source_line_not_blind(self):
+        self.assertIsNone(self.reason(CLEAN_OUTPUT, 'BWRAP_MARKER = "error building bubblewrap command"'))
 
     def test_clean_review_is_not_blind(self):
         self.assertIsNone(self.reason(CLEAN_OUTPUT, "WARNING: something"))
@@ -381,6 +387,19 @@ class LocalReviewIntegration(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("could not inspect the diff", out["error"])
         self.assertEqual(self.calls(), 1)
+
+    def test_echoed_bubblewrap_source_under_bypass_passes(self):
+        self.write_control("stderr.txt", 'BWRAP_MARKER = "error building bubblewrap command"\n')
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, True)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out["clean"])
+
+    def test_bwrap_failure_with_nonzero_exit_suggests_bypass(self):
+        self.write_control("stderr.txt", f"exec failed: {cl.BWRAP_MARKER}: no permissions\n")
+        self.write_control("exit.txt", "1")
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, False)
+        self.assertEqual(rc, 2)
+        self.assertIn("ask the user to run", out["error"])
 
     def test_panic_reports_log_tail(self):
         self.write_control("stderr.txt", "HEAD-OF-OUTPUT\n" + "x" * 70000 + "\nthread 'main' panicked: EAGAIN\n")

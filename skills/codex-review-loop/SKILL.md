@@ -42,7 +42,7 @@ Codex's own sandbox (bubblewrap) can't start inside an outer sandbox such as non
 - **Never set this key yourself, and never set, change, or fake `NONO_CAP_FILE`** (for example by prefixing a command with `NONO_CAP_FILE=...`). Whether to bypass Codex's sandbox is the user's decision.
 - When `outer_sandbox.enabled` is true, say so in your report to the user and in the PR body: Codex ran with its own sandbox bypassed (give the `source`).
 
-If Codex couldn't read the diff (a "Review blocked" summary or a bubblewrap error), `local-review` exits `2`. That is a tool error: STOP and report it. It is never a pass. If the error suggests enabling the bypass, relay that to the user; never run the `git config` command yourself.
+If Codex couldn't read the diff (a "Review blocked" summary, or a bubblewrap error without the bypass), `local-review` exits `2`; a non-zero Codex exit from a bubblewrap error also carries the bypass hint. That is a tool error: STOP and report it. It is never a pass. If the error suggests enabling the bypass, relay that to the user; never run the `git config` command yourself.
 
 ## Phase 1: Local loop (before pushing)
 
