@@ -541,15 +541,19 @@ def trigger(cid=7, login=VIEWER, body=TRIGGER, created=CREATED):
     return {**comment(body, login=login, cid=cid), "created_at": created}
 
 
-def gh_wait(argv, comments, monotonic, minutes="15", sleep=None):
-    """Run gh-wait with no bot activity; return (exit code, JSON result)."""
+def gh_wait(argv, comments, monotonic, minutes="15", sleep=None, reactions=None):
+    """Run gh-wait with no bot activity but `reactions` ({comment id: [...]}); return (exit code, JSON result)."""
 
     def fake_run(cmd, check=True, **kw):
         if cmd[:3] == ["gh", "api", "user"]:
             return subprocess.CompletedProcess(cmd, 0, VIEWER + "\n", "")
         return fake_config({cl.TIMEOUT_MINUTES_KEY: minutes})(cmd)
 
-    pages = lambda path: [comments] if path.endswith("/comments") else []
+    def pages(path):
+        if path.endswith("/reactions"):
+            return [(reactions or {}).get(int(path.split("/")[-2]), [])]
+        return [comments] if path.endswith("/comments") else []
+
     with mock.patch.object(cl, "run", fake_run), mock.patch.object(
         cl, "pr_number", lambda _: "5"
     ), mock.patch.object(cl, "gh_json", pages), mock.patch.object(cl.time, "time", lambda: NOW), mock.patch.object(
@@ -651,6 +655,17 @@ class GhWaitTriggerWindow(unittest.TestCase):
         ]
         rc, out = gh_wait(["--timeout", "0"], comments, [0, 0])
         self.assertEqual((out["trigger"], out["triggers"]), (5, 2))
+
+    def test_polling_sees_bot_thumbs_up_on_own_trigger(self):
+        up = {1: [{"content": "+1", "user": {"login": BOT}}]}
+        rc, out = gh_wait(["--timeout", "0"], [trigger(cid=1), trigger(cid=2)], [0, 0], reactions=up)
+        self.assertEqual((rc, out["status"], out.get("via")), (0, "clean", "reaction"))
+
+    def test_polling_ignores_thumbs_up_on_foreign_or_other_sha_trigger(self):
+        comments = [trigger(cid=1, login="mallory"), trigger(cid=2, body=TRIGGER.replace(SHA, "f" * 40))]
+        up = {i: [{"content": "+1", "user": {"login": BOT}}] for i in (1, 2)}
+        rc, out = gh_wait(["--timeout", "0"], comments, [0, 0], reactions=up)
+        self.assertEqual((rc, out["status"]), (1, "timeout"))
 
 
 def thread(login="chatgpt-codex-connector", resolved=False, body=None, tid="T1"):

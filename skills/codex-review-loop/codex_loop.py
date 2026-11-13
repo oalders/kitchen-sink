@@ -9,8 +9,9 @@ Subcommands (all print JSON on stdout):
                             A review that could not read the diff (Codex's
                             own sandbox failed) is a tool error, not a pass.
   gh-wait --sha SHA         Wait for the Codex GitHub bot to review SHA
-                            (--trigger-comment ID to count its +1 reaction and
-                            time the window from it; --timeout then only caps
+                            (counts a bot +1 on your own triggers for SHA;
+                            --trigger-comment ID counts only that one's and
+                            times the window from it; --timeout then only caps
                             the call, reporting `pending` if the window is open).
   gh-threads                List unresolved review threads opened by the bot.
   gh-resolve ID [ID ...]    Resolve review threads by GraphQL node id.
@@ -311,9 +312,9 @@ def classify_bot_activity(head_sha, reviews, issue_comments, trigger_reactions=(
 
     A findings review is a PR review whose commit_id is head_sha. A clean pass
     is either an issue comment carrying the clean marker and a Reviewed commit
-    that prefixes head_sha, or the bot's +1 reaction on the `@codex review`
-    trigger comment (which carries no sha -- the caller guarantees nothing was
-    pushed after triggering).
+    that prefixes head_sha, or the bot's +1 reaction on one of the viewer's
+    `@codex review` triggers for head_sha (a reaction carries no sha -- the
+    caller guarantees nothing was pushed after triggering).
     """
     for review in reviews:
         if review.get("user", {}).get("login") != BOT_LOGIN:
@@ -397,12 +398,12 @@ def cmd_gh_wait(args):
             # A --timeout shorter than the trigger's window only caps this call.
             capped = ends is not None and args.timeout is not None and args.timeout < seconds
             deadline = time.monotonic() + (args.timeout if capped else seconds)
-        reactions = []
-        if args.trigger_comment:
-            path = f"repos/{{owner}}/{{repo}}/issues/comments/{args.trigger_comment}/reactions"
-            reactions = flatten(gh_json(path))
-        result = classify_bot_activity(args.sha, reviews, comments, reactions)
         triggers = own_triggers(args.sha, comments, viewer)
+        # Without --trigger-comment (polling), a +1 on any of the viewer's own triggers for sha counts.
+        ids = [args.trigger_comment] if args.trigger_comment else triggers
+        paths = [f"repos/{{owner}}/{{repo}}/issues/comments/{i}/reactions" for i in ids]
+        reactions = [r for path in paths for r in flatten(gh_json(path))]
+        result = classify_bot_activity(args.sha, reviews, comments, reactions)
         found = {"pr": int(pr), "sha": args.sha}
         found.update(trigger=(triggers or [None])[-1], triggers=len(triggers))
         if result["status"] != "pending":
