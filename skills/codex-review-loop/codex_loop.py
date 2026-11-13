@@ -46,8 +46,8 @@ ROUNDS_RANGE = range(1, 6)
 ROUNDS_DEFAULT = 3
 BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox"
 BWRAP_MARKER = "error building bubblewrap command"
-# A quote or backtick before the marker means echoed source, not the error; [ \t] (not \s) keeps it linear.
-BWRAP_RE = re.compile(rf"^(?:[^\"'`\n]*?exec failed: |[ \t]*){re.escape(BWRAP_MARKER)}", re.I | re.M)
+# A quote or backtick before the marker on its line means echoed source, not Codex's error.
+BWRAP_RE = re.compile(rf"^[^\"'`\n]*?{re.escape(BWRAP_MARKER)}", re.I | re.M)
 MODES = ("off", "local", "github")
 BOT_LOGIN = "chatgpt-codex-connector[bot]"
 BLOCKING = {"P0", "P1", "P2"}

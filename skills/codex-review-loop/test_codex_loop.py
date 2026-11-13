@@ -113,6 +113,7 @@ class BlindReview(unittest.TestCase):
     def test_prefixed_bubblewrap_log_line_is_blind(self):
         stderr = "2026-11-13T00:00:00Z ERROR codex_core: exec failed: " + cl.BWRAP_MARKER + ": x"
         self.assertIsNotNone(self.reason(CLEAN_OUTPUT, stderr))
+        self.assertIsNotNone(self.reason(CLEAN_OUTPUT, "ERROR sandbox: " + cl.BWRAP_MARKER + ": x"))
 
     def test_bubblewrap_error_under_bypass_not_blind(self):
         self.assertIsNone(self.reason(CLEAN_OUTPUT, "exec failed: " + cl.BWRAP_MARKER + ": x", bypass=True))
@@ -122,6 +123,8 @@ class BlindReview(unittest.TestCase):
 
     def test_echoed_bubblewrap_source_line_not_blind(self):
         self.assertIsNone(self.reason(CLEAN_OUTPUT, 'BWRAP_MARKER = "error building bubblewrap command"'))
+        self.assertIsNone(self.reason(CLEAN_OUTPUT, 'print("exec failed: error building bubblewrap command")'))
+        self.assertIsNone(self.reason(CLEAN_OUTPUT, "matches `exec failed: error building bubblewrap command`"))
 
     def test_clean_review_is_not_blind(self):
         self.assertIsNone(self.reason(CLEAN_OUTPUT, "WARNING: something"))
@@ -398,11 +401,20 @@ class LocalReviewIntegration(unittest.TestCase):
         self.assertIn("could not inspect the diff", out["error"])
         self.assertEqual(self.calls(), 1)
 
-    def test_echoed_bubblewrap_source_under_bypass_passes(self):
-        self.write_control("stderr.txt", 'BWRAP_MARKER = "error building bubblewrap command"\n')
-        rc, out, _ = self.run_review(CLEAN_OUTPUT, True)
+    def test_bwrap_error_under_bypass_passes(self):
+        echo = 'BWRAP_MARKER = "error building bubblewrap command"\n'
+        self.write_control("stderr.txt", echo + f"exec failed: {cl.BWRAP_MARKER}: x\n")
+        rc, out, argv = self.run_review(CLEAN_OUTPUT, True)
         self.assertEqual(rc, 0)
         self.assertTrue(out["clean"])
+        self.assertIn(cl.BYPASS_FLAG, argv)
+
+    def test_bwrap_failure_with_nonzero_exit_under_bypass_does_not_suggest_bypass(self):
+        self.write_control("stderr.txt", f"exec failed: {cl.BWRAP_MARKER}: x\n")
+        self.write_control("exit.txt", "1")
+        rc, out, _ = self.run_review(CLEAN_OUTPUT, True)
+        self.assertEqual(rc, 2)
+        self.assertNotIn("ask the user to run", out["error"])
 
     def test_bwrap_failure_with_nonzero_exit_suggests_bypass(self):
         self.write_control("stderr.txt", f"exec failed: {cl.BWRAP_MARKER}: no permissions\n")
