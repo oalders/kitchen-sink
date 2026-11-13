@@ -134,14 +134,14 @@ class BlindReview(unittest.TestCase):
 
     def test_captured_unable_to_assess_is_blind_under_bypass(self):
         final_message = CAPTURED_BWRAP_STDERR.partition("\ncodex\n")[2]
-        self.assertIsNotNone(self.reason(final_message, bypass=True))
+        self.assertIn("Codex reported:", self.reason(final_message, bypass=True))
 
     def test_advisory_only_with_blind_first_line_is_blind(self):
         text = "Unable to assess correctness: no diff.\n- [P3] Nit — /a.py:1\n  meh\n"
-        self.assertIsNotNone(self.reason(text))
+        self.assertIn("Codex reported:", self.reason(text))
 
-    def test_advisory_only_mentioning_bubblewrap_not_blind(self):
-        text = "- [P3] Nit — /a.py:1\n  Mentions error building bubblewrap command.\n"
+    def test_advisory_only_echoing_blind_markers_not_blind(self):
+        text = "- [P3] Nit — /a.py:1\n  Mentions error building bubblewrap command.\n  Unable to assess correctness: quoted.\n"
         self.assertIsNone(self.reason(text, "error building bubblewrap command"))
 
     def test_findings_mentioning_bubblewrap_not_blind(self):

@@ -231,7 +231,7 @@ def blind_review_reason(text, stderr, result, bypass):
     """Return why a review without blocking findings never actually saw the diff, else None."""
     if result["blocking"]:
         return None
-    # Under the bypass, or alongside findings, the marker can only be echoed diff content.
+    # Under the bypass Codex builds no bubblewrap sandbox; alongside findings the marker is most likely echoed diff content.
     if not bypass and not result["advisory"] and BWRAP_MARKER in f"{text}\n{stderr}".lower():
         return f"Codex's sandbox failed to start ({BWRAP_MARKER})"
     first = next((l.strip() for l in text.splitlines() if l.strip()), "")
