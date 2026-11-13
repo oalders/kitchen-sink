@@ -47,6 +47,7 @@ ROUNDS_RANGE = range(1, 6)
 ROUNDS_DEFAULT = 3
 BYPASS_FLAG = "--dangerously-bypass-approvals-and-sandbox"
 BWRAP_MARKER = "error building bubblewrap command"
+BLIND_PREFIXES = ("review blocked", "unable to assess correctness")
 MODES = ("off", "local", "github")
 BOT_LOGIN = "chatgpt-codex-connector[bot]"
 BLOCKING = {"P0", "P1", "P2"}
@@ -227,14 +228,14 @@ def parse_local_review(text):
 
 
 def blind_review_reason(text, stderr, result, bypass):
-    """Return why a findings-free review never actually saw the diff, else None."""
-    if result["blocking"] or result["advisory"]:
+    """Return why a review without blocking findings never actually saw the diff, else None."""
+    if result["blocking"]:
         return None
-    # With the bypass, Codex builds no bubblewrap sandbox, so the marker can only be echoed text.
-    if not bypass and BWRAP_MARKER in f"{text}\n{stderr}".lower():
+    # Under the bypass, or alongside findings, the marker can only be echoed diff content.
+    if not bypass and not result["advisory"] and BWRAP_MARKER in f"{text}\n{stderr}".lower():
         return f"Codex's sandbox failed to start ({BWRAP_MARKER})"
     first = next((l.strip() for l in text.splitlines() if l.strip()), "")
-    if first.lower().startswith("review blocked"):
+    if first.lower().startswith(BLIND_PREFIXES):
         return f"Codex reported: {first}"
     return None
 
