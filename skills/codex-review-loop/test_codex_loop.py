@@ -526,6 +526,16 @@ class ToolErrorOutput(unittest.TestCase):
         self.assertTrue(isinstance(gh["cmd"], list) and all(isinstance(a, str) for a in gh["cmd"]))
         self.assertEqual((rc, gh["cmd"][0], gh["returncode"], gh["stderr"]), (2, "gh", 1, "HTTP 502\n"))
 
+    def test_failed_non_gh_command_has_no_gh_part(self):
+        failed = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "fatal: nope\n")
+        # No subcommand runs git with check=True, so a stand-in pr_number reaches main's guard with a failed git.
+        git = lambda _: cl.run(["git", "rev-parse", "HEAD"])
+        with mock.patch.object(cl.subprocess, "run", failed), mock.patch.object(cl, "pr_number", git):
+            rc, out = self.main(["gh-wait", "--sha", SHA])
+        self.assertEqual(rc, 2)
+        self.assertNotIn("gh", out)
+        self.assertIn("git rev-parse HEAD failed (1)", out["error"])
+
     def test_other_errors_have_no_gh_part(self):
         with mock.patch.object(cl, "pr_number", lambda _: "5"):
             rc, out = self.main(["gh-wait", "--sha", SHA, "--windows", "0"])

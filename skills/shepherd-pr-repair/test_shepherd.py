@@ -138,6 +138,7 @@ class TestRules(unittest.TestCase):
             "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
             "fatal: No such remote 'origin'",
             "fatal: not a git repository (or any of the parent directories): .git",
+            "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 401",
             "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403",
             "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 404",
             "Host key verification failed.",
@@ -326,7 +327,8 @@ class TestRules(unittest.TestCase):
         merge = ["gh", "pr", "merge", "7", "--auto", "--squash"]
         for err in ("HTTP 502", "HTTP 503: Service Unavailable", "You have exceeded a secondary rate limit", "GraphQL: timeout",
                     "dial tcp: i/o timeout", "connection reset by peer", "connection refused", "no such host",
-                    "could not resolve host: api.github.com", "TLS handshake timeout", "unexpected EOF"):
+                    "could not resolve host: api.github.com", "TLS handshake timeout", "remote error: tls: bad certificate",
+                    "unexpected EOF"):
             self.assertTrue(rules.is_resumable_gh_error(merge, err), err)
         self.assertFalse(rules.is_resumable_gh_error(["gh", "pr", "merge", "7", "--disable-auto"], "secondary rate limit"))
         self.assertFalse(rules.is_resumable_gh_error(["gh", "run", "rerun", "5"], "HTTP 502"))
@@ -1419,7 +1421,13 @@ class Codex(NextBase):
         self.assert_stop(self.main("next")[1], "STOP_GH_FAILED")
 
     def test_codex_malformed_gh_failure_is_a_codex_error(self):
-        for gh in ({"cmd": "gh api", "returncode": 1, "stderr": "HTTP 502"}, {"cmd": ["gh"], "returncode": "1", "stderr": "HTTP 502"}):
+        for gh in (
+            {"cmd": "gh api", "returncode": 1, "stderr": "HTTP 502"},
+            {"cmd": ["gh", 1], "returncode": 1, "stderr": "HTTP 502"},
+            {"cmd": ["gh"], "returncode": "1", "stderr": "HTTP 502"},
+            {"cmd": ["gh"], "returncode": True, "stderr": "HTTP 502"},  # bool is an int subclass
+            {"cmd": ["gh"], "returncode": 1, "stderr": None},
+        ):
             with self.subTest(gh):
                 self.live(model="Opus 5.5")
                 self.replies[self.GHWAIT] = (2, json.dumps({"error": "gh api x failed (1): HTTP 502", "gh": gh}), "")

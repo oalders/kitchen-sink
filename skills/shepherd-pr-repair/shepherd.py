@@ -389,7 +389,7 @@ def claimed_stop(n):
 def _start_with_pr(n, branch, model, minutes):
     old = load_state(n)
     if old:
-        drop_evidence(old)  # the new state replaces it, and a late `record` for the old run is ignored
+        drop_evidence(old)  # stale on every path below; save so the kept state never names a deleted dir
         save_state(n, old)
     pr = gh_json(
         ["pr", "view", str(n), "--json", "number,state,isCrossRepository,author,baseRefName,headRefName,headRefOid"]
@@ -1317,7 +1317,7 @@ def pass_once(state, snap, budget_end):
     action = codex_gate(state, snap, budget_end)
     if action:
         return action
-    # A verdict serves only the first pass after its `record` to reach step 3 or its watch; a cut-off or failed `gh` keeps it.
+    # A verdict serves only the first pass after its `record` to reach step 3 or its watch; a cut-off or failed `gh` keeps it, a Resumable drops it.
     try:
         action = show_and_act(state, snap) or watch(state, snap, budget_end)
     except Resumable:
