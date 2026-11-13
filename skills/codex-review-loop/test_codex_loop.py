@@ -531,6 +531,7 @@ class ToolErrorOutput(unittest.TestCase):
             rc, out = self.main(["gh-wait", "--sha", SHA, "--windows", "0"])
         self.assertEqual(rc, 2)
         self.assertNotIn("gh", out)
+        self.assertIn("--windows", out["error"])
 
 
 class GhWaitTriggerWindow(unittest.TestCase):

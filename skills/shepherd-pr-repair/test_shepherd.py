@@ -484,6 +484,16 @@ class TestStart(Env):
         self.assertEqual(self.read_state_bytes(), before)
         self.assertEqual(os.listdir(os.path.dirname(self.state_file())), ["7.json"])
 
+    def test_state_write_fsyncs_before_replacing(self):
+        order = []
+        fsync, replace = os.fsync, os.replace
+        with (
+            mock.patch.object(sh.os, "fsync", side_effect=lambda fd: (order.append("fsync"), fsync(fd))[1]),
+            mock.patch.object(sh.os, "replace", side_effect=lambda a, b: (order.append("replace"), replace(a, b))[1]),
+        ):
+            sh.save_state(7, {"pr": 7})
+        self.assertEqual(order[:2], ["fsync", "replace"])  # a crash after the rename must not leave an empty file
+
     def test_state_dir_is_private(self):
         path = os.path.join(self.git_dir, "kitchen-sink", "shepherd")
         os.makedirs(path, mode=0o755)
@@ -1199,7 +1209,8 @@ class Next(NextBase):
         self.live(deadline=NOW - 1, automerge="off")
         self.replies["gh pr view 7"] = pr_full(autoMergeRequest=None)
         self.assert_stop(self.main("next")[1], "STOP_DEADLINE")
-        self.assertFalse([c for c in self.calls if c.startswith("gh pr merge")])
+        mutating = ("gh pr merge", "gh pr ready", "gh pr comment", "gh run rerun")
+        self.assertFalse([c for c in self.calls if c.startswith(mutating)])
 
     def test_gh_stderr_not_on_stdout(self):
         self.live()

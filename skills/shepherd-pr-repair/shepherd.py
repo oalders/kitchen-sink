@@ -389,7 +389,7 @@ def claimed_stop(n):
 def _start_with_pr(n, branch, model, minutes):
     old = load_state(n)
     if old:
-        drop_evidence(old)  # unclaimed, so no subagent reads it; no later path does either
+        drop_evidence(old)  # the new state replaces it, and a late `record` for the old run is ignored
         save_state(n, old)
     pr = gh_json(
         ["pr", "view", str(n), "--json", "number,state,isCrossRepository,author,baseRefName,headRefName,headRefOid"]
