@@ -2204,13 +2204,14 @@ class Watch(NextBase):
                 self.setUp()
                 self.replies["gh pr view 7"] = pr_full(reviewDecision=decision)
                 self.assertEqual(self.main("next")[1]["action"], "next")
-                self.assertEqual(self.calls.count("sleep 120"), sh.BUDGET // sh.RESUMABLE_WAIT)  # waits for a reviewer until the budget cuts a wait
+                self.assertEqual(self.calls.count(f"sleep {sh.RESUMABLE_WAIT}"), sh.BUDGET // sh.RESUMABLE_WAIT)  # waits for a reviewer until the budget cuts a wait
                 self.assertTrue(sh.load_state(7)["wait_first"])
+                self.assertEqual(sh.load_state(7)["automerge"], "on")
                 self.clock = NOW + 3600
                 self.calls.clear()
                 out = self.main("next")[1]
                 self.assert_stop(out, "STOP_DEADLINE")
-                self.assertNotIn("sleep 120", self.calls)  # past the deadline, wait_first doesn't wait
+                self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)  # past the deadline, wait_first doesn't wait
                 self.assertIn("The PR still needs a review decision", self.report(out))
                 self.assertIn("#7 head c5bf4f3", self.report(out))
         self.setUp()
