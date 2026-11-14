@@ -67,6 +67,7 @@ RUN_FIELDS = "databaseId,attempt,conclusion,name,event,headSha"
 JOBS_JQ = '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .databaseId'
 REGISTER_WAIT = 60  # checks register late
 SUITES_JQ = ".check_suites[].created_at"
+ACTIVITY_JQ = r'.[] | "\(.before) \(.after) \(.activity_type) \(.actor.login)"'
 STATUS_JQ = '.statuses[]|select(.state=="failure" or .state=="error")|"x"'
 CHECK_RUNS_JQ = (
     '.check_runs[] | select(.conclusion != null and (.conclusion | IN("success","neutral","skipped") | not))'
@@ -517,6 +518,8 @@ def check_deadline(state, snap=None):
             lines.append("The PR still needs a review decision; a reviewer must act.")
         elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
             lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")  # pending: a repair, not the bot, is outstanding
+        if snap is not None and state["gated_head"] not in (None, snap["pr"]["headRefOid"]):  # a fresh start would gate it unasked
+            lines.append(f"The PR's head {snap['pr']['headRefOid']} is a push this run could not attribute to you; decide whether to gate it before re-running /shepherd-pr.")
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
 
@@ -609,7 +612,7 @@ def local_work_guard(head):
 
 
 def adopt(state, head):
-    """A head this run's repair pushed."""
+    """A head this run's repair, or the viewer from another session, pushed."""
     state.update(gated_head=head, automerge="off-by-run", rerun=0, infra=[], pending=None)
 
 
@@ -649,7 +652,15 @@ def step1_checks(state, snap):
     pr, queue = snap["pr"], snap["queue"]
     head = pr["headRefOid"]
     if state["gated_head"] not in (None, head):
-        raise Stop("STOP_FOREIGN_HEAD", True, [f"Someone else pushed {head}; decide whether to gate it, then re-run /shepherd-pr."])
+        if pr["autoMergeRequest"] is not None:  # nothing ungated merges while the run waits on the log or after it stops
+            disable_auto(state, snap)
+            state["automerge"] = "off-by-run"
+        mine = own_push(state, snap, head)
+        if mine is None:
+            raise Resumable()  # the activity log lags the push
+        if not mine:
+            raise Stop("STOP_FOREIGN_HEAD", True, [f"Someone else pushed {head}; decide whether to gate it, then re-run /shepherd-pr."])
+        adopt(state, head)  # the viewer's push from another session: the rest of this pass gates it
     armed = pr["autoMergeRequest"] is not None
     if state["automerge"] == "on" and not armed and not queue["isInMergeQueue"]:
         if find_removal(state, snap)[0] is None:
@@ -659,6 +670,13 @@ def step1_checks(state, snap):
     elif state["automerge"] is None:
         state["automerge"] = "off"
     state["gated_head"] = head
+
+
+def own_push(state, snap, head):
+    """The branch's activity log, judged by `rules.own_push`: its actor is server-recorded, unlike a commit's author."""
+    path = f"repos/{state['owner']}/{state['repo']}/activity?ref=refs/heads/{state['branch']}"
+    entries = [line.split() for line in run(["gh", "api", "--paginate", path, "-q", ACTIVITY_JQ]).stdout.splitlines()]
+    return rules.own_push(entries, head, state["gated_head"], snap["viewer"])
 
 
 def find_removal(state, snap):
@@ -1166,7 +1184,7 @@ def reread_action(state, snap, outcome):
         disable_auto(state, snap)
         state["automerge"] = "off-by-run"
     if outcome == "new-head":
-        raise Stop("STOP_FOREIGN_HEAD", True, ["Someone else pushed a new head; decide whether to gate it, then re-run."])
+        return None  # the next pass's step 1 decides whose push it is
     return checks_failed(state, snap)
 
 

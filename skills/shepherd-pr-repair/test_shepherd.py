@@ -240,6 +240,22 @@ class TestRules(unittest.TestCase):
         nodes = [self.add(times[0]), self.remove(times[1]), self.add(times[2]), self.remove(times[3])]
         self.assertTrue(rules.may_requeue(nodes, nodes[3], None, "2027-01-01T00:01:00Z"))
 
+    def test_own_push(self):
+        g, a, b, h = "g", "a", "b", "h"
+        mine = [(b, h, "push", "me"), (a, b, "push", "me"), (g, a, "push", "me")]
+        cases = {
+            "viewer's pushes": (mine, True),
+            "another actor": ([(b, h, "push", "me"), (a, b, "push", "you"), (g, a, "push", "me")], False),
+            "force_push link": ([(b, h, "push", "me"), (a, b, "force_push", "me"), (g, a, "push", "me")], False),
+            "branch_creation": ([(b, h, "push", "me"), ("0" * 40, b, "branch_creation", "me")], False),
+            "broken chain": (mine[:2], False),
+            "recurring SHA": ([(a, h, "push", "me"), (g, a, "force_push", "you"), (g, a, "push", "me")], False),
+            "no entry for the head": (mine[1:], None),
+        }
+        for name, (entries, want) in cases.items():
+            with self.subTest(name):
+                self.assertIs(rules.own_push(entries, h, g, "me"), want)
+
     def test_queue_deadline(self):
         self.assertEqual(rules.queue_deadline(100, 200, True, 60), 1160)
         self.assertEqual(rules.queue_deadline(100, 200, True, None), 3700)
@@ -533,6 +549,7 @@ class TestStart(Env):
 
 OTHER = "b" * 40
 THIRD = "d" * 40
+ACTIVITY = "gh api --paginate repos/o/r/activity?ref=refs/heads/fix-174"
 CODEX_MODE = " ".join([sys.executable, sh.CODEX_LOOP, "mode"])
 
 
@@ -754,10 +771,46 @@ class Next(NextBase):
         self.assertEqual(self.calls.count("sleep 120"), 1)
         self.assertFalse(sh.load_state(7)["ended"])
 
-    def test_foreign_head(self):
+    def activity(self, *entries):
+        self.replies[ACTIVITY] = "".join(" ".join(e) + "\n" for e in entries)
+
+    def test_own_push_regated(self):
+        self.live(rerun=1, infra=["flaky"])
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.replies[DISABLE] = ""
+        self.activity((THIRD, OTHER, "push", "me"), (SHA, THIRD, "push", "me"))
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        state = sh.load_state(7)
+        self.assertEqual((state["gated_head"], state["rerun"], state["infra"]), (OTHER, 0, []))
+        self.assertIn(f"gh pr merge 7 --auto --squash --match-head-commit {OTHER}", self.calls)  # the same pass gates it
+
+    def test_foreign_head_disarms_first(self):
         self.live()
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
-        self.assert_stop(self.main("next")[1], "STOP_FOREIGN_HEAD")
+        self.replies[DISABLE] = ""
+        self.activity((SHA, OTHER, "push", "you"))
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_FOREIGN_HEAD")
+        self.assertEqual(out["automerge"], "off")
+        activity = next(c for c in self.calls if c.startswith(ACTIVITY))
+        self.assertLess(self.calls.index(DISABLE), self.calls.index(activity))
+
+    def test_own_push_not_logged_yet_waits(self):
+        self.live(automerge="off")
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
+        self.activity((THIRD, SHA, "push", "me"))
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "next")
+        self.assertIn("sleep 120", self.calls)
+        state = sh.load_state(7)
+        self.assertEqual((state["gated_head"], state["ended"]), (SHA, False))
+
+    def test_deadline_names_unattributed_head(self):
+        self.live(deadline=NOW - 1)
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
 
     def test_automerge_turned_off(self):
         self.live()
@@ -1937,12 +1990,14 @@ class Watch(NextBase):
         self.assertIn("sleep 15", self.calls)  # the checks poll, not `--watch`
         self.assertTrue(sh.load_state(7)["ended"])
 
-    def test_watch_new_head(self):
+    def test_watch_new_head_passes_again(self):
         self.replies["gh pr checks 7"] = [PENDING, checks(check())]
-        self.replies["gh pr view 7"] = [pr_full(), pr_full(headRefOid=OTHER)]
+        self.replies["gh pr view 7"] = [pr_full(), pr_full(headRefOid=OTHER), pr_full(headRefOid=OTHER, autoMergeRequest=None)]
+        self.replies[ACTIVITY] = f"{SHA} {OTHER} push you\n"
         out = self.main("next")[1]
-        self.assert_stop(out, "STOP_FOREIGN_HEAD")
-        self.assertIn(DISABLE, self.calls)
+        self.assert_stop(out, "STOP_FOREIGN_HEAD")  # step 1 of the next pass decided
+        self.assertEqual(self.calls.count(DISABLE), 1)
+        self.assertEqual(self.calls.count("gh api user -q .login"), 2)  # read_pr ran for the second pass
         self.assertEqual(out["automerge"], "off")
 
     def test_watch_failed_check_repair(self):
@@ -2284,6 +2339,10 @@ class TestJq(unittest.TestCase):
     def test_jobs_lists_unsuccessful_ids(self):
         jobs = [{"conclusion": c, "databaseId": i} for i, c in enumerate(("success", "skipped", "failure", "cancelled", None), 1)]
         self.assertEqual(self.jq(sh.JOBS_JQ, {"jobs": jobs}), "3\n4\n5\n")
+
+    def test_activity_one_line_per_entry(self):
+        doc = [{"before": "a", "after": "b", "activity_type": "push", "actor": {"login": "me"}, "timestamp": "t"}]
+        self.assertEqual(self.jq(sh.ACTIVITY_JQ, doc), "a b push me\n")
 
     def test_check_suites_created_at(self):
         doc = {"check_suites": [{"created_at": "2026-11-12T01:00:00Z"}, {"created_at": "2026-11-12T00:00:00Z"}]}
