@@ -887,6 +887,11 @@ class Next(NextBase):
         out = self.main("next")[1]
         self.assert_stop(out, "STOP_DEADLINE_FOREIGN_HEAD")
         self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
+        self.live(deadline=NOW - 1)
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, reviewDecision=next(iter(sh.rules.REVIEW_BLOCKED)))
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE_REVIEW")  # the review hint names the code; the foreign head still reports
+        self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
 
     def test_deadline_omits_unattributed_line_for_the_repairs_push(self):
         self.live(deadline=NOW - 1, automerge="off-by-run", pending=self.claimed())
@@ -2692,6 +2697,11 @@ class StopLog(NextBase):
         self.replies["gh pr view 7"] = pr_view(state="CLOSED")
         self.assertEqual(self.main("start", "--model", "Opus 5.5")[1]["code"], "STOP_CLOSED")
         self.assertEqual([(l["repo"], l["pr"], l["code"], l["repairs"]) for l in self.stop_lines()], [("o/r", 7, "STOP_CLOSED", None)])
+
+    def test_claimed_start_stop_logs_pr_and_repo(self):
+        self.live(pending={**self.repair(), "claimed": True})
+        self.assertEqual(self.main("start", "--model", "Opus 5.5")[1]["code"], "STOP_REPAIR_CLAIMED")
+        self.assertEqual([(l["repo"], l["pr"], l["code"]) for l in self.stop_lines()], [("o/r", 7, "STOP_REPAIR_CLAIMED")])
 
     def test_unwritable_log_still_stops(self):
         program(os.path.join(self.git_dir, "state", "kitchen-sink"))  # a file where the log's directory should be

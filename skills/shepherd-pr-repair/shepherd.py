@@ -310,23 +310,23 @@ stop_context = {}  # what a stop's log line names, noted as it becomes known; ma
 
 def log_stop(stop):
     """Append one line per emitted stop to a local log, for counting stops by code and repo; never fails the call."""
-    state = stop_context.get("state") or {}
-    line = {
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time())),
-        "repo": f"{state['owner']}/{state['repo']}" if state else stop_context.get("repo"),
-        "pr": stop_context.get("pr"), "code": stop.code, "terminal": stop.terminal,
-        "repairs": state.get("repairs"), "rerun": state.get("rerun"),
-    }  # fmt: skip
-    base = os.environ.get("XDG_STATE_HOME", "")
-    path = os.path.join(base if os.path.isabs(base) else os.path.expanduser("~/.local/state"), "kitchen-sink")
     try:
+        state = stop_context.get("state") or {}
+        line = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time())),
+            "repo": f"{state['owner']}/{state['repo']}" if state else stop_context.get("repo"),
+            "pr": stop_context.get("pr"), "code": stop.code, "terminal": stop.terminal,
+            "repairs": state.get("repairs"), "rerun": state.get("rerun"),
+        }  # fmt: skip
+        base = os.environ.get("XDG_STATE_HOME", "")
+        path = os.path.join(base if os.path.isabs(base) else os.path.expanduser("~/.local/state"), "kitchen-sink")
         os.makedirs(path, mode=0o700, exist_ok=True)
         fd = os.open(os.path.join(path, "shepherd-stops.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
             os.write(fd, (json.dumps(line) + "\n").encode())
         finally:
             os.close(fd)
-    except OSError:
+    except Exception:  # noqa: BLE001 - the log must never change the stop the agent sees
         pass
 
 
