@@ -1547,7 +1547,7 @@ class Codex(NextBase):
                 self.live(codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
                 self.replies.update({"gh pr view 7": pr, "gh api graphql": queue(queued=queued)})
                 out = self.main("next")[1]
-                self.assert_stop(out, "STOP_DEADLINE")
+                self.assert_stop(out, "STOP_DEADLINE_CODEX" if named else "STOP_DEADLINE")
                 self.assertEqual("a late review can still arrive after it merges" in self.report(out), named)
 
     def test_codex_bad_trigger_id_is_not_adopted(self):
