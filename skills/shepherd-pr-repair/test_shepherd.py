@@ -55,10 +55,13 @@ class Env(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.git_dir = tmp.name
+        self.checkout = os.path.join(tmp.name, "checkout")
         self.reset_replies()
         self.calls, self.clock, self.kwargs = [], NOW, {}
+        self.programs = {p: p for p in ("/usr/bin/ci-go", "/opt/ci/logs")}  # what the fake `shutil.which` finds
         for target, name, fake in (
             (sh, "run", self.fake_run),
+            (sh.shutil, "which", self.programs.get),
             (sh.time, "time", lambda: self.clock),
             (sh.time, "sleep", self.fake_sleep),
         ):
@@ -73,6 +76,7 @@ class Env(unittest.TestCase):
     def reset_replies(self):
         self.replies = {
             "git rev-parse --git-dir": self.git_dir,
+            "git rev-parse --show-toplevel": self.checkout + "\n",
             "git config --local --get": fail(""),
             "git branch --show-current": "fix-174\n",
             "git rev-parse --git-path rebase-merge": os.path.join(self.git_dir, "rebase-merge"),
@@ -416,6 +420,8 @@ class TestStart(Env):
             "bad sha": ({"gh pr view 7": pr_view(headRefOid="abc")}, "STOP_BAD_SHA"),
             "branch mismatch": ({"gh pr view 7": pr_view(headRefName="other")}, "STOP_BRANCH_MISMATCH"),
             "detached": ({"git branch --show-current": "\n"}, "STOP_DETACHED"),
+            "bad log command": ({f"git config --local --get {sh.CI_LOG_KEY}": "bin/logs\n"}, "STOP_CI_COMMAND"),
+            "bad trigger command": ({f"git config --local --get {sh.CI_TRIGGER_KEY}": "bin/go\n"}, "STOP_CI_COMMAND"),
         }
         for name, (replies, code) in cases.items():
             with self.subTest(name):
@@ -1596,13 +1602,57 @@ class Show(NextBase):
         self.assertIn(sh.CI_TRIGGER_KEY, self.report(out))
         self.assertIn("HTTP 403", self.report(out))
         self.assertFalse([c for c in self.calls if c.startswith("gh pr merge")])
+        self.assertIsNone(sh.load_state(7).get("triggered"))
+
+    def test_ci_trigger_failure_reports_stdout_without_stderr(self):
+        self.live()
+        self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "/usr/bin/ci-go\n"
+        self.replies[self.TRIGGER] = (1, "HTTP 403\n", "")
+        self.assertIn("```\nexit 1\nHTTP 403\n```", self.report(self.main("next")[1]))
+
+    def test_ci_trigger_runs_the_resolved_program(self):
+        self.live()
+        self.programs["ci-go"] = "/usr/bin/ci-go"  # found on PATH
+        self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "ci-go\n"
+        self.replies[self.TRIGGER] = ""
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.triggers(), [self.TRIGGER])
+
+    def test_ci_trigger_bad_value_stops(self):
+        for name in ("relative path", "absolute path into the checkout", "on PATH inside the checkout"):
+            with self.subTest(name):
+                inside = os.path.join(self.checkout, "bin", "ci-go")  # setUp makes a new checkout per case
+                value, found = {
+                    "relative path": ("bin/ci-go", {}),
+                    "absolute path into the checkout": (inside, {inside: inside}),
+                    "on PATH inside the checkout": ("ci-go", {"ci-go": inside}),
+                }[name]
+                self.live()
+                self.programs.update(found)
+                self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = value + "\n"
+                out = self.main("next")[1]
+                self.assert_stop(out, "STOP_CI_COMMAND")
+                self.assertIn(f"{sh.CI_TRIGGER_KEY} must name a program outside the checkout", self.report(out))
+                self.assertFalse([c for c in self.calls if c.startswith((value, inside))])  # never run
+                self.setUp()
+
+    def test_ci_trigger_waits_for_the_codex_gate(self):
+        self.live()
+        self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "/usr/bin/ci-go\n"
+        with mock.patch.object(sh, "codex_gate", return_value={"action": "next"}):
+            self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.triggers(), [])
 
     def test_summary_shows_ci_commands(self):
-        self.live()
-        self.replies[f"git config --local --get {sh.CI_LOG_KEY}"] = "/opt/ci/logs --quiet\n"
-        text = self.summary(self.main("next")[1])
-        self.assertIn("```\n/opt/ci/logs --quiet\n```", text)
-        self.assertIn(sh.CI_TRIGGER_KEY, text)
+        for configured, unset in ((sh.CI_LOG_KEY, sh.CI_TRIGGER_KEY), (sh.CI_TRIGGER_KEY, sh.CI_LOG_KEY)):
+            with self.subTest(configured):
+                self.live()
+                self.replies[f"git config --local --get {configured}"] = "/opt/ci/logs --quiet\n"
+                self.replies["/opt/ci/logs --quiet 7"] = ""  # as the trigger, it runs
+                text = self.summary(self.main("next")[1])
+                self.assertIn(f"\n{configured} (configured, runs automatically):\n```\n/opt/ci/logs --quiet\n```\n", text)
+                self.assertIn(f"\n{unset}: (not set)\n", text)
+                self.setUp()
 
     def test_no_method(self):
         self.live()
@@ -2180,7 +2230,7 @@ class Watch(NextBase):
     def test_external_failure_uses_ci_log_command(self):
         self.replies["gh pr checks 7"] = FAILED
         self.replies[RUNS] = "[]"  # a commit status, not an Actions run
-        self.ci_logs(("build.log", "line\n" * (sh.LOG_LINES + 5)), reply=None)
+        self.ci_logs(("build.log", "line\n" * (sh.LOG_LINES + 5)))
         out = self.main("next")[1]
         self.assertEqual(out["action"], "repair")
         external = os.path.join(out["evidence_dir"], "external")
@@ -2232,7 +2282,7 @@ class Watch(NextBase):
                 self.assert_stop(out, "STOP_CI_COMMAND")
                 self.assertIn(sh.CI_LOG_KEY, self.report(out))
                 if "value" in case:
-                    self.assertFalse([c for c in self.calls if "logs 7" in c])  # never run
+                    self.assertFalse([c for c in self.calls if c.split()[0] in ("/opt/ci/logs", "bin/logs")])  # never run
                 self.setUp()
 
     def test_infra_match_external_log_named_like_a_run(self):

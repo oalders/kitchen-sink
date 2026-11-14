@@ -175,9 +175,11 @@ def ci_argv(key):
         argv = shlex.split(value)
     except ValueError as e:
         raise Stop("STOP_CI_COMMAND", True, [f"{key} can't be split into words ({e}); fix or unset the key."]) from None
-    if not argv or "/" in argv[0] and not os.path.isabs(argv[0]):  # a relative path would run the PR tree's own copy
-        raise Stop("STOP_CI_COMMAND", True, [f"{key} must start with an absolute path or a command on PATH; fix or unset the key."])
-    return argv
+    prog = shutil.which(argv[0]) if argv else None
+    top = os.path.realpath(run(["git", "rev-parse", "--show-toplevel"]).stdout.strip())
+    if prog is None or os.path.commonpath([os.path.realpath(prog), top]) == top:  # the PR's tree must not choose the program
+        raise Stop("STOP_CI_COMMAND", True, [f"{key} must name a program outside the checkout, by absolute path or on PATH; fix or unset the key."])
+    return [os.path.realpath(prog), *argv[1:]]  # resolved once: an empty or `.` PATH entry can't reach the PR tree later
 
 
 def run_ci(key, cmd):
@@ -191,7 +193,8 @@ def run_ci(key, cmd):
     else:
         if proc.returncode == 0:
             return
-        failure = f"exit {proc.returncode}\n" + "".join(proc.stderr.splitlines(keepends=True)[-REPORT_LOG_LINES:])
+        out = proc.stderr if proc.stderr.strip() else proc.stdout  # some tools report only on stdout
+        failure = f"exit {proc.returncode}\n" + "".join(out.splitlines(keepends=True)[-REPORT_LOG_LINES:])
     raise Stop("STOP_CI_COMMAND", True, [f"{key} failed (untrusted):", fence(failure)])
 
 
@@ -467,6 +470,8 @@ def cmd_start(args):
         minutes = rules.timeout_minutes(local_config(TIMEOUT_KEY))
     except rules.RuleError as e:
         raise Stop("STOP_BAD_TIMEOUT", True, [str(e), "Fix or unset the key."]) from None
+    for key in (CI_LOG_KEY, CI_TRIGGER_KEY):  # fail fast; each use checks again, as the value can change
+        ci_argv(key)
     branch, rebasing = current_branch()
     pointer = load_pointer()
     if rebasing and pointer and pointer["branch"] == branch:
@@ -931,7 +936,7 @@ def write_summary(state, snap):
         "Changed files (untrusted; [sensitive] marks /fix-gh-issue step 11's list, for the record only):",
         fence("\n".join(f"{f}  [sensitive]" if SENSITIVE.search(f) else f for f in files) or "(none)"),
     ]  # fmt: skip
-    for key in (CI_LOG_KEY, CI_TRIGGER_KEY):  # shown each head, so a value planted in the local config is seen
+    for key in (CI_LOG_KEY, CI_TRIGGER_KEY):  # shown each head for the record: a value planted in the local config is seen
         value = local_config(key)
         lines += [f"{key} (configured, runs automatically):", fence(value)] if value is not None else [f"{key}: (not set)"]
     if diff.returncode != 0:
@@ -1337,8 +1342,9 @@ def failure_evidence(state, head, runs):
         for name in sorted(os.listdir(external)):
             path = os.path.join(external, name)
             if stat.S_ISREG(os.lstat(path).st_mode):  # no symlink or subdirectory: the tail is written over the file
-                with open(path, encoding="utf-8", errors="replace") as f:
-                    log = f.read()
+                with open(path, "rb") as f:  # only the end: write_tail keeps at most LOG_BYTES of it
+                    f.seek(max(0, os.fstat(f.fileno()).st_size - LOG_BYTES))
+                    log = f.read(LOG_BYTES).decode("utf-8", errors="replace")
                 if write_tail(external, name, log):  # an empty file is no evidence
                     paths.append(path)
     status = lookup(["gh", "api", "--paginate", f"repos/{state['owner']}/{state['repo']}/commits/{head}/status", "--jq", STATUS_JQ])
