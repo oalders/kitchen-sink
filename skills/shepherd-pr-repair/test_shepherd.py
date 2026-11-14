@@ -252,6 +252,7 @@ class TestRules(unittest.TestCase):
             # b recurs: the newer viewer push to b mustn't vouch for the older link that reached it
             "recurring SHA": ([(a, h, "push", "me"), (g, b, "push", "me"), (b, a, "push", "me"), (g, b, "force_push", "you")], False),
             "no entry for the head": (mine[1:], None),
+            "head logged, then moved": ([(h, b, "push", "me")] + mine, None),
         }
         for name, (entries, want) in cases.items():
             with self.subTest(name):

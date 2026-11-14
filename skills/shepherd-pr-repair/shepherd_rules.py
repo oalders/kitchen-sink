@@ -164,13 +164,13 @@ def reread_outcome(pr, checks, gated_sha, ejected):
 
 
 def own_push(entries, head, gated_sha, viewer):
-    """Whether `head` is only the viewer's pushes on top of `gated_sha`; None while the activity log lacks `head`.
+    """Whether `head` is only the viewer's pushes on top of `gated_sha`; None while the log's newest entry isn't `head`.
 
     `entries` are the branch's (before, after, activity_type, actor) newest first. Each link is sought only among
     entries older than the last, so a SHA that recurs can't skip a foreign force-push between its two appearances."""
-    i = next((i for i, e in enumerate(entries) if e[1] == head), None)
-    if i is None:
-        return None
+    if not entries or entries[0][1] != head:
+        return None  # an older entry for `head` may predate a removal and a foreign re-push not logged yet
+    i = 0
     while True:
         before, _, kind, actor = entries[i]
         if kind != "push" or actor != viewer:  # GitHub logs any non-fast-forward update as force_push
