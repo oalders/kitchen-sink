@@ -70,6 +70,7 @@ FAILED_RUNS = ("failure", "timed_out", "startup_failure")  # runs with a `--log-
 RUN_FIELDS = "databaseId,attempt,conclusion,name,event,headSha"
 JOBS_JQ = '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .databaseId'
 REGISTER_WAIT = 60  # checks register late
+LATE_CHECK = 60  # the watch's look for a late Codex review of a head passed by codexTimeoutAction=proceed
 SUITES_JQ = ".check_suites[].created_at"
 ACTIVITY_JQ = r'.[] | "\(.before) \(.after) \(.activity_type) \(.actor.login)"'
 STATUS_JQ = '.statuses[]|select(.state=="failure" or .state=="error")|"x"'
@@ -136,6 +137,13 @@ class Resumable(Exception):
 
 class OutOfBudget(Exception):
     """A wait would overrun this `next` call; return `next` and let the agent call again."""
+
+
+class LateReview(Exception):
+    """A late Codex review's repair, found mid-watch; `watch` returns its action."""
+
+    def __init__(self, action):
+        self.action = action
 
 
 def run(cmd, check=True, timeout=CALL_TIMEOUT, **kw):
@@ -589,11 +597,15 @@ def check_deadline(state, snap=None):
         if claimed(state):
             lines.append("A repair subagent may still be running and push; check `git log` and the PR before re-running.")
         gate, code = state.get("codex"), "STOP_DEADLINE"  # the code names the first hint below that fires
+        same_head = snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"]
         if snap is not None and snap["pr"]["reviewDecision"] in rules.REVIEW_BLOCKED:
             lines.append("The PR still needs a review decision; a reviewer must act.")
             code = "STOP_DEADLINE_REVIEW"
-        elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
+        elif same_head and gate["head"] not in state["codex_passed"]:
             lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")  # pending: a repair, not the bot, is outstanding
+            code = "STOP_DEADLINE_CODEX"
+        elif same_head and gate.get("late") and (snap["pr"]["autoMergeRequest"] or snap["queue"]["isInMergeQueue"]):
+            lines.append("The Codex bot still hasn't reviewed this head (passed by codexTimeoutAction=proceed) and auto-merge or the merge queue can still merge it, so a late review can still arrive after it merges.")
             code = "STOP_DEADLINE_CODEX"
         if snap is not None and not state["pending"] and state["gated_head"] not in (None, snap["pr"]["headRefOid"]):  # a fresh start would gate it unasked; pending: the repair's own push
             lines.append(f"The PR's head {snap['pr']['headRefOid']} is a push this run could not attribute to you; decide whether to gate it before re-running /shepherd-pr.")
@@ -912,12 +924,30 @@ def codex_pass(state, head, gate, note):
     gate["note"] = note
 
 
+def codex_findings(state, snap):
+    if snap["pr"]["autoMergeRequest"] is not None:
+        disable_auto(state, snap)
+    return repair_action(state, "codex")
+
+
+def late_check(state, snap):
+    """One look for a late bot review of a head passed by codexTimeoutAction=proceed: a repair on findings, else None."""
+    gate = state["codex"]
+    gate["late_at"] = time.time()
+    status = gh_wait(state, gate["head"], 0).get("status")
+    if status == "findings":
+        return codex_findings(state, snap)
+    if status == "clean":
+        gate["late"] = False
+    return None
+
+
 def codex_gate(state, snap, budget_end):
     """Step 2. None: passed (or skipped); else an action. A wait longer than the budget is sliced across calls."""
     head = snap["pr"]["headRefOid"]
-    if head in state["codex_passed"]:
-        return None
     gate = state.get("codex")
+    if head in state["codex_passed"]:
+        return late_check(state, snap) if gate and gate["head"] == head and gate.get("late") else None  # .get: older gates have none
     if not gate or gate["head"] != head:
         gate = state["codex"] = {"head": head, "trigger": None, "windows": 1, "final": False, "note": None, "polling": False}
     info = codex_info()
@@ -937,9 +967,7 @@ def codex_gate(state, snap, budget_end):
         if status == "clean":
             return codex_pass(state, head, gate, "Codex gate: clean")
         if status == "findings":
-            if snap["pr"]["autoMergeRequest"] is not None:
-                disable_auto(state, snap)
-            return repair_action(state, "codex")
+            return codex_findings(state, snap)
         if status == "pending":
             return {"action": "next"}
         if status != "timeout":
@@ -963,6 +991,7 @@ def codex_gate(state, snap, budget_end):
         if result.get("action") == "proceed":
             minutes = info["minutes"]
             window = f"{minutes * gate['windows']} min" if minutes else "the bot window"
+            gate.update(late=True, late_at=time.time())  # the bot may still review it before the merge
             return codex_pass(state, head, gate, f"Codex gate: no review within {window}; passed by codexTimeoutAction=proceed")
         if gate.get("polling"):  # .get: a gate saved before this key existed has none
             raise OutOfBudget()
@@ -1205,14 +1234,17 @@ def watch(state, snap, budget_end):
     """Step 5: the check watch, then the re-read and the queue watch. An action, or None to pass again at once.
 
     `snap` is updated in place with each re-read, so the status line and stop fields show the last one."""
-    watch_checks(state, snap, budget_end)
     try:
-        action = queue_watch(state, snap, budget_end)
-    except (OutOfBudget, GhError):
-        raise  # cut off or a failed `gh`: the next pass or call carries this queue watch on, from its start
-    except Exception:  # a Stop, or a Resumable that starts the watch over
-        state["queue_watch"] = None
-        raise
+        watch_checks(state, snap, budget_end)
+        try:
+            action = queue_watch(state, snap, budget_end)
+        except (OutOfBudget, GhError):
+            raise  # cut off or a failed `gh`: the next pass or call carries this queue watch on, from its start
+        except Exception:  # a Stop, or a Resumable that starts the watch over
+            state["queue_watch"] = None
+            raise
+    except LateReview as late:
+        return late.action
     state["queue_watch"] = None
     return action
 
@@ -1221,6 +1253,14 @@ def poll(state, snap, budget_end):
     check_deadline(state, snap)
     sleep_within(POLL, budget_end)
     snap.update(reread(state))
+    pr, gate = snap["pr"], state.get("codex")
+    if (
+        pr["state"] == "OPEN" and gate and gate.get("late") and pr["headRefOid"] == state["gated_head"] == gate["head"]
+        and time.time() - gate.get("late_at", 0) >= LATE_CHECK
+    ):  # fmt: skip
+        action = late_check(state, snap)
+        if action:
+            raise LateReview(action)
 
 
 def watch_checks(state, snap, budget_end):

@@ -1401,6 +1401,12 @@ class Next(NextBase):
         sh.drop_evidence(state)
         self.assertFalse(os.path.exists(second))
 
+
+def late_gate():
+    """A gate passed by codexTimeoutAction=proceed that still owes a look for a late review."""
+    return {"head": SHA, "trigger": "555", "windows": 1, "final": True, "note": None, "polling": False, "late": True, "late_at": NOW}
+
+
 class Codex(NextBase):
     """Step 2 in `github` mode; `gh-wait` replies are sequences, the last one repeating."""
 
@@ -1512,7 +1518,55 @@ class Codex(NextBase):
         self.waits(self.timeout(), self.timeout(555, 1, False, "proceed"))
         self.main("next")
         self.assertEqual(len(self.gh_waits()), 2)
-        self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+        state = sh.load_state(7)
+        self.assertEqual((state["codex_passed"], state["codex"]["late"]), ([SHA], True))
+        self.waits({"status": "findings"})  # the bot reviews it late
+        self.replies[DISABLE] = ""
+        out = self.main("next")[1]
+        self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
+
+    def test_codex_late_findings_at_pass_start(self):
+        self.live(codex_passed=[SHA], codex=late_gate())
+        self.waits({"status": "findings"})
+        self.replies[DISABLE] = ""
+        out = self.main("next")[1]
+        self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
+        self.assertIn(DISABLE, self.calls)
+
+    def test_codex_late_clean_stops_checking(self):
+        self.live(codex_passed=[SHA], codex=late_gate())
+        self.waits({"status": "clean"})
+        self.main("next")
+        self.main("next")
+        self.assertEqual(len(self.gh_waits()), 1)
+
+    def test_deadline_names_late_review_while_a_merge_can_happen(self):
+        off = pr_full(autoMergeRequest=None)
+        for name, pr, queued, named in (("auto-merge on", pr_full(), False, True), ("queued", off, True, True), ("neither", off, False, False)):
+            with self.subTest(name):
+                self.live(codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
+                self.replies.update({"gh pr view 7": pr, "gh api graphql": queue(queued=queued)})
+                out = self.main("next")[1]
+                self.assert_stop(out, "STOP_DEADLINE_CODEX" if named else "STOP_DEADLINE")
+                self.assertEqual("a late review can still arrive after it merges" in self.report(out), named)
+        with self.subTest("gated another head"):  # only same_head rules out SHA's saved late gate
+            self.live(shown=OTHER, gated_head=OTHER, codex_passed=[SHA, OTHER], codex=late_gate(), deadline=NOW - 1)
+            self.replies.update({"gh pr view 7": pr_full(headRefOid=OTHER), "gh api graphql": queue()})
+            out = self.main("next")[1]
+            self.assert_stop(out, "STOP_DEADLINE")
+            self.assertNotIn("a late review can still arrive after it merges", self.report(out))
+        with self.subTest("pending repair"):  # only same_head's pending guard rules out the late line
+            self.live(pending=self.repair("codex"), codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
+            self.replies.update({"gh pr view 7": pr_full(), "gh api graphql": queue()})
+            out = self.main("next")[1]
+            self.assertNotEqual(out.get("code"), "STOP_DEADLINE_CODEX")
+            self.assertNotIn("a late review can still arrive after it merges", self.report(out))
+        with self.subTest("head moved past the late gate"):
+            self.live(codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
+            self.replies.update({"gh pr view 7": pr_full(headRefOid=OTHER), "gh api graphql": queue()})
+            out = self.main("next")[1]
+            self.assert_stop(out, "STOP_DEADLINE_FOREIGN_HEAD")
+            self.assertNotIn("a late review can still arrive after it merges", self.report(out))
 
     def test_codex_bad_trigger_id_is_not_adopted(self):
         self.comments(555)
@@ -2267,6 +2321,62 @@ class Watch(NextBase):
         state = sh.load_state(7)
         self.assertEqual((state["repairs"], state["automerge"], state["pending"]["cause"]), (1, "off-by-run", "checks"))
         self.assertEqual(self.reruns(), [])
+
+    def late_watch(self, reply, **over):
+        self.live(**{"shown": SHA, "codex_passed": [SHA], "codex": late_gate(), **over})
+        self.replies["gh pr checks 7"] = PENDING
+        self.replies[Codex.GHWAIT] = reply
+        return self.main("next")[1]
+
+    def test_watch_late_codex_findings_repair(self):
+        timeout, findings = ((1, json.dumps({"status": s}), "") for s in ("timeout", "findings"))
+        out = self.late_watch([timeout, findings])  # the pass start's look, then the watch's
+        self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
+        self.assertIn(DISABLE, self.calls)
+
+    def test_queue_watch_late_codex_findings_repair(self):
+        self.live(shown=SHA, codex_passed=[SHA], codex=late_gate())  # green and armed: the queue watch polls
+        self.replies[Codex.GHWAIT] = [(1, json.dumps({"status": s}), "") for s in ("timeout", "findings")]
+        out = self.main("next")[1]
+        self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
+        self.assertIn(DISABLE, self.calls)
+        self.assertIsNone(sh.load_state(7)["queue_watch"])
+
+    def test_watch_late_codex_check_throttled(self):
+        at = []
+        self.late_watch(lambda cmd: at.append(self.clock) or (1, json.dumps({"status": "timeout"}), ""))
+        self.assertGreater(len(at), 2)
+        self.assertTrue(all(b - a >= sh.LATE_CHECK for a, b in zip(at, at[1:])))
+
+    def test_watch_no_late_check_once_late_is_off(self):
+        clean, timeout = ((code, json.dumps({"status": s}), "") for code, s in ((0, "clean"), (1, "timeout")))
+        for name, gate, reply, looks in (
+            ("late review clean at pass start", late_gate(), clean, 1),  # the pass start's look only
+            ("late already off", {**late_gate(), "late": False}, timeout, 0),
+            ("passed normally", {k: v for k, v in late_gate().items() if k not in ("late", "late_at")}, timeout, 0),
+        ):
+            with self.subTest(name):
+                self.replies["gh pr view 7"] = pr_full()
+                before = len(self.calls)
+                start = self.clock
+                self.late_watch(reply, codex=gate)
+                self.assertGreater(self.clock - start, 3 * sh.LATE_CHECK)  # the watch ran past several looks' due times
+                self.assertEqual(len([c for c in self.calls[before:] if " gh-wait " in c]), looks)
+
+    def test_watch_no_late_check_once_the_pr_moved(self):
+        due = lambda cmd: setattr(self, "clock", self.clock + sh.LATE_CHECK) or (1, json.dumps({"status": "timeout"}), "")  # the watch's look is due
+        self.replies.update({ACTIVITY: f"{SHA} {OTHER} push you\n", COMPARE: "ahead\n"})
+        for name, moved in (("new head", pr_full(headRefOid=OTHER)), ("merged", pr_full(state="MERGED"))):
+            with self.subTest(name):
+                self.replies["gh pr view 7"] = [pr_full(), moved]
+                before = len(self.calls)
+                self.late_watch(due)
+                self.assertEqual(len([c for c in self.calls[before:] if " gh-wait " in c]), 1)  # the pass start's look only
+        with self.subTest("gated another head"):  # the run gated OTHER, but the saved late gate is still SHA's
+            self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+            before = len(self.calls)
+            self.late_watch(due, shown=OTHER, gated_head=OTHER, codex_passed=[SHA, OTHER])
+            self.assertEqual(len([c for c in self.calls[before:] if " gh-wait " in c]), 0)
 
     def test_watch_waits_for_checks(self):
         self.replies["gh pr checks 7"] = ["[]", "[]", FAILED]  # checks register late
