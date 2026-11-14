@@ -592,6 +592,7 @@ class NextBase(Env):
             "deadline": NOW + 3600, "gated_head": SHA, "codex_passed": [], "automerge": "on", "repairs": 0,
             "rerun": 0, "infra": [], "requeued": None, "wait_first": False, "pending": None, "ended": False,
             "evidence_dir": None, "shown": None, "summary": None, "triage_verdict": None, "disabled_at": None,
+            "triggered": None,
         }  # fmt: skip
         state.update(over)
         sh.save_state(7, state)
@@ -1552,6 +1553,57 @@ class Show(NextBase):
         self.assertFalse([c for c in self.calls if c.startswith("gh pr merge")])
         self.assertIsNone(sh.load_state(7)["pending"])
 
+    TRIGGER = f"/usr/bin/ci-go 7 {SHA}"
+
+    def triggers(self):
+        return [c for c in self.calls if c.startswith("/usr/bin/ci-go")]
+
+    def test_ci_trigger_once_per_head(self):
+        self.live()  # auto-merge already on: decision keep
+        self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "/usr/bin/ci-go\n"
+        self.replies[self.TRIGGER] = ""
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.triggers(), [self.TRIGGER])
+        self.assertEqual(self.kwargs[self.TRIGGER]["timeout"], sh.CI_COMMAND_TIMEOUT)
+        self.live(gated_head=OTHER, triggered=SHA)  # a repair's pushed head, adopted
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.replies[f"/usr/bin/ci-go 7 {OTHER}"] = ""
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.triggers(), [self.TRIGGER, f"/usr/bin/ci-go 7 {OTHER}"])
+
+    def test_ci_trigger_not_marked_until_it_succeeds(self):
+        self.live()
+        self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "/usr/bin/ci-go\n"
+
+        def late(cmd):
+            self.clock += 600
+            raise sh.OutOfBudget()
+
+        self.replies[self.TRIGGER] = [late, ""]
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertIsNone(sh.load_state(7)["triggered"])
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.triggers(), [self.TRIGGER, self.TRIGGER])
+        self.assertEqual(sh.load_state(7)["triggered"], SHA)
+
+    def test_ci_trigger_failure_stops(self):
+        self.live()
+        self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "/usr/bin/ci-go\n"
+        self.replies[self.TRIGGER] = (1, "", "HTTP 403\n")
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_CI_COMMAND")
+        self.assertIn(sh.CI_TRIGGER_KEY, self.report(out))
+        self.assertIn("HTTP 403", self.report(out))
+        self.assertFalse([c for c in self.calls if c.startswith("gh pr merge")])
+
+    def test_summary_shows_ci_commands(self):
+        self.live()
+        self.replies[f"git config --local --get {sh.CI_LOG_KEY}"] = "/opt/ci/logs --quiet\n"
+        text = self.summary(self.main("next")[1])
+        self.assertIn("```\n/opt/ci/logs --quiet\n```", text)
+        self.assertIn(sh.CI_TRIGGER_KEY, text)
+
     def test_no_method(self):
         self.live()
         self.replies["gh repo view --json owner"] = json.dumps(
@@ -2112,6 +2164,83 @@ class Watch(NextBase):
                 self.assert_stop(self.main("next")[1], code)
                 self.assertEqual(self.reruns(), [])
                 self.setUp()
+
+    def ci_logs(self, *files, reply=None):
+        """ciLogCommand set to /opt/ci/logs; it writes `files` (name, text) into its directory argument, unless `reply` replaces it."""
+
+        def write(cmd):
+            for name, text in files:
+                with open(os.path.join(cmd[-1], name), "w") as f:
+                    f.write(text)
+            return ""
+
+        self.replies[f"git config --local --get {sh.CI_LOG_KEY}"] = "/opt/ci/logs --quiet\n"
+        self.replies[f"/opt/ci/logs --quiet 7 {SHA} "] = reply if reply is not None else write
+
+    def test_external_failure_uses_ci_log_command(self):
+        self.replies["gh pr checks 7"] = FAILED
+        self.replies[RUNS] = "[]"  # a commit status, not an Actions run
+        self.ci_logs(("build.log", "line\n" * (sh.LOG_LINES + 5)), reply=None)
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "repair")
+        external = os.path.join(out["evidence_dir"], "external")
+        self.assertEqual(os.listdir(out["evidence_dir"]), ["external"])
+        log = os.path.join(external, "build.log")
+        self.assertIn(f"/opt/ci/logs --quiet 7 {SHA} {external}", self.calls)
+        self.assertEqual(self.kwargs[f"/opt/ci/logs --quiet 7 {SHA} {external}"]["timeout"], sh.CI_COMMAND_TIMEOUT)
+        with open(log) as f:
+            self.assertEqual(len(f.readlines()), sh.LOG_LINES)  # cut to its tail in place
+        self.assertIn(f"{MATCH} --log {log}", self.calls)
+
+    def test_ci_log_command_skips_links_and_directories(self):
+        self.replies["gh pr checks 7"] = FAILED
+        self.replies[RUNS] = "[]"
+
+        def write(cmd):
+            os.symlink(os.path.join(self.git_dir, "elsewhere"), os.path.join(cmd[-1], "link"))
+            os.mkdir(os.path.join(cmd[-1], "sub"))
+            return ""
+
+        self.ci_logs(reply=write)
+        self.assert_stop(self.main("next")[1], "STOP_NO_LOGS")
+
+    def test_ci_log_command_runs_alongside_actions_logs(self):
+        self.replies["gh pr checks 7"] = FAILED
+        self.ci_logs(("status.log", self.LOG))
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "repair")
+        self.assertEqual(sorted(os.listdir(out["evidence_dir"])), ["11", "external"])
+        self.assertEqual(os.listdir(os.path.join(out["evidence_dir"], "external")), ["status.log"])
+
+    def test_ci_log_command_failures_stop(self):
+        cases = {
+            "non-zero exit": {"reply": (3, "", "token expired\n")},
+            "timeout": {"reply": sh.GhError(["/opt/ci/logs"], "timeout", "timed out")},
+            "missing program": {"reply": FileNotFoundError(2, "No such file or directory")},
+            "relative path": {"value": "bin/logs"},
+            "empty": {"value": ""},
+            "unbalanced quote": {"value": "'/opt/ci/logs"},
+        }
+        for name, case in cases.items():
+            with self.subTest(name):
+                self.replies["gh pr checks 7"] = FAILED
+                self.replies[RUNS] = "[]"
+                self.ci_logs(reply=case.get("reply", ""))
+                if "value" in case:
+                    self.replies[f"git config --local --get {sh.CI_LOG_KEY}"] = case["value"] + "\n"
+                out = self.main("next")[1]
+                self.assert_stop(out, "STOP_CI_COMMAND")
+                self.assertIn(sh.CI_LOG_KEY, self.report(out))
+                if "value" in case:
+                    self.assertFalse([c for c in self.calls if "logs 7" in c])  # never run
+                self.setUp()
+
+    def test_infra_match_external_log_named_like_a_run(self):
+        self.replies["gh pr checks 7"] = FAILED
+        self.ci_logs(("11", self.LOG))
+        self.match()
+        self.assert_stop(self.main("next")[1], "STOP_INFRA_RUNS")
+        self.assertEqual(self.reruns(), [])
 
     def test_infra_rerun_ignores_ejection_verdict(self):
         self.replies["gh pr checks 7"] = CANCELLED
