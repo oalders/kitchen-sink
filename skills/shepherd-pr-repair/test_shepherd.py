@@ -249,7 +249,8 @@ class TestRules(unittest.TestCase):
             "force_push link": ([(b, h, "push", "me"), (a, b, "force_push", "me"), (g, a, "push", "me")], False),
             "branch_creation": ([(b, h, "push", "me"), ("0" * 40, b, "branch_creation", "me")], False),
             "broken chain": (mine[:2], False),
-            "recurring SHA": ([(a, h, "push", "me"), (g, a, "force_push", "you"), (g, a, "push", "me")], False),
+            # b recurs: the newer viewer push to b mustn't vouch for the older link that reached it
+            "recurring SHA": ([(a, h, "push", "me"), (g, b, "push", "me"), (b, a, "push", "me"), (g, b, "force_push", "you")], False),
             "no entry for the head": (mine[1:], None),
         }
         for name, (entries, want) in cases.items():
@@ -549,7 +550,7 @@ class TestStart(Env):
 
 OTHER = "b" * 40
 THIRD = "d" * 40
-ACTIVITY = "gh api --paginate repos/o/r/activity?ref=refs/heads/fix-174"
+ACTIVITY = "gh api --paginate repos/o/r/activity?ref=refs/heads/fix-174&per_page=100&direction=desc"
 CODEX_MODE = " ".join([sys.executable, sh.CODEX_LOOP, "mode"])
 
 
@@ -775,14 +776,17 @@ class Next(NextBase):
         self.replies[ACTIVITY] = "".join(" ".join(e) + "\n" for e in entries)
 
     def test_own_push_regated(self):
-        self.live(rerun=1, infra=["flaky"])
-        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.live(automerge="on", rerun=1, infra=["flaky"])
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)  # armed
         self.replies[DISABLE] = ""
         self.activity((THIRD, OTHER, "push", "me"), (SHA, THIRD, "push", "me"))
         self.assertEqual(self.main("next")[1]["action"], "next")
         state = sh.load_state(7)
         self.assertEqual((state["gated_head"], state["rerun"], state["infra"]), (OTHER, 0, []))
-        self.assertIn(f"gh pr merge 7 --auto --squash --match-head-commit {OTHER}", self.calls)  # the same pass gates it
+        arm = f"gh pr merge 7 --auto --squash --match-head-commit {OTHER}"  # the same pass gates it
+        activity = next(c for c in self.calls if c.startswith(ACTIVITY))
+        self.assertLess(self.calls.index(DISABLE), self.calls.index(activity))
+        self.assertLess(self.calls.index(activity), self.calls.index(arm))
 
     def test_foreign_head_disarms_first(self):
         self.live()
@@ -808,6 +812,21 @@ class Next(NextBase):
     def test_deadline_names_unattributed_head(self):
         self.live(deadline=NOW - 1)
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
+
+    def test_deadline_omits_unattributed_line_for_the_repairs_push(self):
+        self.live(deadline=NOW - 1, automerge="off-by-run", pending=self.claimed())
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)  # its push landed before its `record`
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertNotIn("could not attribute", self.report(out))
+
+    def test_deadline_at_the_log_wait_names_unattributed_head(self):
+        self.live(automerge="off")
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
+        self.replies[ACTIVITY] = lambda cmd: setattr(self, "clock", NOW + 3600) or ""  # the deadline passes while the log lags
         out = self.main("next")[1]
         self.assert_stop(out, "STOP_DEADLINE")
         self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
@@ -1990,15 +2009,24 @@ class Watch(NextBase):
         self.assertIn("sleep 15", self.calls)  # the checks poll, not `--watch`
         self.assertTrue(sh.load_state(7)["ended"])
 
-    def test_watch_new_head_passes_again(self):
+    def new_head(self, actor):
         self.replies["gh pr checks 7"] = [PENDING, checks(check())]
-        self.replies["gh pr view 7"] = [pr_full(), pr_full(headRefOid=OTHER), pr_full(headRefOid=OTHER, autoMergeRequest=None)]
-        self.replies[ACTIVITY] = f"{SHA} {OTHER} push you\n"
-        out = self.main("next")[1]
+        views = [pr_full(), pr_full(headRefOid=OTHER), pr_full(headRefOid=OTHER, autoMergeRequest=None), pr_full(headRefOid=OTHER)]
+        self.replies["gh pr view 7"] = views  # the last: re-armed on the re-gated head
+        self.replies[ACTIVITY] = f"{SHA} {OTHER} push {actor}\n"
+        return self.main("next")[1]
+
+    def test_watch_foreign_head_stops(self):
+        out = self.new_head("you")
         self.assert_stop(out, "STOP_FOREIGN_HEAD")  # step 1 of the next pass decided
         self.assertEqual(self.calls.count(DISABLE), 1)
-        self.assertEqual(self.calls.count("gh api user -q .login"), 2)  # read_pr ran for the second pass
         self.assertEqual(out["automerge"], "off")
+
+    def test_watch_own_push_regated(self):
+        out = self.new_head("me")
+        self.assertNotEqual(out["action"], "stop")
+        self.assertEqual(sh.load_state(7)["gated_head"], OTHER)
+        self.assertIn(f"gh pr merge 7 --auto --squash --match-head-commit {OTHER}", self.calls)
 
     def test_watch_failed_check_repair(self):
         self.replies["gh pr checks 7"] = FAILED

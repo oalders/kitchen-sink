@@ -518,14 +518,14 @@ def check_deadline(state, snap=None):
             lines.append("The PR still needs a review decision; a reviewer must act.")
         elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
             lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")  # pending: a repair, not the bot, is outstanding
-        if snap is not None and state["gated_head"] not in (None, snap["pr"]["headRefOid"]):  # a fresh start would gate it unasked
+        if snap is not None and not state["pending"] and state["gated_head"] not in (None, snap["pr"]["headRefOid"]):  # a fresh start would gate it unasked; pending: the repair's own push
             lines.append(f"The PR's head {snap['pr']['headRefOid']} is a push this run could not attribute to you; decide whether to gate it before re-running /shepherd-pr.")
         raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
 
 
-def resumable_wait(state, budget_end):
+def resumable_wait(state, budget_end, snap=None):
     """The 120 s wait; False when it doesn't fit this call, so the next call does it first."""
-    check_deadline(state)
+    check_deadline(state, snap)
     if time.time() + RESUMABLE_WAIT > budget_end:
         state["wait_first"] = True
         return False
@@ -550,7 +550,7 @@ def next_loop(state, budget_end):
             except (GhError, Resumable) as e:
                 if isinstance(e, GhError) and not rules.is_resumable_gh_error(e.cmd, e.stderr):
                     raise Stop("STOP_GH_FAILED", True, [fence(str(e))]) from None
-                action = None if resumable_wait(state, budget_end) else {"action": "next"}
+                action = None if resumable_wait(state, budget_end, snap) else {"action": "next"}
             if action:
                 return with_status(action, state, snap)
             save_state(state["pr"], state)
@@ -673,8 +673,9 @@ def step1_checks(state, snap):
 
 
 def own_push(state, snap, head):
-    """The branch's activity log, judged by `rules.own_push`: its actor is server-recorded, unlike a commit's author."""
-    path = f"repos/{state['owner']}/{state['repo']}/activity?ref=refs/heads/{state['branch']}"
+    """The branch's activity log, judged by `rules.own_push`: its actor is server-recorded, unlike a commit's author,
+    and anything authenticating as the viewer counts as the viewer."""
+    path = f"repos/{state['owner']}/{state['repo']}/activity?ref=refs/heads/{state['branch']}&per_page=100&direction=desc"  # newest first, as `rules.own_push` reads it
     entries = [line.split() for line in run(["gh", "api", "--paginate", path, "-q", ACTIVITY_JQ]).stdout.splitlines()]
     return rules.own_push(entries, head, state["gated_head"], snap["viewer"])
 
