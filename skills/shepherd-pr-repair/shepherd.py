@@ -143,7 +143,6 @@ class LateReview(Exception):
     """A late Codex review's repair, found mid-watch; `watch` returns its action."""
 
     def __init__(self, action):
-        super().__init__(action["cause"])
         self.action = action
 
 
@@ -604,8 +603,8 @@ def check_deadline(state, snap=None):
         elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
             lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")  # pending: a repair, not the bot, is outstanding
             code = "STOP_DEADLINE_CODEX"
-        elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate.get("late") and snap["pr"]["autoMergeRequest"]:
-            lines.append("The Codex bot still hasn't reviewed this head (passed by codexTimeoutAction=proceed) and auto-merge is still on, so a late review won't stop a merge.")
+        elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate.get("late") and (snap["pr"]["autoMergeRequest"] or snap["queue"]["isInMergeQueue"]):
+            lines.append("The Codex bot still hasn't reviewed this head (passed by codexTimeoutAction=proceed) and auto-merge or the merge queue can still merge it, so a late review won't stop a merge.")
             code = "STOP_DEADLINE_CODEX"
         if snap is not None and not state["pending"] and state["gated_head"] not in (None, snap["pr"]["headRefOid"]):  # a fresh start would gate it unasked; pending: the repair's own push
             lines.append(f"The PR's head {snap['pr']['headRefOid']} is a push this run could not attribute to you; decide whether to gate it before re-running /shepherd-pr.")
