@@ -2046,7 +2046,8 @@ class Watch(NextBase):
 
     def test_watch_own_push_regated(self):
         out = self.new_head("me")
-        self.assertNotEqual(out["action"], "stop")
+        self.assertEqual(out["action"], "next")
+        self.assertEqual(self.calls.count(DISABLE), 1)
         self.assertEqual(sh.load_state(7)["gated_head"], OTHER)
         self.assertIn(f"gh pr merge 7 --auto --squash --match-head-commit {OTHER}", self.calls)
 
