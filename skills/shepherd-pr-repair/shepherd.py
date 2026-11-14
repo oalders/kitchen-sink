@@ -542,15 +542,16 @@ def next_loop(state, budget_end):
             if time.time() < state["deadline"]:  # past it, the pass's deadline check reports why with the PR's status
                 resumable_wait(state, budget_end)
         while time.time() < budget_end:
+            fresh = None  # this iteration's read only: a failed read must not report the previous one's head
             try:
-                snap = read_pr(state)
+                snap = fresh = read_pr(state)
                 action = pass_once(state, snap, budget_end)
             except OutOfBudget:
                 action = {"action": "next"}
             except (GhError, Resumable) as e:
                 if isinstance(e, GhError) and not rules.is_resumable_gh_error(e.cmd, e.stderr):
                     raise Stop("STOP_GH_FAILED", True, [fence(str(e))]) from None
-                action = None if resumable_wait(state, budget_end, snap) else {"action": "next"}
+                action = None if resumable_wait(state, budget_end, fresh) else {"action": "next"}
             if action:
                 return with_status(action, state, snap)
             save_state(state["pr"], state)
@@ -674,10 +675,15 @@ def step1_checks(state, snap):
 
 def own_push(state, snap, head):
     """The branch's activity log, judged by `rules.own_push`: its actor is server-recorded, unlike a commit's author,
-    and anything authenticating as the viewer counts as the viewer."""
-    path = f"repos/{state['owner']}/{state['repo']}/activity?ref=refs/heads/{state['branch']}&per_page=100&direction=desc"  # newest first, as `rules.own_push` reads it
+    and anything authenticating as the viewer counts as the viewer. A positive chain must also pass GitHub's compare,
+    so the head provably descends from the gated SHA."""
+    repo = f"repos/{state['owner']}/{state['repo']}"
+    path = f"{repo}/activity?ref=refs/heads/{state['branch']}&per_page=100&direction=desc"  # newest first, as `rules.own_push` reads it
     entries = [line.split() for line in run(["gh", "api", "--paginate", path, "-q", ACTIVITY_JQ]).stdout.splitlines()]
-    return rules.own_push(entries, head, state["gated_head"], snap["viewer"])
+    mine = rules.own_push(entries, head, state["gated_head"], snap["viewer"])
+    if not mine:
+        return mine  # None: the log lags; False: foreign
+    return run(["gh", "api", f"{repo}/compare/{state['gated_head']}...{head}", "-q", ".status"]).stdout.strip() == "ahead"
 
 
 def find_removal(state, snap):

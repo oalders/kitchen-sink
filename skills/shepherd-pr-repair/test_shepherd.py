@@ -551,6 +551,7 @@ class TestStart(Env):
 OTHER = "b" * 40
 THIRD = "d" * 40
 ACTIVITY = "gh api --paginate repos/o/r/activity?ref=refs/heads/fix-174&per_page=100&direction=desc"
+COMPARE = f"gh api repos/o/r/compare/{SHA}...{OTHER} -q .status"
 CODEX_MODE = " ".join([sys.executable, sh.CODEX_LOOP, "mode"])
 
 
@@ -780,6 +781,7 @@ class Next(NextBase):
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)  # armed
         self.replies[DISABLE] = ""
         self.activity((THIRD, OTHER, "push", "me"), (SHA, THIRD, "push", "me"))
+        self.replies[COMPARE] = "ahead\n"
         self.assertEqual(self.main("next")[1]["action"], "next")
         state = sh.load_state(7)
         self.assertEqual((state["gated_head"], state["rerun"], state["infra"]), (OTHER, 0, []))
@@ -787,6 +789,14 @@ class Next(NextBase):
         activity = next(c for c in self.calls if c.startswith(ACTIVITY))
         self.assertLess(self.calls.index(DISABLE), self.calls.index(activity))
         self.assertLess(self.calls.index(activity), self.calls.index(arm))
+
+    def test_own_push_chain_that_diverged_is_foreign(self):
+        self.live()
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+        self.replies[DISABLE] = ""
+        self.activity((THIRD, OTHER, "push", "me"), (SHA, THIRD, "push", "me"))
+        self.replies[COMPARE] = "diverged\n"  # the log's chain alone doesn't prove descent
+        self.assert_stop(self.main("next")[1], "STOP_FOREIGN_HEAD")
 
     def test_foreign_head_disarms_first(self):
         self.live()
@@ -830,6 +840,17 @@ class Next(NextBase):
         out = self.main("next")[1]
         self.assert_stop(out, "STOP_DEADLINE")
         self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
+
+    def test_deadline_after_a_failed_read_omits_the_stale_snapshot(self):
+        self.live(automerge="off", deadline=NOW + 60)
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
+        self.replies[ACTIVITY] = ""  # the log lags: the pass waits 120 s, past the deadline
+        self.replies["gh pr checks 7"] = ["[]", fail("HTTP 502: Bad Gateway")]
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        report = self.report(out)
+        self.assertNotIn("could not attribute", report)
+        self.assertNotIn("#7 head", report)
 
     def test_automerge_turned_off(self):
         self.live()
@@ -2014,6 +2035,7 @@ class Watch(NextBase):
         views = [pr_full(), pr_full(headRefOid=OTHER), pr_full(headRefOid=OTHER, autoMergeRequest=None), pr_full(headRefOid=OTHER)]
         self.replies["gh pr view 7"] = views  # the last: re-armed on the re-gated head
         self.replies[ACTIVITY] = f"{SHA} {OTHER} push {actor}\n"
+        self.replies[COMPARE] = "ahead\n"
         return self.main("next")[1]
 
     def test_watch_foreign_head_stops(self):
