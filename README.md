@@ -333,6 +333,7 @@ Carries the current branch's PR (your own, same repo, default base) to merged, o
   - `kitchen-sink.ciLogCommand` runs with `<pr> <sha> <dir>` on a failed check and writes that head's failure logs as files directly in `<dir>` (only regular files directly in `<dir>` are read; subdirectories and symlinks are ignored)
   - `kitchen-sink.ciTriggerCommand` runs with `<pr> <sha>` once per gated head per run, to start its CI (a new `start` or a cut-off pass repeats it, so it must be idempotent), e.g. `git config --local kitchen-sink.ciTriggerCommand '/usr/local/bin/ci-start --project web'`
 - On a PR with auto-merge already on, it shows who enabled it and keeps it
+- Each stop appends one JSON line (`ts`, `repo`, `pr`, `code`, `terminal`, `repairs`, `rerun`) to `${XDG_STATE_HOME:-$HOME/.local/state}/kitchen-sink/shepherd-stops.jsonl`; a deadline stop's code names the hint behind it (`STOP_DEADLINE_REVIEW`, `STOP_DEADLINE_CODEX`, `STOP_DEADLINE_FOREIGN_HEAD`). Count stops by code and repo with `jq -r '"\(.code) \(.repo)"' "${XDG_STATE_HOME:-$HOME/.local/state}/kitchen-sink/shepherd-stops.jsonl" | sort | uniq -c | sort -rn`
 - Only you can start it (`disable-model-invocation`), so PR or issue text can't trigger a merge or a repair
 
 #### /triage-backlog
