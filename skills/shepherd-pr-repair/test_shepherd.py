@@ -401,11 +401,29 @@ class TestRun(unittest.TestCase):
 
     def test_ci_command_stdin_is_at_eof(self):
         """A prompt reads EOF and fails at once instead of hanging."""
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sh, "hard_end", None):
-            prog = program(os.path.join(tmp, "ci-go"), "read x || exit 7\n")
-            with self.assertRaises(sh.Stop) as caught:
-                sh.run_ci(sh.CI_TRIGGER_KEY, [prog])
+        r, w = os.pipe()  # an inherited stdin that never reaches EOF, as on a tty
+        saved = os.dup(0)
+        os.dup2(r, 0)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sh, "hard_end", None), \
+                    mock.patch.object(sh, "CI_COMMAND_TIMEOUT", 3):  # fmt: skip
+                prog = program(os.path.join(tmp, "ci-go"), "read x || exit 7\n")
+                with self.assertRaises(sh.Stop) as caught:
+                    sh.run_ci(sh.CI_TRIGGER_KEY, [prog])
+        finally:
+            os.dup2(saved, 0)
+            for fd in (saved, r, w):
+                os.close(fd)
         self.assertIn("exit 7", caught.exception.report[1])
+
+
+class TestWriteTail(unittest.TestCase):
+    def test_byte_cut_inside_a_character_stays_utf8(self):
+        log = "\U0001F600" + "a" * (sh.LOG_BYTES - 1)  # the cut keeps only the emoji's last byte
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(sh.write_tail(tmp, "log", log), "rb") as f:
+                text = f.read().decode("utf-8")  # strict: a stray byte raises
+        self.assertEqual(text, "a" * (sh.LOG_BYTES - 1))
 
 
 class TestStart(Env):
