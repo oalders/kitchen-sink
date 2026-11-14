@@ -11,6 +11,6 @@ Reply with nothing else than one of:
 - exactly `not-code` when no failure is in the code (infrastructure, a flaky or lost runner, a network error, and the like);
 - otherwise one line per code failure:
   - format: exactly `<file> <kind>` (one space, nothing else), at most 20 lines, only the code failures when mixed;
-  - `<file>`: the repo-relative path of the file the failure points at (never a test id or test name), with the CI runner's workspace prefix (e.g. `/home/runner/work/<repo>/<repo>/`) stripped from an absolute path; leave out a failure whose file you can't make repo-relative;
+  - `<file>`: the repo-relative path of the file the failure points at (never a test id or test name), an absolute path stripped of everything up to and including the checkout root (e.g. `/home/runner/work/<repo>/<repo>/`, `/__w/<repo>/<repo>/`); leave out a failure whose file you can't make repo-relative;
   - `<kind>`: exactly one of `test` (a failing test), `lint` (a linter, formatter or type check) or `build` (compile, build or install);
-- `not-code` if no code failure remains after that.
+  - if no code failure has a repo-relative file, reply `not-code`.
