@@ -2316,6 +2316,13 @@ class Watch(NextBase):
         self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
         self.assertIn(DISABLE, self.calls)
 
+    def test_queue_watch_late_codex_findings_repair(self):
+        self.live(shown=SHA, codex_passed=[SHA], codex=late_gate())  # green and armed: the queue watch polls
+        self.replies[Codex.GHWAIT] = [(1, json.dumps({"status": s}), "") for s in ("timeout", "findings")]
+        out = self.main("next")[1]
+        self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
+        self.assertIsNone(sh.load_state(7)["queue_watch"])
+
     def test_watch_late_codex_check_throttled(self):
         at = []
         self.late_watch(lambda cmd: at.append(self.clock) or (1, json.dumps({"status": "timeout"}), ""))
