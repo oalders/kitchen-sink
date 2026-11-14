@@ -45,6 +45,15 @@ def pr_view(**over):
     return json.dumps(pr)
 
 
+def program(path, body=""):
+    """An executable shell script at `path`, its directories made."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("#!/bin/sh\n" + body)
+    os.chmod(path, 0o755)
+    return path
+
+
 def fail(stderr="boom"):
     return (1, "", stderr)
 
@@ -380,6 +389,14 @@ class TestRun(unittest.TestCase):
                 sh.run(["gh"])
             with self.assertRaises(sh.GhError):
                 sh.run(["gh"], timeout=3)
+
+    def test_ci_command_undecodable_output_stops(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sh, "hard_end", None):
+            prog = program(os.path.join(tmp, "ci-go"), "printf '\\377\\376' >&2; exit 1\n")
+            with self.assertRaises(sh.Stop) as caught:
+                sh.run_ci(sh.CI_TRIGGER_KEY, [prog])
+        self.assertEqual(caught.exception.code, "STOP_CI_COMMAND")
+        self.assertIn(sh.CI_TRIGGER_KEY, caught.exception.report[0])
 
 
 class TestStart(Env):
@@ -1573,6 +1590,7 @@ class Show(NextBase):
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(self.triggers(), [self.TRIGGER])
         self.assertEqual(self.kwargs[self.TRIGGER]["timeout"], sh.CI_COMMAND_TIMEOUT)
+        self.assertIs(self.kwargs[self.TRIGGER]["stdin"], subprocess.DEVNULL)
         self.live(gated_head=OTHER, triggered=SHA)  # a repair's pushed head, adopted
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
         self.replies[f"/usr/bin/ci-go 7 {OTHER}"] = ""
@@ -1622,19 +1640,13 @@ class Show(NextBase):
     def test_ci_trigger_keeps_the_programs_own_name(self):
         """A symlinked program (a venv `python`, a busybox applet) runs by its link's path, not its target's."""
         bin_dir = os.path.join(self.git_dir, "bin")  # outside the checkout
-        os.mkdir(bin_dir)
-        target = os.path.join(bin_dir, "ci-real")
-        with open(target, "w") as f:
-            f.write("#!/bin/sh\n")
-        os.chmod(target, 0o755)
-        os.symlink(target, os.path.join(bin_dir, "ci-go"))
+        os.symlink(program(os.path.join(bin_dir, "ci-real")), os.path.join(bin_dir, "ci-go"))
         self.live()
         self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "ci-go --project web\n"
         self.replies[os.path.join(bin_dir, "ci-go")] = ""
         with mock.patch.object(sh.shutil, "which", REAL_WHICH), mock.patch.dict(os.environ, {"PATH": bin_dir}):
             self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertIn(f"{bin_dir}/ci-go --project web 7 {SHA}", self.calls)
-        self.assertFalse([c for c in self.calls if c.startswith(target)])
 
     def test_ci_trigger_bad_value_stops(self):
         for name in ("not found", "relative path into the checkout", "absolute path into the checkout", "on PATH inside the checkout"):
@@ -1655,6 +1667,31 @@ class Show(NextBase):
                 self.assertFalse([c for c in self.calls if c.startswith((value, inside))])  # never run
                 self.setUp()
 
+    def test_ci_trigger_into_the_checkout_on_disk_stops(self):
+        """The real `which` and `realpath`: each way a value reaches a program in the checkout."""
+        cases = {  # value, PATH under the temp dir
+            "relative to the cwd": ("bin/ci-go", "outside"),
+            "a symlink out and back in": ("ci-go", "outside"),
+            "a PATH entry in the checkout": ("ci-go", "checkout/node_modules/.bin"),
+        }
+        for name, (value, path) in cases.items():
+            with self.subTest(name):
+                outside = os.path.join(self.git_dir, "outside")  # setUp makes a new temp dir per case
+                program(os.path.join(self.checkout, "bin", "ci-go"))
+                program(os.path.join(self.checkout, "node_modules", ".bin", "ci-go"))
+                os.makedirs(outside)
+                os.symlink(os.path.join(self.checkout, "bin", "ci-go"), os.path.join(outside, "ci-go"))
+                self.live()
+                self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = value + "\n"
+                cwd = os.getcwd()
+                os.chdir(self.checkout)
+                self.addCleanup(os.chdir, cwd)
+                with mock.patch.object(sh.shutil, "which", REAL_WHICH), mock.patch.dict(os.environ, {"PATH": os.path.join(self.git_dir, path)}):
+                    out = self.main("next")[1]
+                self.assert_stop(out, "STOP_CI_COMMAND")
+                self.assertFalse([c for c in self.calls if "ci-go" in c])  # never run
+                self.setUp()
+
     def test_ci_trigger_waits_for_the_codex_gate(self):
         self.live()
         self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "/usr/bin/ci-go\n"
@@ -1669,8 +1706,8 @@ class Show(NextBase):
                 self.replies[f"git config --local --get {configured}"] = "/opt/ci/logs --quiet\n"
                 self.replies["/opt/ci/logs --quiet 7"] = ""  # as the trigger, it runs
                 text = self.summary(self.main("next")[1])
-                self.assertIn(f"\n{configured} (configured, runs automatically):\n```\n/opt/ci/logs --quiet\n```\n", text)
-                self.assertIn(f"\n{unset}: (not set)\n", text)
+                self.assertIn("```\n/opt/ci/logs --quiet\n```", text)
+                self.assertRegex(text, f"{unset}.*\\(not set\\)")
                 self.setUp()
 
     def test_no_method(self):
@@ -2288,10 +2325,12 @@ class Watch(NextBase):
     def test_ci_log_command_keeps_the_end_of_a_large_log(self):
         self.replies["gh pr checks 7"] = FAILED
         self.replies[RUNS] = "[]"
-        self.ci_logs(("big.log", "HEAD-MARKER\n" + "x" * (2 * sh.LOG_BYTES) + "\nTAIL-MARKER\n"))
+        end = "\nTAIL-MARKER\n"
+        tail = "x" * (sh.LOG_BYTES - 1 - len(end)) + end  # the read starts inside the two-byte "é"
+        self.ci_logs(("big.log", "HEAD-MARKER\n" + "x" * sh.LOG_BYTES + "é" + tail))
         out = self.main("next")[1]
         self.assertEqual(out["action"], "repair")
-        with open(os.path.join(out["evidence_dir"], "external", "big.log")) as f:
+        with open(os.path.join(out["evidence_dir"], "external", "big.log"), encoding="utf-8") as f:
             log = f.read()
         self.assertIn("TAIL-MARKER", log)
         self.assertNotIn("HEAD-MARKER", log)

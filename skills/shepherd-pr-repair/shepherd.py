@@ -185,7 +185,7 @@ def ci_argv(key):
 def run_ci(key, cmd):
     """Run `key`'s command, no shell; a non-zero exit, a timeout or a missing program is a terminal stop."""
     try:
-        proc = run(cmd, check=False, timeout=CI_COMMAND_TIMEOUT)
+        proc = run(cmd, check=False, timeout=CI_COMMAND_TIMEOUT, stdin=subprocess.DEVNULL, errors="replace")  # a prompt fails at once; bad bytes still name the key
     except GhError:  # its own timeout (the hard end's cut is OutOfBudget)
         failure = f"timed out after {CI_COMMAND_TIMEOUT} s"
     except OSError as e:
@@ -988,6 +988,7 @@ def parse_runs(listed, keys=("databaseId", "conclusion", "event")):
 def write_tail(out, name, log):
     """A log's tail as file `name` in `out`; None, and no file, for a failed fetch or an empty log."""
     tail = "".join((log or "").splitlines(keepends=True)[-LOG_LINES:]).encode()[-LOG_BYTES:]
+    tail = tail.decode("utf-8", errors="ignore").encode()  # the byte cut can split a character; drop its stray bytes
     if not tail:
         return None
     path = os.path.join(out, name)
