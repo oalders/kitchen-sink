@@ -261,7 +261,7 @@ Shows or switches the per-clone Codex review mode used by the `codex-review-loop
 - `on` / `github`: local Codex loop, plus a mandatory `@codex review` gate from the GitHub bot before the PR is marked ready
 - `local`: local loop only; `off`: skip Codex; `default`: unset (`off`)
 - Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
-- The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30) from the `@codex review` trigger, in `codex-review-loop` and `/shepherd-pr`; on timeout, `kitchen-sink.codexTimeoutAction` `stop` (default) keeps the PR in draft (`/shepherd-pr` keeps polling for a review of the head, without new triggers, until its deadline) and `proceed` passes with a note in the PR body, e.g. `git config --local kitchen-sink.codexTimeoutAction proceed`
+- The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30) from the `@codex review` trigger, in `codex-review-loop` and `/shepherd-pr`; on timeout, `kitchen-sink.codexTimeoutAction` `stop` (default) keeps the PR in draft (`/shepherd-pr` keeps polling for a review of the head, without new triggers, until its deadline) and `proceed` passes with a note in the PR body (`/shepherd-pr` only: it keeps checking for a late bot review of that head until it merges, and on findings turns auto-merge off and repairs), e.g. `git config --local kitchen-sink.codexTimeoutAction proceed`
 - Run `/review-config` to see or change the timeout, round and `/shepherd-pr` deadline keys, and `/shepherd-pr`'s CI remediation entries
 
 #### /break-into-gh-issues

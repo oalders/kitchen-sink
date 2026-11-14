@@ -1401,6 +1401,11 @@ class Next(NextBase):
         sh.drop_evidence(state)
         self.assertFalse(os.path.exists(second))
 
+def late_gate():
+    """A gate passed by codexTimeoutAction=proceed that still owes a look for a late review."""
+    return {"head": SHA, "trigger": "555", "windows": 1, "final": True, "note": None, "polling": False, "late": True, "late_at": NOW}
+
+
 class Codex(NextBase):
     """Step 2 in `github` mode; `gh-wait` replies are sequences, the last one repeating."""
 
@@ -1513,6 +1518,27 @@ class Codex(NextBase):
         self.main("next")
         self.assertEqual(len(self.gh_waits()), 2)
         self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])
+
+    def test_codex_late_findings_at_pass_start(self):
+        self.live(codex_passed=[SHA], codex=late_gate())
+        self.waits({"status": "findings"})
+        self.replies[DISABLE] = ""
+        out = self.main("next")[1]
+        self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
+        self.assertIn(DISABLE, self.calls)
+
+    def test_codex_late_clean_stops_checking(self):
+        self.live(codex_passed=[SHA], codex=late_gate())
+        self.waits({"status": "clean"})
+        self.main("next")
+        self.main("next")
+        self.assertEqual(len(self.gh_waits()), 1)
+
+    def test_deadline_names_late_review_with_automerge_on(self):
+        self.live(codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE")
+        self.assertIn("a late review won't stop a merge", self.report(out))
 
     def test_codex_bad_trigger_id_is_not_adopted(self):
         self.comments(555)
@@ -2267,6 +2293,24 @@ class Watch(NextBase):
         state = sh.load_state(7)
         self.assertEqual((state["repairs"], state["automerge"], state["pending"]["cause"]), (1, "off-by-run", "checks"))
         self.assertEqual(self.reruns(), [])
+
+    def late_watch(self, reply):
+        self.live(shown=SHA, codex_passed=[SHA], codex=late_gate())
+        self.replies["gh pr checks 7"] = PENDING
+        self.replies[Codex.GHWAIT] = reply
+        return self.main("next")[1]
+
+    def test_watch_late_codex_findings_repair(self):
+        timeout, findings = ((1, json.dumps({"status": s}), "") for s in ("timeout", "findings"))
+        out = self.late_watch([timeout, findings])  # the pass start's look, then the watch's
+        self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
+        self.assertIn(DISABLE, self.calls)
+
+    def test_watch_late_codex_check_throttled(self):
+        at = []
+        self.late_watch(lambda cmd: at.append(self.clock) or (1, json.dumps({"status": "timeout"}), ""))
+        self.assertGreater(len(at), 2)
+        self.assertTrue(all(b - a >= sh.LATE_CHECK for a, b in zip(at, at[1:])))
 
     def test_watch_waits_for_checks(self):
         self.replies["gh pr checks 7"] = ["[]", "[]", FAILED]  # checks register late
