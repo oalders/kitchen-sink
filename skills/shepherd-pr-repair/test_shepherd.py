@@ -1549,6 +1549,12 @@ class Codex(NextBase):
                 out = self.main("next")[1]
                 self.assert_stop(out, "STOP_DEADLINE_CODEX" if named else "STOP_DEADLINE")
                 self.assertEqual("a late review can still arrive after it merges" in self.report(out), named)
+        with self.subTest("gated another head"):  # only same_head rules out SHA's saved late gate
+            self.live(shown=OTHER, gated_head=OTHER, codex_passed=[SHA, OTHER], codex=late_gate(), deadline=NOW - 1)
+            self.replies.update({"gh pr view 7": pr_full(headRefOid=OTHER), "gh api graphql": queue()})
+            out = self.main("next")[1]
+            self.assert_stop(out, "STOP_DEADLINE")
+            self.assertNotIn("a late review can still arrive after it merges", self.report(out))
         with self.subTest("head moved past the late gate"):
             self.live(codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
             self.replies.update({"gh pr view 7": pr_full(headRefOid=OTHER), "gh api graphql": queue()})
