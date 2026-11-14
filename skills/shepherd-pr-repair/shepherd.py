@@ -177,7 +177,10 @@ def ci_argv(key):
         raise Stop("STOP_CI_COMMAND", True, [f"{key} can't be split into words ({e}); fix or unset the key."]) from None
     prog = shutil.which(argv[0]) if argv else None
     top = os.path.realpath(run(["git", "rev-parse", "--show-toplevel"]).stdout.strip())
-    if prog is None or os.path.commonpath([os.path.realpath(prog), top]) == top:  # the PR's tree must not choose the program
+    chain = [os.path.abspath(prog)] if prog else []
+    while chain and chain[-1] != os.path.dirname(chain[-1]):
+        chain.append(os.path.dirname(chain[-1]))
+    if prog is None or any(os.path.commonpath([os.path.realpath(p), top]) == top for p in chain):  # the PR's tree must not choose the program, by its target or by a symlink on its path
         raise Stop("STOP_CI_COMMAND", True, [f"{key} must name a program outside the checkout, by absolute path or on PATH; fix or unset the key."])
     return [os.path.abspath(prog), *argv[1:]]  # absolute: a `.` PATH entry can't reach the PR tree later; not realpath: venv, busybox and shims need their own name
 
@@ -1347,7 +1350,7 @@ def failure_evidence(state, head, runs):
             if stat.S_ISREG(os.lstat(path).st_mode):  # no symlink or subdirectory: the tail is written over the file
                 with open(path, "rb") as f:  # only the end: write_tail keeps at most LOG_BYTES of it
                     f.seek(max(0, os.fstat(f.fileno()).st_size - LOG_BYTES))
-                    log = f.read(LOG_BYTES).decode("utf-8", errors="replace")
+                    log = f.read(LOG_BYTES).decode("utf-8", errors="ignore")  # drop a character the seek split
                 if write_tail(external, name, log):  # an empty file is no evidence
                     paths.append(path)
     status = lookup(["gh", "api", "--paginate", f"repos/{state['owner']}/{state['repo']}/commits/{head}/status", "--jq", STATUS_JQ])

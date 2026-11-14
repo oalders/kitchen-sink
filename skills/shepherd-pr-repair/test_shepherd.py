@@ -397,6 +397,15 @@ class TestRun(unittest.TestCase):
                 sh.run_ci(sh.CI_TRIGGER_KEY, [prog])
         self.assertEqual(caught.exception.code, "STOP_CI_COMMAND")
         self.assertIn(sh.CI_TRIGGER_KEY, caught.exception.report[0])
+        self.assertIn("exit 1", caught.exception.report[1])
+
+    def test_ci_command_stdin_is_at_eof(self):
+        """A prompt reads EOF and fails at once instead of hanging."""
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sh, "hard_end", None):
+            prog = program(os.path.join(tmp, "ci-go"), "read x || exit 7\n")
+            with self.assertRaises(sh.Stop) as caught:
+                sh.run_ci(sh.CI_TRIGGER_KEY, [prog])
+        self.assertIn("exit 7", caught.exception.report[1])
 
 
 class TestStart(Env):
@@ -1590,7 +1599,6 @@ class Show(NextBase):
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(self.triggers(), [self.TRIGGER])
         self.assertEqual(self.kwargs[self.TRIGGER]["timeout"], sh.CI_COMMAND_TIMEOUT)
-        self.assertIs(self.kwargs[self.TRIGGER]["stdin"], subprocess.DEVNULL)
         self.live(gated_head=OTHER, triggered=SHA)  # a repair's pushed head, adopted
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
         self.replies[f"/usr/bin/ci-go 7 {OTHER}"] = ""
@@ -1673,6 +1681,8 @@ class Show(NextBase):
             "relative to the cwd": ("bin/ci-go", "outside"),
             "a symlink out and back in": ("ci-go", "outside"),
             "a PATH entry in the checkout": ("ci-go", "checkout/node_modules/.bin"),
+            "a symlink in the checkout pointing out": ("ci-out", "checkout/node_modules/.bin"),
+            "a symlinked directory in the checkout pointing out": ("ci-go", "checkout/linked"),
         }
         for name, (value, path) in cases.items():
             with self.subTest(name):
@@ -1681,6 +1691,9 @@ class Show(NextBase):
                 program(os.path.join(self.checkout, "node_modules", ".bin", "ci-go"))
                 os.makedirs(outside)
                 os.symlink(os.path.join(self.checkout, "bin", "ci-go"), os.path.join(outside, "ci-go"))
+                os.symlink(program(os.path.join(self.git_dir, "real", "ci-real")), os.path.join(self.checkout, "node_modules", ".bin", "ci-out"))
+                os.symlink(os.path.join(self.git_dir, "real"), os.path.join(self.checkout, "linked"))
+                program(os.path.join(self.git_dir, "real", "ci-go"))
                 self.live()
                 self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = value + "\n"
                 cwd = os.getcwd()
@@ -1689,7 +1702,7 @@ class Show(NextBase):
                 with mock.patch.object(sh.shutil, "which", REAL_WHICH), mock.patch.dict(os.environ, {"PATH": os.path.join(self.git_dir, path)}):
                     out = self.main("next")[1]
                 self.assert_stop(out, "STOP_CI_COMMAND")
-                self.assertFalse([c for c in self.calls if "ci-go" in c])  # never run
+                self.assertFalse([c for c in self.calls if "ci-" in c])  # never run
                 self.setUp()
 
     def test_ci_trigger_waits_for_the_codex_gate(self):
@@ -2326,14 +2339,15 @@ class Watch(NextBase):
         self.replies["gh pr checks 7"] = FAILED
         self.replies[RUNS] = "[]"
         end = "\nTAIL-MARKER\n"
-        tail = "x" * (sh.LOG_BYTES - 1 - len(end)) + end  # the read starts inside the two-byte "é"
-        self.ci_logs(("big.log", "HEAD-MARKER\n" + "x" * sh.LOG_BYTES + "é" + tail))
+        tail = "x" * (sh.LOG_BYTES - 3 - len(end)) + end  # the read starts inside the four-byte "😀"
+        self.ci_logs(("big.log", "HEAD-MARKER\n" + "x" * sh.LOG_BYTES + "😀" + tail))
         out = self.main("next")[1]
         self.assertEqual(out["action"], "repair")
         with open(os.path.join(out["evidence_dir"], "external", "big.log"), encoding="utf-8") as f:
             log = f.read()
         self.assertIn("TAIL-MARKER", log)
         self.assertNotIn("HEAD-MARKER", log)
+        self.assertFalse(log.startswith("\ufffd"))  # the split "😀" is dropped, not replaced
 
     def test_ci_log_command_runs_alongside_actions_logs(self):
         self.replies["gh pr checks 7"] = FAILED
