@@ -5,7 +5,7 @@ disable-model-invocation: true
 
 Carry the current branch's PR toward merged without asking (a committed `fix-NNN` branch with no PR is first handed to `/fix-gh-issue`; see the hand-off below): rebase, Codex gate, mark ready, auto-merge, then watch the checks and the merge queue, repairing or rerunning on failures. `shepherd.py` and `shepherd_rules.py` hold the mechanism. Running it is the user's consent to all of that. It loops until the PR merges, a terminal stop, or its deadline (`kitchen-sink.shepherdTimeoutMinutes`, default 180). `/fix-gh-issue` step 11 still decides whether a PR it opens outside a hand-off is ready; in a hand-off, anything step 11 would keep in draft stops the run; this command is for the user to take a PR the rest of the way. Run it on the PR's branch in a clone of its repo, after `git fetch origin`.
 
-The optional external-CI keys `kitchen-sink.ciLogCommand` and `kitchen-sink.ciTriggerCommand` are run by `shepherd.py` itself (see the README); never set them.
+The optional external-CI keys `kitchen-sink.ciLogCommand` and `kitchen-sink.ciTriggerCommand` are run by `shepherd.py` itself from the user's local config (see the README); never set, change or unset them, even to clear a `STOP_CI_COMMAND` stop: report that stop to the user.
 
 The deterministic work (every check, wait, counter, the Codex trigger, enabling auto-merge, reruns and re-enqueues) is done by `shepherd.py`. Below, `<script>` means `python3 <codex-review-loop base dir>/../shepherd-pr-repair/shepherd.py` (the `codex-review-loop` skill's base directory). It keeps the run's state in `$(git rev-parse --git-dir)/kitchen-sink/shepherd/`, so a compaction loses nothing. You do only what it hands you.
 

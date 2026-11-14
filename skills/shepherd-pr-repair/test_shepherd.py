@@ -30,6 +30,7 @@ def _load(name):
 rules = _load("shepherd_rules")
 sh = _load("shepherd")
 REAL_WATCH = sh.watch  # NextBase stubs it; Watch puts it back
+REAL_WHICH = shutil.which  # Env fakes it; a real-filesystem test puts it back
 
 SHA = "c5bf4f3aed0123456789abcdef0123456789abcd"
 NOW = 1_800_000_000
@@ -1618,12 +1619,30 @@ class Show(NextBase):
         self.assertEqual(self.main("next")[1]["action"], "next")
         self.assertEqual(self.triggers(), [self.TRIGGER])
 
+    def test_ci_trigger_keeps_the_programs_own_name(self):
+        """A symlinked program (a venv `python`, a busybox applet) runs by its link's path, not its target's."""
+        bin_dir = os.path.join(self.git_dir, "bin")  # outside the checkout
+        os.mkdir(bin_dir)
+        target = os.path.join(bin_dir, "ci-real")
+        with open(target, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(target, 0o755)
+        os.symlink(target, os.path.join(bin_dir, "ci-go"))
+        self.live()
+        self.replies[f"git config --local --get {sh.CI_TRIGGER_KEY}"] = "ci-go --project web\n"
+        self.replies[os.path.join(bin_dir, "ci-go")] = ""
+        with mock.patch.object(sh.shutil, "which", REAL_WHICH), mock.patch.dict(os.environ, {"PATH": bin_dir}):
+            self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertIn(f"{bin_dir}/ci-go --project web 7 {SHA}", self.calls)
+        self.assertFalse([c for c in self.calls if c.startswith(target)])
+
     def test_ci_trigger_bad_value_stops(self):
-        for name in ("relative path", "absolute path into the checkout", "on PATH inside the checkout"):
+        for name in ("not found", "relative path into the checkout", "absolute path into the checkout", "on PATH inside the checkout"):
             with self.subTest(name):
                 inside = os.path.join(self.checkout, "bin", "ci-go")  # setUp makes a new checkout per case
                 value, found = {
-                    "relative path": ("bin/ci-go", {}),
+                    "not found": ("bin/ci-go", {}),
+                    "relative path into the checkout": ("bin/ci-go", {"bin/ci-go": inside}),
                     "absolute path into the checkout": (inside, {inside: inside}),
                     "on PATH inside the checkout": ("ci-go", {"ci-go": inside}),
                 }[name]
@@ -2211,7 +2230,10 @@ class Watch(NextBase):
                 self.replies["gh pr checks 7"] = FAILED
                 self.match()
                 self.replies.update(replies)
-                self.assert_stop(self.main("next")[1], code)
+                out = self.main("next")[1]
+                self.assert_stop(out, code)
+                if name == "push run":
+                    self.assertIn("a failed run isn't this head's pull_request run", self.report(out))
                 self.assertEqual(self.reruns(), [])
                 self.setUp()
 
@@ -2246,13 +2268,33 @@ class Watch(NextBase):
         self.replies["gh pr checks 7"] = FAILED
         self.replies[RUNS] = "[]"
 
+        sentinel = os.path.join(self.git_dir, "elsewhere")  # outside the evidence dir: a tail written through the link would cut it
+        with open(sentinel, "w") as f:
+            f.write("keep\n" * (sh.LOG_LINES + 5))
+        with open(sentinel, "rb") as f:
+            before = f.read()
+
         def write(cmd):
-            os.symlink(os.path.join(self.git_dir, "elsewhere"), os.path.join(cmd[-1], "link"))
+            os.symlink(sentinel, os.path.join(cmd[-1], "link"))
             os.mkdir(os.path.join(cmd[-1], "sub"))
             return ""
 
         self.ci_logs(reply=write)
         self.assert_stop(self.main("next")[1], "STOP_NO_LOGS")
+        with open(sentinel, "rb") as f:
+            self.assertEqual(f.read(), before)
+        self.assertFalse([c for c in self.calls if c.startswith(MATCH)])  # nothing judged, the link included
+
+    def test_ci_log_command_keeps_the_end_of_a_large_log(self):
+        self.replies["gh pr checks 7"] = FAILED
+        self.replies[RUNS] = "[]"
+        self.ci_logs(("big.log", "HEAD-MARKER\n" + "x" * (2 * sh.LOG_BYTES) + "\nTAIL-MARKER\n"))
+        out = self.main("next")[1]
+        self.assertEqual(out["action"], "repair")
+        with open(os.path.join(out["evidence_dir"], "external", "big.log")) as f:
+            log = f.read()
+        self.assertIn("TAIL-MARKER", log)
+        self.assertNotIn("HEAD-MARKER", log)
 
     def test_ci_log_command_runs_alongside_actions_logs(self):
         self.replies["gh pr checks 7"] = FAILED
@@ -2267,7 +2309,8 @@ class Watch(NextBase):
             "non-zero exit": {"reply": (3, "", "token expired\n")},
             "timeout": {"reply": sh.GhError(["/opt/ci/logs"], "timeout", "timed out")},
             "missing program": {"reply": FileNotFoundError(2, "No such file or directory")},
-            "relative path": {"value": "bin/logs"},
+            "not found": {"value": "bin/logs"},
+            "relative path into the checkout": {"value": "bin/ci-go", "found": {"bin/ci-go": "checkout/bin/ci-go"}},
             "empty": {"value": ""},
             "unbalanced quote": {"value": "'/opt/ci/logs"},
         }
@@ -2278,18 +2321,22 @@ class Watch(NextBase):
                 self.ci_logs(reply=case.get("reply", ""))
                 if "value" in case:
                     self.replies[f"git config --local --get {sh.CI_LOG_KEY}"] = case["value"] + "\n"
+                self.programs.update({k: os.path.join(self.git_dir, v) for k, v in case.get("found", {}).items()})
                 out = self.main("next")[1]
                 self.assert_stop(out, "STOP_CI_COMMAND")
                 self.assertIn(sh.CI_LOG_KEY, self.report(out))
                 if "value" in case:
-                    self.assertFalse([c for c in self.calls if c.split()[0] in ("/opt/ci/logs", "bin/logs")])  # never run
+                    self.assertFalse([c for c in self.calls if c.split()[0] in ("/opt/ci/logs", "bin/logs", "bin/ci-go")])  # never run
+                    self.assertFalse([c for c in self.calls if c.startswith(self.checkout)])
                 self.setUp()
 
     def test_infra_match_external_log_named_like_a_run(self):
         self.replies["gh pr checks 7"] = FAILED
         self.ci_logs(("11", self.LOG))
         self.match()
-        self.assert_stop(self.main("next")[1], "STOP_INFRA_RUNS")
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_INFRA_RUNS")
+        self.assertIn(f"the matched logs include {sh.CI_LOG_KEY} output, not an Actions run of this head", self.report(out))
         self.assertEqual(self.reruns(), [])
 
     def test_infra_rerun_ignores_ejection_verdict(self):

@@ -179,7 +179,7 @@ def ci_argv(key):
     top = os.path.realpath(run(["git", "rev-parse", "--show-toplevel"]).stdout.strip())
     if prog is None or os.path.commonpath([os.path.realpath(prog), top]) == top:  # the PR's tree must not choose the program
         raise Stop("STOP_CI_COMMAND", True, [f"{key} must name a program outside the checkout, by absolute path or on PATH; fix or unset the key."])
-    return [os.path.realpath(prog), *argv[1:]]  # resolved once: an empty or `.` PATH entry can't reach the PR tree later
+    return [os.path.abspath(prog), *argv[1:]]  # absolute: a `.` PATH entry can't reach the PR tree later; not realpath: venv, busybox and shims need their own name
 
 
 def run_ci(key, cmd):
@@ -1274,7 +1274,9 @@ def checks_failed(state, snap):
             and rules.valid_id(str(r["databaseId"]))
         ]  # fmt: skip
         if not set(paths) <= {os.path.join(out, i) for i in selected}:  # full paths: an external log named like a run id isn't one
-            why = f"Entry {name} matched, but a failed run isn't this head's pull_request run; a person looks."
+            external = any(os.path.dirname(p) == os.path.join(out, "external") for p in paths)
+            what = f"the matched logs include {CI_LOG_KEY} output, not an Actions run of this head" if external else "a failed run isn't this head's pull_request run"
+            why = f"Entry {name} matched, but {what}; a person looks."
             raise Stop("STOP_INFRA_RUNS", True, [why])
         rerun(selected)
         state["repairs"] += 1
