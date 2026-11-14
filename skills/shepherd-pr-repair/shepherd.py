@@ -34,6 +34,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,9 @@ sys.path.insert(0, HERE)  # sibling module, however we're loaded
 import shepherd_rules as rules  # noqa: E402
 
 TIMEOUT_KEY = "kitchen-sink.shepherdTimeoutMinutes"
+CI_LOG_KEY = "kitchen-sink.ciLogCommand"
+CI_TRIGGER_KEY = "kitchen-sink.ciTriggerCommand"
+CI_COMMAND_TIMEOUT = 300
 CODEX_LOOP = os.path.join(HERE, "..", "codex-review-loop", "codex_loop.py")
 CI_REMEDIATION = os.path.join(HERE, "ci_remediation.py")
 BUDGET = 540  # seconds of work per `next`, under the Bash tool's 600 s cap
@@ -153,6 +157,49 @@ def run(cmd, check=True, timeout=CALL_TIMEOUT, **kw):
     if check and proc.returncode != 0:
         raise GhError(cmd, proc.returncode, proc.stderr)
     return proc
+
+
+def local_config(key):
+    """A `git config --local` key's value, or None when it is unset."""
+    proc = run(["git", "config", "--local", "--get", key], check=False)
+    if proc.returncode not in (0, 1):  # 1 means the key is unset
+        raise GhError(proc.args, proc.returncode, proc.stderr)
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def ci_argv(key):
+    """The argv of the CI command in `key`, or None when it is unset; a terminal stop when it isn't usable."""
+    value = local_config(key)
+    if value is None:
+        return None
+    try:
+        argv = shlex.split(value)
+    except ValueError as e:
+        raise Stop("STOP_CI_COMMAND", True, [f"{key} can't be split into words ({e}); fix or unset the key."]) from None
+    prog = shutil.which(argv[0]) if argv else None
+    top = os.path.realpath(run(["git", "rev-parse", "--show-toplevel"]).stdout.strip())
+    chain = [os.path.abspath(prog)] if prog else []
+    while chain and chain[-1] != os.path.dirname(chain[-1]):
+        chain.append(os.path.dirname(chain[-1]))
+    if prog is None or any(os.path.commonpath([os.path.realpath(p), top]) == top for p in chain):  # the PR's tree must not choose the program, by its target or by a symlink on its path
+        raise Stop("STOP_CI_COMMAND", True, [f"{key} must name a program outside the checkout, by absolute path or on PATH; fix or unset the key."])
+    return [os.path.abspath(prog), *argv[1:]]  # absolute: a `.` PATH entry can't reach the PR tree later; not realpath: venv, busybox and shims need their own name
+
+
+def run_ci(key, cmd):
+    """Run `key`'s command, no shell; a non-zero exit, a timeout or a missing program is a terminal stop."""
+    try:
+        proc = run(cmd, check=False, timeout=CI_COMMAND_TIMEOUT, stdin=subprocess.DEVNULL, errors="replace")  # a prompt fails at once; bad bytes still name the key
+    except GhError:  # its own timeout (the hard end's cut is OutOfBudget)
+        failure = f"timed out after {CI_COMMAND_TIMEOUT} s"
+    except OSError as e:
+        failure = str(e)
+    else:
+        if proc.returncode == 0:
+            return
+        out = proc.stderr if proc.stderr.strip() else proc.stdout  # some tools report only on stdout
+        failure = f"exit {proc.returncode}\n" + "".join(out.splitlines(keepends=True)[-REPORT_LOG_LINES:])
+    raise Stop("STOP_CI_COMMAND", True, [f"{key} failed (untrusted):", fence(failure)])
 
 
 def gh_json(args):
@@ -411,7 +458,7 @@ def _start_with_pr(n, branch, model, minutes):
             "deadline": int(time.time()) + minutes * 60,
             "gated_head": None, "codex_passed": [], "automerge": None, "repairs": 0, "rerun": 0, "infra": [],
             "requeued": None, "wait_first": False, "pending": None, "ended": False, "evidence_dir": None,
-            "shown": None, "summary": None, "triage_verdict": None,
+            "shown": None, "summary": None, "triage_verdict": None, "triggered": None,
             "disabled_at": (old or {}).get("disabled_at"),  # the last run's dequeue is no ejection either
         },
     )  # fmt: skip
@@ -423,13 +470,12 @@ def cmd_start(args):
     detached = Stop("STOP_DETACHED", True, ["HEAD is detached; check out the PR's branch."])
     if not rules.valid_model(args.model):
         raise Stop("STOP_BAD_MODEL", True, ["--model must be the running model's version, e.g. \"Opus 5.5\" (not the model ID claude-opus-5-5)."])
-    proc = run(["git", "config", "--local", "--get", TIMEOUT_KEY], check=False)
-    if proc.returncode not in (0, 1):  # 1 means the key is unset
-        raise GhError(proc.args, proc.returncode, proc.stderr)
     try:
-        minutes = rules.timeout_minutes(proc.stdout.strip() if proc.returncode == 0 else None)
+        minutes = rules.timeout_minutes(local_config(TIMEOUT_KEY))
     except rules.RuleError as e:
         raise Stop("STOP_BAD_TIMEOUT", True, [str(e), "Fix or unset the key."]) from None
+    for key in (CI_LOG_KEY, CI_TRIGGER_KEY):  # fail fast; each use checks again, as the value can change
+        ci_argv(key)
     branch, rebasing = current_branch()
     pointer = load_pointer()
     if rebasing and pointer and pointer["branch"] == branch:
@@ -918,6 +964,9 @@ def write_summary(state, snap):
         "Changed files (untrusted; [sensitive] marks /fix-gh-issue step 11's list, for the record only):",
         fence("\n".join(f"{f}  [sensitive]" if SENSITIVE.search(f) else f for f in files) or "(none)"),
     ]  # fmt: skip
+    for key in (CI_LOG_KEY, CI_TRIGGER_KEY):  # shown each head for the record: a value planted in the local config is seen
+        value = local_config(key)
+        lines += [f"{key} (configured, runs automatically):", fence(value)] if value is not None else [f"{key}: (not set)"]
     if diff.returncode != 0:
         lines += ["`gh pr diff` failed, so the list above is incomplete:", fence(diff.stderr)]
     if pr["isDraft"]:
@@ -967,6 +1016,7 @@ def parse_runs(listed, keys=("databaseId", "conclusion", "event")):
 def write_tail(out, name, log):
     """A log's tail as file `name` in `out`; None, and no file, for a failed fetch or an empty log."""
     tail = "".join((log or "").splitlines(keepends=True)[-LOG_LINES:]).encode()[-LOG_BYTES:]
+    tail = tail.decode("utf-8", errors="ignore").encode()  # the byte cut can split a character; drop its stray bytes
     if not tail:
         return None
     path = os.path.join(out, name)
@@ -1232,7 +1282,10 @@ def checks_failed(state, snap):
     check_cap(state)  # the match below spends a repair, as the skill's infra fix did
     out, paths, third_party = failure_evidence(state, head, runs)
     if not paths:
-        why = "A check failed, but no failed run had a log (a check that isn't an Actions run?); a person looks."
+        why = (
+            "A check failed, but no failed run had a log (a check that isn't an Actions run?) and no"
+            f" {CI_LOG_KEY} wrote one; a person looks."
+        )
         raise Stop("STOP_NO_LOGS", True, [why])
     judged, detail = judge_logs(paths)
     if judged == "invalid":
@@ -1249,8 +1302,10 @@ def checks_failed(state, snap):
             if r["event"] == "pull_request" and r["headSha"] == head and r["conclusion"] in (*FAILED_RUNS, "cancelled")
             and rules.valid_id(str(r["databaseId"]))
         ]  # fmt: skip
-        if not {os.path.basename(p) for p in paths} <= set(selected):
-            why = f"Entry {name} matched, but a failed run isn't this head's pull_request run; a person looks."
+        if not set(paths) <= {os.path.join(out, i) for i in selected}:  # full paths: an external log named like a run id isn't one
+            external = any(os.path.dirname(p) == os.path.join(out, "external") for p in paths)
+            what = f"the matched logs include {CI_LOG_KEY} output, not an Actions run of this head" if external else "a failed run isn't this head's pull_request run"
+            why = f"Entry {name} matched, but {what}; a person looks."
             raise Stop("STOP_INFRA_RUNS", True, [why])
         rerun(selected)
         state["repairs"] += 1
@@ -1306,10 +1361,23 @@ def job_logs(out, ids):
 
 
 def failure_evidence(state, head, runs):
-    """The `checks` evidence in a new evidence dir: (dir, `--log-failed` tails, a third-party status failed or is unknown)."""
+    """The `checks` evidence in a new evidence dir: (dir, `--log-failed` and `ciLogCommand` tails, a third-party status failed or is unknown)."""
     out = new_evidence_dir(state)
     ids = [str(r["databaseId"]) for r in runs if r["conclusion"] in FAILED_RUNS and rules.valid_id(str(r["databaseId"]))]
     paths = [p for p in (write_tail(out, i, lookup(["gh", "run", "view", i, "--log-failed"])) for i in ids) if p]
+    argv = ci_argv(CI_LOG_KEY)
+    if argv:
+        external = os.path.join(out, "external")
+        os.mkdir(external)
+        run_ci(CI_LOG_KEY, [*argv, str(state["pr"]), head, external])
+        for name in sorted(os.listdir(external)):
+            path = os.path.join(external, name)
+            if stat.S_ISREG(os.lstat(path).st_mode):  # no symlink or subdirectory: the tail is written over the file
+                with open(path, "rb") as f:  # only the end: write_tail keeps at most LOG_BYTES of it
+                    f.seek(max(0, os.fstat(f.fileno()).st_size - LOG_BYTES))
+                    log = f.read(LOG_BYTES).decode("utf-8", errors="ignore")  # drop a character the seek split
+                if write_tail(external, name, log):  # an empty file is no evidence
+                    paths.append(path)
     status = lookup(["gh", "api", "--paginate", f"repos/{state['owner']}/{state['repo']}/commits/{head}/status", "--jq", STATUS_JQ])
     return out, paths, status is None or bool(status.strip())
 
@@ -1347,6 +1415,11 @@ def pass_once(state, snap, budget_end):
     action = codex_gate(state, snap, budget_end)
     if action:
         return action
+    head = state["gated_head"]
+    argv = state.get("triggered") != head and ci_argv(CI_TRIGGER_KEY)  # .get: a state saved before this key existed has none
+    if argv:
+        run_ci(CI_TRIGGER_KEY, [*argv, str(state["pr"]), head])
+        state["triggered"] = head  # only after it succeeded: a failed or cut-off trigger runs again
     # A verdict serves only the first pass after its `record` to reach step 3 or its watch; a cut-off or failed `gh` keeps it, a Resumable drops it.
     try:
         action = show_and_act(state, snap) or watch(state, snap, budget_end)
