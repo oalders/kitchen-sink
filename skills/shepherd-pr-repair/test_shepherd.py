@@ -1555,6 +1555,12 @@ class Codex(NextBase):
             out = self.main("next")[1]
             self.assert_stop(out, "STOP_DEADLINE")
             self.assertNotIn("a late review can still arrive after it merges", self.report(out))
+        with self.subTest("pending repair"):  # only same_head's pending guard rules out the late line
+            self.live(pending=self.repair("codex"), codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
+            self.replies.update({"gh pr view 7": pr_full(), "gh api graphql": queue()})
+            out = self.main("next")[1]
+            self.assertNotEqual(out.get("code"), "STOP_DEADLINE_CODEX")
+            self.assertNotIn("a late review can still arrive after it merges", self.report(out))
         with self.subTest("head moved past the late gate"):
             self.live(codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
             self.replies.update({"gh pr view 7": pr_full(headRefOid=OTHER), "gh api graphql": queue()})
@@ -2370,7 +2376,7 @@ class Watch(NextBase):
             self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
             before = len(self.calls)
             self.late_watch(due, shown=OTHER, gated_head=OTHER, codex_passed=[SHA, OTHER])
-            self.assertFalse([c for c in self.calls[before:] if c.startswith(Codex.GHWAIT)])
+            self.assertEqual(len([c for c in self.calls[before:] if " gh-wait " in c]), 0)
 
     def test_watch_waits_for_checks(self):
         self.replies["gh pr checks 7"] = ["[]", "[]", FAILED]  # checks register late
