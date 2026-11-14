@@ -14,7 +14,7 @@
 
 - stdlib only; JSON on stdout, exactly one object per call; exit 0 for an action, 2 for a tool error.
 - stdout fields are only fixed tokens, integers, regex-validated refs/SHAs, remediation entry names, or paths the script created. PR title/body, file paths, check names, bot output, logs and `gh` stderr go only into files.
-- Regexes: SHA `^[0-9a-f]{40}$`; ref (`headRefName`, default branch) `^[A-Za-z0-9._/-]+$` with no `..` and no leading `-`; owner/repo `^[A-Za-z0-9._-]+$`; PR number `^[0-9]+$`; run/job/comment id `^[0-9]+$`; model `^[A-Za-z0-9. -]{1,40}$`; `shepherdTimeoutMinutes` `^[1-9][0-9]*$`, unset 180.
+- Regexes: SHA `^[0-9a-f]{40}$`; ref (`headRefName`, default branch) `^[A-Za-z0-9._/-]+$` with no `..` and no leading `-`; owner/repo `^[A-Za-z0-9._-]+$`; PR number `^[0-9]+$`; run/job/comment id `^[0-9]+$`; model `^(Claude )?(Opus|Sonnet|Haiku|Fable) [0-9]+(\.[0-9]+)?$` (the model version, e.g. `Opus 5.5`); `shepherdTimeoutMinutes` `^[1-9][0-9]*$`, unset 180.
 - State file `$(git rev-parse --git-dir)/kitchen-sink/shepherd/<n>.json`, mode 0600, atomic write (temp + `os.replace`); lock `<n>.lock` beside it, `fcntl.flock(LOCK_EX | LOCK_NB)` held for the whole call.
 - `next` call budget: 540 s of work (≈ 9 min, under the Bash tool's 600 s cap), then `{"action":"next"}`.
 - Waits: `time.sleep`, `gh` polls every 15 s; resumable wait 120 s.
