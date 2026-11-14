@@ -261,8 +261,7 @@ Shows or switches the per-clone Codex review mode used by the `codex-review-loop
 - `on` / `github`: local Codex loop, plus a mandatory `@codex review` gate from the GitHub bot before the PR is marked ready
 - `local`: local loop only; `off`: skip Codex; `default`: unset (`off`)
 - Stored with `git config --local kitchen-sink.codexReview`, so it is never committed
-- The bot gate waits `kitchen-sink.codexTimeoutMinutes` (default 30) from the `@codex review` trigger, in `codex-review-loop` and `/shepherd-pr`; on timeout, `kitchen-sink.codexTimeoutAction` `stop` (default) keeps the PR in draft (`/shepherd-pr` keeps polling for a review of the head, without new triggers, until its deadline) and `proceed` passes with a note in the PR body (only `/shepherd-pr` then keeps checking for a late review; see [/shepherd-pr](#shepherd-pr)), e.g. `git config --local kitchen-sink.codexTimeoutAction proceed`
-- Run `/review-config` to see or change the timeout, round and `/shepherd-pr` deadline keys, and `/shepherd-pr`'s CI remediation entries
+- Run `/review-config` to set how long the bot gate waits and whether a timeout stops or passes it, plus the round and `/shepherd-pr` deadline keys, and `/shepherd-pr`'s CI remediation entries
 
 #### /break-into-gh-issues
 
@@ -420,7 +419,7 @@ Two subagents review the same work in parallel, competing under an incentive tha
 Catches what Claude's self-review misses, without spending CI minutes on it:
 - Runs `codex exec review --base origin/<default>` locally and classifies findings; P0–P2 block, P3 is advisory
 - Triage → fix → self-review → re-run, capped at `kitchen-sink.codexRounds` rounds (1–5, default 3); declined findings need evidence and the user's confirmation
-- In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD, timed from the trigger (a timeout stops the gate unless the user set `codexTimeoutAction` to `proceed`), then replies on and resolves the threads it fixed
+- In `github` mode: requests `@codex review` on the draft PR and waits for the bot's review of HEAD, timed from the trigger, then replies on and resolves the threads it fixed
 - `codex_loop.py` helper (`mode`, `local-review`, `gh-wait`, `gh-threads`, `gh-resolve`), unit-tested in `test_codex_loop.py`
 - Called by `/fix-gh-issue` (step 8.5 and the step 10 bot gate)
 
