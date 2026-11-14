@@ -1549,6 +1549,12 @@ class Codex(NextBase):
                 out = self.main("next")[1]
                 self.assert_stop(out, "STOP_DEADLINE_CODEX" if named else "STOP_DEADLINE")
                 self.assertEqual("a late review can still arrive after it merges" in self.report(out), named)
+        with self.subTest("head moved past the late gate"):
+            self.live(codex_passed=[SHA], codex=late_gate(), deadline=NOW - 1)
+            self.replies.update({"gh pr view 7": pr_full(headRefOid=OTHER), "gh api graphql": queue()})
+            out = self.main("next")[1]
+            self.assert_stop(out, "STOP_DEADLINE_FOREIGN_HEAD")
+            self.assertNotIn("a late review can still arrive after it merges", self.report(out))
 
     def test_codex_bad_trigger_id_is_not_adopted(self):
         self.comments(555)
@@ -2321,6 +2327,7 @@ class Watch(NextBase):
         self.replies[Codex.GHWAIT] = [(1, json.dumps({"status": s}), "") for s in ("timeout", "findings")]
         out = self.main("next")[1]
         self.assertEqual((out["action"], out["cause"]), ("repair", "codex"))
+        self.assertIn(DISABLE, self.calls)
         self.assertIsNone(sh.load_state(7)["queue_watch"])
 
     def test_watch_late_codex_check_throttled(self):
@@ -2328,6 +2335,21 @@ class Watch(NextBase):
         self.late_watch(lambda cmd: at.append(self.clock) or (1, json.dumps({"status": "timeout"}), ""))
         self.assertGreater(len(at), 2)
         self.assertTrue(all(b - a >= sh.LATE_CHECK for a, b in zip(at, at[1:])))
+
+    def test_watch_no_late_check_once_late_is_off(self):
+        clean, timeout = ((code, json.dumps({"status": s}), "") for code, s in ((0, "clean"), (1, "timeout")))
+        for name, gate, reply, looks in (
+            ("late review clean at pass start", late_gate(), clean, 1),  # the pass start's look only
+            ("late already off", {**late_gate(), "late": False}, timeout, 0),
+            ("passed normally", {k: v for k, v in late_gate().items() if k not in ("late", "late_at")}, timeout, 0),
+        ):
+            with self.subTest(name):
+                self.replies["gh pr view 7"] = pr_full()
+                before = len(self.calls)
+                start = self.clock
+                self.late_watch(reply, codex=gate)
+                self.assertGreater(self.clock - start, 3 * sh.LATE_CHECK)  # the watch ran past several looks' due times
+                self.assertEqual(len([c for c in self.calls[before:] if " gh-wait " in c]), looks)
 
     def test_watch_no_late_check_once_the_pr_moved(self):
         due = lambda cmd: setattr(self, "clock", self.clock + sh.LATE_CHECK) or (1, json.dumps({"status": "timeout"}), "")  # the watch's look is due
