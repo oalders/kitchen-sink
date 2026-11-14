@@ -2304,8 +2304,8 @@ class Watch(NextBase):
         self.assertEqual((state["repairs"], state["automerge"], state["pending"]["cause"]), (1, "off-by-run", "checks"))
         self.assertEqual(self.reruns(), [])
 
-    def late_watch(self, reply):
-        self.live(shown=SHA, codex_passed=[SHA], codex=late_gate())
+    def late_watch(self, reply, **over):
+        self.live(**{"shown": SHA, "codex_passed": [SHA], "codex": late_gate(), **over})
         self.replies["gh pr checks 7"] = PENDING
         self.replies[Codex.GHWAIT] = reply
         return self.main("next")[1]
@@ -2338,6 +2338,11 @@ class Watch(NextBase):
                 before = len(self.calls)
                 self.late_watch(due)
                 self.assertEqual(len([c for c in self.calls[before:] if " gh-wait " in c]), 1)  # the pass start's look only
+        with self.subTest("gated another head"):  # the run gated OTHER, but the saved late gate is still SHA's
+            self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
+            before = len(self.calls)
+            self.late_watch(due, shown=OTHER, gated_head=OTHER, codex_passed=[SHA, OTHER])
+            self.assertFalse([c for c in self.calls[before:] if c.startswith(Codex.GHWAIT)])
 
     def test_watch_waits_for_checks(self):
         self.replies["gh pr checks 7"] = ["[]", "[]", FAILED]  # checks register late
