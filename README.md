@@ -103,7 +103,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Agent | Description |
 |-------|-------------|
 | **ci-log-triage** | Read-only classifier `/shepherd-pr` dispatches to judge whether merge-queue failure logs, or the logs of runs still failing after a rerun, are infrastructure; not for direct use |
-| **ci-fix-diagnosis** | Read-only agent the `/shepherd-pr` repair dispatches to name the files behind a failed check, so the fixer never reads the logs; not for direct use |
+| **ci-fix-diagnosis** | Read-only agent the `/shepherd-pr` repair dispatches to name the files behind a failed check, so the fixer is never given the logs; not for direct use |
 
 ### Hooks
 
