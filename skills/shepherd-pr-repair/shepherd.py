@@ -305,7 +305,33 @@ def end_state(n):
         save_state(n, state)
 
 
+stop_context = {}  # what a stop's log line names, noted as it becomes known; main() clears it
+
+
+def log_stop(stop):
+    """Append one line per emitted stop to a local log, for counting stops by code and repo; never fails the call."""
+    state = stop_context.get("state") or {}
+    line = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time())),
+        "repo": f"{state['owner']}/{state['repo']}" if state else stop_context.get("repo"),
+        "pr": stop_context.get("pr"), "code": stop.code, "terminal": stop.terminal,
+        "repairs": state.get("repairs"), "rerun": state.get("rerun"),
+    }  # fmt: skip
+    base = os.environ.get("XDG_STATE_HOME", "")
+    path = os.path.join(base if os.path.isabs(base) else os.path.expanduser("~/.local/state"), "kitchen-sink")
+    try:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        fd = os.open(os.path.join(path, "shepherd-stops.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, (json.dumps(line) + "\n").encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
 def stop_object(stop):
+    log_stop(stop)
     report = write_report(stop.report)
     return {"action": "stop", "terminal": stop.terminal, "code": stop.code, "report": report, **stop.fields}
 
@@ -326,6 +352,7 @@ def find_pr():
 
 def live_state(n):
     state = load_state(n)
+    stop_context.update(pr=n, state=state)
     if state is not None and state["ended"] and state.get("final"):
         raise Replay(state["final"])  # e.g. `next` after a repair subagent's `record` ended the run
     if state is None or state["ended"]:
@@ -426,6 +453,7 @@ def claimed_stop(n):
     old = load_state(n)
     if old and not old["ended"] and claimed(old):
         pending = old["pending"]
+        stop_context.update(pr=n, state=old)
         return Stop("STOP_REPAIR_CLAIMED", True, [
             f"A repair subagent claimed this run's {pending['cause']} repair of {pending['head']} and may still be running.",
             "If none is running in any session, run"
@@ -446,6 +474,7 @@ def _start_with_pr(n, branch, model, minutes):
     viewer = run(["gh", "api", "user", "-q", ".login"]).stdout.strip()
     repo = gh_json(["repo", "view", "--json", "owner,name,defaultBranchRef"])
     owner, name, default = repo["owner"]["login"], repo["name"], repo["defaultBranchRef"]["name"]
+    stop_context.update(pr=n, repo=f"{owner}/{name}")
     if pr["state"] == "MERGED":
         return emit({"action": "done", "merged": True})
     failure = _pr_failure(pr, viewer, repo, branch)
@@ -559,14 +588,18 @@ def check_deadline(state, snap=None):
         lines = ["The run's deadline passed; run /shepherd-pr again to continue."]
         if claimed(state):
             lines.append("A repair subagent may still be running and push; check `git log` and the PR before re-running.")
-        gate = state.get("codex")
+        gate, code = state.get("codex"), "STOP_DEADLINE"  # the code names the first hint below that fires
         if snap is not None and snap["pr"]["reviewDecision"] in rules.REVIEW_BLOCKED:
             lines.append("The PR still needs a review decision; a reviewer must act.")
+            code = "STOP_DEADLINE_REVIEW"
         elif snap is not None and not state["pending"] and gate and gate["head"] == snap["pr"]["headRefOid"] and gate["head"] not in state["codex_passed"]:
             lines.append("The Codex bot still hasn't reviewed this head; a silent bot is not approval.")  # pending: a repair, not the bot, is outstanding
+            code = "STOP_DEADLINE_CODEX"
         if snap is not None and not state["pending"] and state["gated_head"] not in (None, snap["pr"]["headRefOid"]):  # a fresh start would gate it unasked; pending: the repair's own push
             lines.append(f"The PR's head {snap['pr']['headRefOid']} is a push this run could not attribute to you; decide whether to gate it before re-running /shepherd-pr.")
-        raise Stop("STOP_DEADLINE", True, lines + ([status(state, snap)] if snap is not None else []))
+            if code == "STOP_DEADLINE":
+                code = "STOP_DEADLINE_FOREIGN_HEAD"
+        raise Stop(code, True, lines + ([status(state, snap)] if snap is not None else []))
 
 
 def resumable_wait(state, budget_end, snap=None):
@@ -1586,6 +1619,7 @@ def main(argv=None):
     args = p.parse_args(argv)
     global hard_end
     hard_end = time.time() + HARD_CAP
+    stop_context.clear()
     try:
         return args.func(args)
     except Busy:

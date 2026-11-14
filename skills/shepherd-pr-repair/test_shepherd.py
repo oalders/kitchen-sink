@@ -36,6 +36,15 @@ SHA = "c5bf4f3aed0123456789abcdef0123456789abcd"
 NOW = 1_800_000_000
 
 
+def setUpModule():  # every stop appends to the stop log: keep it off the real ~/.local/state
+    global _state_home
+    _state_home = tempfile.TemporaryDirectory()
+    p = mock.patch.dict(os.environ, {"XDG_STATE_HOME": _state_home.name})
+    p.start()
+    unittest.addModuleCleanup(p.stop)
+    unittest.addModuleCleanup(_state_home.cleanup)
+
+
 def pr_view(**over):
     pr = {
         "number": 7, "state": "OPEN", "isCrossRepository": False, "author": {"login": "me"},
@@ -876,7 +885,7 @@ class Next(NextBase):
         self.live(deadline=NOW - 1)
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER)
         out = self.main("next")[1]
-        self.assert_stop(out, "STOP_DEADLINE")
+        self.assert_stop(out, "STOP_DEADLINE_FOREIGN_HEAD")
         self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
 
     def test_deadline_omits_unattributed_line_for_the_repairs_push(self):
@@ -891,7 +900,7 @@ class Next(NextBase):
         self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
         self.replies[ACTIVITY] = lambda cmd: setattr(self, "clock", NOW + 3600) or ""  # the deadline passes while the log lags
         out = self.main("next")[1]
-        self.assert_stop(out, "STOP_DEADLINE")
+        self.assert_stop(out, "STOP_DEADLINE_FOREIGN_HEAD")
         self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
 
     def test_deadline_after_a_failed_read_omits_the_stale_snapshot(self):
@@ -1466,7 +1475,7 @@ class Codex(NextBase):
         check = (1, json.dumps(self.timeout()), "")
         self.replies[self.GHWAIT] = [check, lambda cmd: setattr(self, "clock", self.clock + 500) or pending]
         out = self.main("next")[1]
-        self.assert_stop(out, "STOP_DEADLINE")
+        self.assert_stop(out, "STOP_DEADLINE_CODEX")
         self.assertEqual(len(self.gh_waits()), 2)
 
     def test_codex_wait_needs_room(self):
@@ -1531,7 +1540,7 @@ class Codex(NextBase):
         self.assertEqual(len(self.posts()), 1)
         self.clock = NOW + 3600
         out = self.main("next")[1]
-        self.assert_stop(out, "STOP_DEADLINE")
+        self.assert_stop(out, "STOP_DEADLINE_CODEX")
         self.assertIn("The Codex bot still hasn't reviewed this head", self.report(out))
 
     def test_deadline_during_codex_repair_omits_codex_line(self):
@@ -2622,7 +2631,7 @@ class Watch(NextBase):
                 self.clock = NOW + 3600
                 self.calls.clear()
                 out = self.main("next")[1]
-                self.assert_stop(out, "STOP_DEADLINE")
+                self.assert_stop(out, "STOP_DEADLINE_REVIEW")
                 self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)  # past the deadline, wait_first doesn't wait
                 self.assertIn("The PR still needs a review decision", self.report(out))
                 self.assertIn("#7 head c5bf4f3", self.report(out))
@@ -2656,6 +2665,38 @@ class Watch(NextBase):
         self.assertEqual(json.loads(raw)["action"], "repair")
         for text in ("rm -rf", "PWNED", "boom"):
             self.assertNotIn(text, raw)
+
+
+class StopLog(NextBase):
+    def stop_lines(self):
+        path = os.path.join(os.environ["XDG_STATE_HOME"], "kitchen-sink", "shepherd-stops.jsonl")
+        with contextlib.suppress(FileNotFoundError), open(path) as f:
+            return [json.loads(line) for line in f]
+        return []
+
+    def setUp(self):
+        super().setUp()
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(os.environ["XDG_STATE_HOME"], "kitchen-sink", "shepherd-stops.jsonl"))
+
+    def test_in_run_stop_logs_once(self):
+        self.live(repairs=3, rerun=1)
+        self.replies["gh pr view 7"] = pr_full(mergeStateStatus="DIRTY")
+        self.assert_stop(self.main("next")[1], "STOP_REPAIR_CAP")
+        line = {"ts": "2027-01-15T08:00:00Z", "repo": "o/r", "pr": 7, "code": "STOP_REPAIR_CAP", "terminal": True, "repairs": 3, "rerun": 1}
+        self.assertEqual(self.stop_lines(), [line])
+        self.assertEqual(self.main("next")[1]["code"], "STOP_REPAIR_CAP")  # replayed, not logged again
+        self.assertEqual(self.stop_lines(), [line])
+
+    def test_start_stop_logs_pr_and_repo(self):
+        self.replies["gh pr view 7"] = pr_view(state="CLOSED")
+        self.assertEqual(self.main("start", "--model", "Opus 5.5")[1]["code"], "STOP_CLOSED")
+        self.assertEqual([(l["repo"], l["pr"], l["code"], l["repairs"]) for l in self.stop_lines()], [("o/r", 7, "STOP_CLOSED", None)])
+
+    def test_unwritable_log_still_stops(self):
+        program(os.path.join(self.git_dir, "state", "kitchen-sink"))  # a file where the log's directory should be
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": os.path.join(self.git_dir, "state")}):
+            self.assertEqual(self.main("next")[1]["code"], "STOP_NO_RUN")
 
 
 class TestJq(unittest.TestCase):
