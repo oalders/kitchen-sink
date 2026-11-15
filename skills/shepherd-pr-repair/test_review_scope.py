@@ -36,7 +36,7 @@ class ReviewScope(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def git(self, *args, check=True):
-        env = dict(os.environ, GIT_EDITOR="true")
+        env = dict(os.environ, GIT_EDITOR="true", GIT_LITERAL_PATHSPECS="1")
         return subprocess.run(["git", "-C", self.repo, *args], check=check,
                               capture_output=True, text=True, env=env).stdout.strip()
 
@@ -119,10 +119,15 @@ class ReviewScope(unittest.TestCase):
         self.assertEqual(data["mode"], "rebase-delta")
         self.assertEqual(data["files"], ["a.txt"])
         self.assertNotIn("untouched commit", self.read(data["range_diff"]))
-        self.assertIn("feat", self.read(data["range_diff"]))
+        self.assertIn("upstream and branch", self.read(data["range_diff"]))
 
     def test_non_ascii_file_name(self):
-        name = "\u00e9.txt"
+        self.odd_name("\u00e9.txt")
+
+    def test_pathspec_magic_file_name(self):
+        self.odd_name(":(literal)x.txt")
+
+    def odd_name(self, name):
         self.git("checkout", "-q", "main")
         self.change(name, LINES, "add")
         self.git("checkout", "-q", "fix-123")
@@ -153,7 +158,9 @@ class ReviewScope(unittest.TestCase):
 
     def test_heavily_rewritten_resolution_gives_rebase_delta(self):
         old, rebased = self.conflicting_rebase([f"rewritten {i}\n" for i in range(10)])
-        self.assertEqual(self.scope(old, rebased)["mode"], "rebase-delta")
+        data = self.scope(old, rebased)
+        self.assertEqual(data["mode"], "rebase-delta")
+        self.assertIn("rewritten 0", self.read(data["range_diff"]))
 
     def test_later_round_adds_fix_commits(self):
         old, rebased = self.conflicting_rebase(self.resolved())

@@ -109,7 +109,10 @@ A short note at step 1: if invoked with `scope=<path>` whose `mode` is
 `rebase-delta`:
 
 - Dispatch only the general reviewer, plus `/security-review` unless the
-  scoped `files` are doc-only. Other specialists are skipped and noted.
+  scoped `files` are doc-only, plus `/agent-instructions-review` when any
+  scoped file is an agent-instruction file (those count as doc-only for the
+  security skip, so the instruction review must not drop with them). Other
+  specialists are skipped and noted.
 - BASE/HEAD stay as today (merge-base..HEAD), as read-only context. The
   change under review is the range-diff, fix diff and upstream log, with:
   "a review was run on this branch at `<old_head>`; review and report only
