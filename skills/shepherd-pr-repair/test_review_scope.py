@@ -64,18 +64,23 @@ class ReviewScope(unittest.TestCase):
         self.edit("branch\n", "feat")
         old = self.review()
         self.git("checkout", "-q", "main")
+        self.change("other.txt", ["other\n"], "unrelated upstream")
         self.edit("upstream\n", "upstream edit")
         self.git("checkout", "-q", "fix-123")
-        self.git("rebase", "main", check=False)
-        with open(os.path.join(self.repo, "a.txt"), "w", encoding="utf-8") as fh:
-            fh.writelines(resolution)
-        self.git("add", "a.txt")
-        self.git("rebase", "--continue")
-        return old, self.git("rev-parse", "HEAD")
+        return old, self.resolve(resolution)
 
-    def scope(self, old, rebased, base="main"):
+    def resolve(self, resolution, name="a.txt"):
+        """Rebase onto main, resolve `name`'s conflict with `resolution`; return the rebased HEAD."""
+        self.git("rebase", "main", check=False)
+        with open(os.path.join(self.repo, name), "w", encoding="utf-8") as fh:
+            fh.writelines(resolution)
+        self.git("add", name)
+        self.git("rebase", "--continue")
+        return self.git("rev-parse", "HEAD")
+
+    def scope(self, old, rebased, base="main", cwd=None):
         out = subprocess.run([sys.executable, SCRIPT, "--old-head", old, "--rebased", rebased, "--base", base],
-                             cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+                             cwd=cwd or self.repo, check=True, capture_output=True, text=True).stdout.strip()
         with open(out, encoding="utf-8") as fh:
             return json.load(fh)
 
@@ -100,7 +105,46 @@ class ReviewScope(unittest.TestCase):
         self.assertEqual(data["files"], ["a.txt"])
         self.assertIn("upstream and branch", self.read(data["range_diff"]))
         self.assertIn("upstream edit", self.read(data["upstream"]))
+        self.assertNotIn("unrelated upstream", self.read(data["upstream"]))
         self.assertEqual(self.read(data["fixes"]), "")
+
+    def test_only_the_changed_commit_is_scoped(self):
+        self.change("c.txt", ["quiet\n"], "untouched commit")
+        self.edit("branch\n", "feat")
+        old = self.review()
+        self.git("checkout", "-q", "main")
+        self.edit("upstream\n", "upstream edit")
+        self.git("checkout", "-q", "fix-123")
+        data = self.scope(old, self.resolve(self.resolved()))
+        self.assertEqual(data["mode"], "rebase-delta")
+        self.assertEqual(data["files"], ["a.txt"])
+        self.assertNotIn("untouched commit", self.read(data["range_diff"]))
+        self.assertIn("feat", self.read(data["range_diff"]))
+
+    def test_non_ascii_file_name(self):
+        name = "\u00e9.txt"
+        self.git("checkout", "-q", "main")
+        self.change(name, LINES, "add")
+        self.git("checkout", "-q", "fix-123")
+        self.git("rebase", "-q", "main")
+        self.edit("branch\n", "feat", name=name)
+        old = self.review()
+        self.git("checkout", "-q", "main")
+        self.edit("upstream\n", "upstream edit", name=name)
+        self.git("checkout", "-q", "fix-123")
+        data = self.scope(old, self.resolve(self.resolved(), name=name))
+        self.assertEqual(data["mode"], "rebase-delta")
+        self.assertEqual(data["files"], [name])
+        self.assertIn("upstream edit", self.read(data["upstream"]))
+
+    def test_scope_is_per_worktree(self):
+        old, rebased = self.conflicting_rebase(self.resolved())
+        first = self.scope(old, rebased)
+        other = os.path.join(self.tmp, "other")
+        self.git("worktree", "add", "-q", "--detach", other, rebased)
+        second = self.scope(old, rebased, cwd=other)
+        self.assertNotEqual(os.path.dirname(first["range_diff"]), os.path.dirname(second["range_diff"]))
+        self.assertTrue(os.path.isfile(first["range_diff"]))
 
     def test_patch_marker_only_gives_rebase_delta(self):
         old, rebased = self.conflicting_rebase(self.resolved())
@@ -140,9 +184,9 @@ class ReviewScope(unittest.TestCase):
         self.change("big.txt", [f"{i}\n" for i in range(400)], "big fix")
         self.assertFull(self.scope(old, rebased), "over 300 lines")
 
-    def test_git_failure_falls_back(self):
+    def test_bad_base_ref_falls_back(self):
         old, rebased = self.conflicting_rebase(self.resolved())
-        self.assertFull(self.scope(old, rebased, base="no-such-ref"), "git merge-base failed")
+        self.assertFull(self.scope(old, rebased, base="no-such-ref"), "git rev-parse failed")
 
     def test_unchanged_commits_fall_back(self):
         self.edit("branch\n", "feat")

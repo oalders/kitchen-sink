@@ -70,7 +70,7 @@ right after the rebase completes; HEAD may be later, after step 4 fix rounds.
   `git show <sha> -- <file>` for what they need). `<files>` are the files
   changed by the kept commits and the fix commits.
 - Writes the kept range-diff, the fix diff, the upstream log and `scope.json`
-  to `<git-common-dir>/kitchen-sink/scope/` (replaced on each run, so nothing
+  to `<git-dir>/kitchen-sink/scope/` (per worktree; replaced on each run, so nothing
   accumulates and nobody has to clean up), and prints the `scope.json` path.
   `scope.json`: `{"mode": "rebase-delta"|"full", "reason": "...",
   "old_head": "<sha>", "files": [...], "range_diff": "<path>",

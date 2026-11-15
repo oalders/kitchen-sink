@@ -5,7 +5,7 @@
 
 Run in the repo after the rebase: SHA is the pre-rebase PR head, --rebased the
 HEAD right after the rebase. Writes the scope files to
-<git-common-dir>/kitchen-sink/scope/ (replaced on each run) and prints the
+<git-dir>/kitchen-sink/scope/ (per worktree, replaced on each run) and prints the
 path of its scope.json, whose `mode` is `rebase-delta` or `full` (with a
 `reason`). See docs/superpowers/specs/2026-11-14-rebase-scoped-review-design.md.
 """
@@ -37,7 +37,8 @@ class Full(Exception):
 
 def git(*args, stdin=None):
     try:
-        proc = subprocess.run(["git", *args], input=stdin, capture_output=True, text=True, timeout=60)
+        # --literal-pathspecs: a file name like ':(exclude)x' must not act as pathspec magic.
+        proc = subprocess.run(["git", "--literal-pathspecs", *args], input=stdin, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
         raise Full(f"git {args[0]} failed: {exc}") from None
     if proc.returncode != 0:
@@ -67,8 +68,19 @@ def reviewed(mdir, sha):
     return bool(pid) and os.path.isfile(os.path.join(mdir, "patch", branch, pid))
 
 
+def commit(rev):
+    """rev's commit SHA; --end-of-options keeps a rev like '--output=x' from parsing as an option."""
+    return git("rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}").strip()
+
+
+def names(cmd, *args):
+    """File names from a git --name-only call, NUL-split so non-ASCII names aren't quoted."""
+    return git(cmd, "-z", "--name-only", *args).split("\0")
+
+
 def scope(old_head, rebased, base, kdir, out):
     """Write the rebase-delta files into out and return scope.json's fields; raise Full to fall back."""
+    old_head, rebased, base = commit(old_head), commit(rebased), commit(base)
     if not reviewed(os.path.join(kdir, "reviewed"), old_head):
         raise Full(f"no review recorded for {old_head}")
     old_base = git("merge-base", old_head, base).strip()
@@ -93,17 +105,19 @@ def scope(old_head, rebased, base, kdir, out):
     fixes = git("diff", "--no-color", f"{rebased}..HEAD")
     if len(kept) + len(fixes.splitlines()) > MAX_LINES:
         raise Full(f"the rebase delta is over {MAX_LINES} lines")
-    fixed = git("diff", "--name-only", f"{rebased}..HEAD").split("\n")
-    touched = git("show", "--no-color", "--name-only", "--format=", *commits).split("\n")
+    fixed = names("diff", f"{rebased}..HEAD")
+    touched = names("show", "--no-color", "--format=", *commits)
     files = sorted(set(touched + fixed) - {""})
-    upstream = git("log", "--no-color", "--stat", f"{old_base}..{base}", "--", *files)
+    # An empty pathspec would list every upstream commit.
+    upstream = git("log", "--no-color", "--stat", f"{old_base}..{base}", "--", *files) if files else ""
     paths = {}
     for key, name, text in (("range_diff", "range-diff.txt", "".join(kept)),
                             ("fixes", "fixes.diff", fixes), ("upstream", "upstream.txt", upstream)):
         paths[key] = os.path.join(out, name)
         with open(paths[key], "w", encoding="utf-8") as fh:
             fh.write(text)
-    return {"mode": "rebase-delta", "reason": "only the rebase delta changed", "files": files, **paths}
+    return {"mode": "rebase-delta", "reason": "only the rebase delta changed", "old_head": old_head,
+            "files": files, **paths}
 
 
 def main():
@@ -114,9 +128,10 @@ def main():
     args = ap.parse_args()
     try:
         kdir = os.path.join(os.path.abspath(git("rev-parse", "--git-common-dir").strip()), "kitchen-sink")
+        # Per-worktree, so concurrent /shepherd-pr runs in other worktrees don't clobber it.
+        out = os.path.join(os.path.abspath(git("rev-parse", "--git-dir").strip()), "kitchen-sink", "scope")
     except Full as exc:
         sys.exit(f"review_scope: {exc}")
-    out = os.path.join(kdir, "scope")
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
     try:
@@ -125,7 +140,7 @@ def main():
         result = {"mode": "full", "reason": str(exc)}
     path = os.path.join(out, "scope.json")
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump({**result, "old_head": args.old_head}, fh, indent=2)
+        json.dump({"old_head": args.old_head, **result}, fh, indent=2)
     print(path)
 
 
