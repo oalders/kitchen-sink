@@ -1,6 +1,6 @@
 ---
 name: ci-fix-diagnosis
-description: Use only when the shepherd-pr-repair skill dispatches it to locate a failed check's cause.
+description: Use only when the shepherd-pr-repair skill runs it headless to locate a failed check's cause.
 tools: Read
 model: sonnet
 ---
