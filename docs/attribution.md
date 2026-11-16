@@ -33,7 +33,7 @@ The email is always `noreply@anthropic.com`; the display name is the running mod
 
 ## PR-body line
 
-Every PR body — and every GitHub **issue body** or **issue comment** — a skill creates ends with this line
+Every PR body — and every GitHub **issue body**, **issue comment** or **PR conversation comment** (e.g. an `@codex review` trigger) — a skill creates ends with this line
 (version = running model):
 
 ```
@@ -47,7 +47,8 @@ Every review-related body a skill posts ends with this footer (version = running
 - the **summary/review `body`**
 - **each inline `comments[].body`** in a batched review, since a reader sees it apart from the summary
 - every **standalone thread reply** (`pulls/{pr}/comments/{comment_id}/replies`)
-- every **PR conversation comment**
+
+A PR conversation comment (`gh pr comment`, `issues/{n}/comments`) is not review-related here: it takes the PR-body line above. The `gh` wrapper refuses `Review by` on it.
 
 Always put a blank line before `---`; text directly above it renders as a heading:
 

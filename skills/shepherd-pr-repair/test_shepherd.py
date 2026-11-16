@@ -1463,7 +1463,7 @@ class Codex(NextBase):
         self.main("next")
         self.assertEqual(len(self.posts()), 1)
         self.assertEqual(
-            self.bodies, [f"@codex review\n\nReview of {SHA}\n\n🤖 Review by [Claude Code](https://claude.com/claude-code) · Opus 5.5"]
+            self.bodies, [f"@codex review\n\nReview of {SHA}\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code) · Opus 5.5"]
         )
         self.assertEqual(self.gh_waits()[1], f"--timeout {540 - sh.GH_WAIT_MARGIN} --interval 15 --trigger-comment 555 --windows 1")
         self.assertEqual(sh.load_state(7)["codex_passed"], [SHA])

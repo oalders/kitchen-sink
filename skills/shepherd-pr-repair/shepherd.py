@@ -904,7 +904,7 @@ def gh_wait(state, head, timeout, trigger=None, windows=1):
 
 def post_trigger(state, head):
     """The one comment this script posts; returns its id."""
-    body = f"@codex review\n\nReview of {head}\n\n🤖 Review by [Claude Code](https://claude.com/claude-code) · {state['model']}"
+    body = f"@codex review\n\nReview of {head}\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code) · {state['model']}"
     tmp = tempfile.mkdtemp()
     try:
         path = os.path.join(tmp, "codex-trigger.md")
