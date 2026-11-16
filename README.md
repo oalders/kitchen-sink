@@ -416,6 +416,40 @@ Two subagents review the same work in parallel, competing under an incentive tha
 
 #### codex-review-loop
 
+```mermaid
+flowchart TD
+    start([Claude's own review passed]) --> mode{codexReview mode?}
+    mode -- off --> done([Back to parent workflow])
+    mode -- "local / github" --> lr
+
+    subgraph local ["Local loop (before pushing)"]
+        lr["codex_loop.py local-review<br/>runs codex exec review --base origin/main"]
+        lr --> files["Review written to -o file<br/>progress output to a log file"]
+        files --> parse{"Parse findings"}
+        parse -- "couldn't read the diff,<br/>or tool error" --> stop([STOP and report])
+        parse -- "P0–P2 found" --> triage["Fix, or decline with evidence<br/>then self-review the fix"]
+        triage -- "under round cap" --> lr
+        triage -- "cap hit" --> stop
+        parse -- "clean (P3 = advisory)" --> gh{github mode?}
+    end
+
+    gh -- no --> done
+    gh -- yes --> push
+
+    subgraph bot ["GitHub bot gate (draft PR)"]
+        push["Push; post '@codex review'<br/>+ 'Review of &lt;sha&gt;'"]
+        push --> wait["codex_loop.py gh-wait<br/>polls the PR until the deadline"]
+        wait -- "👍 on trigger" --> resolve["Reply 'Fixed in &lt;sha&gt;' and<br/>resolve the fixed threads"]
+        wait -- "review on that sha" --> threads["gh-threads: triage findings"]
+        threads -- "fixes made" --> lr
+        wait -- "timeout" --> act{codexTimeoutAction}
+        act -- "stop (after one re-trigger)" --> stop
+    end
+
+    resolve --> done
+    act -- "proceed (noted in PR body)" --> done
+```
+
 Catches what Claude's self-review misses, without spending CI minutes on it:
 - Runs `codex exec review --base origin/<default>` locally and classifies findings; P0–P2 block, P3 is advisory
 - Triage → fix → self-review → re-run, capped at `kitchen-sink.codexRounds` rounds (1–5, default 3); declined findings need evidence and the user's confirmation
