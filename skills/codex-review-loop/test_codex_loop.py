@@ -685,7 +685,9 @@ class GhWaitTriggerWindow(unittest.TestCase):
         self.assertEqual((rc, out["status"]), (1, "timeout"))
 
 
-def thread(login="chatgpt-codex-connector", resolved=False, body=None, tid="T1"):
+def thread(
+    login="chatgpt-codex-connector", resolved=False, body=None, tid="T1", author_type="Bot"
+):
     if body is None:
         body = (
             "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>"
@@ -697,7 +699,11 @@ def thread(login="chatgpt-codex-connector", resolved=False, body=None, tid="T1")
         "isOutdated": True,
         "path": "svc/app.py",
         "line": 12,
-        "comments": {"nodes": [{"author": {"login": login}, "body": body, "url": "u"}]},
+        "comments": {
+            "nodes": [
+                {"author": {"__typename": author_type, "login": login}, "body": body, "url": "u"}
+            ]
+        },
     }
 
 
@@ -719,6 +725,12 @@ class BotThreads(unittest.TestCase):
     def test_unbadged_bot_thread_kept(self):
         [t] = cl.bot_threads([thread(body="plain text")])
         self.assertIsNone(t["priority"])
+
+    def test_user_with_bot_login_skipped(self):
+        self.assertEqual(cl.bot_threads([thread(author_type="User")]), [])
+
+    def test_query_requests_author_type(self):
+        self.assertIn("author { __typename login }", cl.THREADS_QUERY)
 
 
 if __name__ == "__main__":

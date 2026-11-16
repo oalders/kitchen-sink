@@ -431,7 +431,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved isOutdated path line
-          comments(first: 1) { nodes { author { login } body url } }
+          comments(first: 1) { nodes { author { __typename login } body url } }
         }
       }
     }
@@ -446,9 +446,12 @@ def bot_threads(nodes):
         if node.get("isResolved"):
             continue
         first = (node.get("comments", {}).get("nodes") or [{}])[0]
-        login = (first.get("author") or {}).get("login", "")
-        # GraphQL drops the "[bot]" suffix that REST includes.
-        if login not in (BOT_LOGIN, BOT_LOGIN.removesuffix("[bot]")):
+        author = first.get("author") or {}
+        # GraphQL drops "[bot]"; only the Bot type proves it is the app, not a user with that name.
+        if author.get("__typename") != "Bot" or author.get("login") not in (
+            BOT_LOGIN,
+            BOT_LOGIN.removesuffix("[bot]"),
+        ):
             continue
         m = BOT_BADGE_RE.search(first.get("body") or "")
         threads.append(
