@@ -398,7 +398,7 @@ Rebases the current branch onto origin/main:
 Polls the current branch's CI run and reports back when it finishes:
 - Generic `gh`-based fallback for when a project-specific `/monitor-ci` isn't present
 - Finds the latest run for the branch, warns if HEAD hasn't triggered a run yet
-- Prefers `gh run watch --exit-status`, falling back to manual polling (~20s interval, ~30 min cap)
+- Polls every ~20s for up to ~30 min, reporting status changes
 - Reports pass/fail/needs-attention/in-progress, surfacing failing jobs and offering `--log-failed`
 
 ## Skills Overview
