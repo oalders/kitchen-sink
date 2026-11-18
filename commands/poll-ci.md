@@ -12,9 +12,9 @@ Steps:
    git rev-parse --abbrev-ref HEAD
    ```
 
-2. Find the most recent CI run for that branch (`<branch>` is the value from step 1):
+2. Find the most recent CI run for that branch:
    ```bash
-   gh run list --branch "<branch>" --limit 1 \
+   gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 1 \
      --json databaseId,status,conclusion,workflowName,headSha,url
    ```
    - If no runs are found, tell the user no CI run exists for the branch yet (CI may not have started, or the branch may not be pushed). Suggest `git push` if the branch has no remote counterpart, then stop.
