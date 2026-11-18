@@ -18,7 +18,7 @@ Steps:
      --json databaseId,status,conclusion,workflowName,headSha,url
    ```
    - If no runs are found, tell the user no CI run exists for the branch yet (CI may not have started, or the branch may not be pushed). Suggest `git push` if the branch has no remote counterpart, then stop.
-   - If the latest run's `headSha` does not match `git rev-parse HEAD`, warn the user that the newest commit has not triggered a run yet, and ask whether to poll the existing run or wait. If they choose to wait, re-run this `gh run list` command every ~20 seconds (capped at ~30 minutes, as in step 3) until a run whose `headSha` matches the current HEAD appears, then poll that run.
+   - If the latest run's `headSha` does not match `git rev-parse HEAD`, warn the user that the newest commit has not triggered a run yet, and ask whether to poll the existing run or wait. If they choose to wait, use one Monitor call (never a foreground `sleep`, which the harness blocks) with `timeout_ms` 1800000, running an until-loop on this `gh run list` finding a run whose `headSha` matches the current HEAD, `sleep 20` between checks, capped inside the script with `SECONDS` at 1780 (~30 minutes), loop output silenced, printing one line on exit; a `gh` error inside it only keeps it waiting. Run nothing else until its exit notification, then re-run this `gh run list`: if a run for HEAD exists, poll that run; otherwise stop, saying no run for HEAD was seen within ~30 minutes.
 
 3. Poll until the run completes. Prefer `gh run watch`, which blocks until the run finishes:
    ```bash
@@ -26,7 +26,7 @@ Steps:
    ```
    - `--exit-status` makes the command exit non-zero if the run fails, so you can branch on the result.
    - `gh run watch` streams per-job progress to the terminal on its own, so no extra status reporting is needed on that path.
-   - If `gh run watch` is unavailable or you need finer control, poll manually instead: re-run the `gh run list` command from step 2 every ~20 seconds until `status` is `completed`, reporting `queued` -> `in_progress` -> `completed` transitions as they happen. Cap polling at a sensible limit (e.g. 30 minutes) and stop with a timeout message if exceeded.
+   - If `gh run watch` is unavailable or you need finer control, poll manually instead: one Monitor call like step 2's wait, except it loops on `gh run view <databaseId> --json status` (by id, so a newer run can't take its place) until `status` is `completed`, printing one line per status change so `queued` -> `in_progress` -> `completed` transitions are reported as they happen. Run nothing else until its exit notification, then read `gh run view <databaseId> --json status,conclusion` once for step 4.
 
 4. Report the final status to the user:
    - **Pass** — `conclusion` is `success`. State that CI passed and include the run URL. Treat `skipped` and `neutral` as non-failing outcomes too: report success but note the qualifier.
