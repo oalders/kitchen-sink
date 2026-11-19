@@ -281,7 +281,7 @@ class TestRules(unittest.TestCase):
             with self.subTest(name):
                 self.assertIs(rules.own_push(entries, h, g, "me"), want)
         trusted = {"bot[bot]": {"catalog.json", "lock.json"}}
-        files = {(g, a): ["catalog.json"], (a, h): ["catalog.json", "src/x.py"], (b, h): [], (g, h): ["lock.json"] * 300}
+        files = {(g, a): ["lock.json"], (a, h): ["catalog.json", "src/x.py"], (b, h): [], (g, h): ["lock.json"] * 300, (g, b): ["lock.json"] * 299}
         bot = [(a, h, "push", "me"), (g, a, "push", "bot[bot]")]
         cases = {
             "trusted actor, allowed paths": ([(g, a, "push", "bot[bot]")], a, True),
@@ -291,6 +291,7 @@ class TestRules(unittest.TestCase):
             "viewer, then trusted bot": (bot, h, True),
             "trusted actor, no files listed": ([(b, h, "push", "bot[bot]"), (g, b, "push", "me")], h, False),
             "trusted actor, a possibly truncated list": ([(g, h, "push", "bot[bot]")], h, False),
+            "trusted actor, 299 files": ([(g, b, "push", "bot[bot]")], b, True),
         }
         for name, (entries, head, want) in cases.items():
             with self.subTest(name):
@@ -868,14 +869,24 @@ class Next(NextBase):
         self.assertLess(self.calls.index(activity), self.calls.index(arm))
 
     def test_trusted_pusher_regated(self):
-        self.live(automerge="off")
-        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
-        self.replies[f"git config --local --get-all {sh.TRUSTED_PUSHERS_KEY}"] = "app[bot]:catalog.json\nother[bot]:x\n"
-        self.activity((SHA, OTHER, "push", "app[bot]"))
-        self.replies[f"gh api repos/o/r/compare/{SHA}...{OTHER} -q ["] = json.dumps(["catalog.json"])
-        self.replies[COMPARE] = "ahead\n"
-        self.assertEqual(self.main("next")[1]["action"], "next")
-        self.assertEqual(sh.load_state(7)["gated_head"], OTHER)
+        touched = {
+            "allowed path": ([{"filename": "lock.json", "status": "modified"}], None),
+            "renamed in from a disallowed path": ([{"filename": "catalog.json", "previous_filename": "src/app.py", "status": "renamed"}], "STOP_FOREIGN_HEAD"),
+        }
+        for name, (files, stop) in touched.items():
+            with self.subTest(name):
+                self.live(automerge="off")
+                self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
+                self.replies[f"git config --local --get-all {sh.TRUSTED_PUSHERS_KEY}"] = "bot[bot]:catalog.json\nbot[bot]:lock.json\n"
+                self.activity((SHA, OTHER, "push", "bot[bot]"))
+                self.replies[f"gh api repos/o/r/compare/{SHA}...{OTHER}"] = json.dumps({"status": "ahead", "total_commits": 1, "files": files})
+                self.replies[COMPARE] = "ahead\n"
+                out = self.main("next")[1]
+                if stop:
+                    self.assert_stop(out, stop)
+                else:
+                    self.assertEqual(out["action"], "next")
+                    self.assertEqual(sh.load_state(7)["gated_head"], OTHER)
 
     def test_trusted_pushers_malformed_stops(self):
         self.live(automerge="off")

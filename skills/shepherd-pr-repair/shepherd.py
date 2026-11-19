@@ -719,7 +719,7 @@ def local_work_guard(head):
 
 
 def adopt(state, head):
-    """A head this run's repair, or the viewer from another session, pushed."""
+    """A head this run's repair, the viewer from another session, or an allowlisted actor pushed."""
     state.update(gated_head=head, automerge="off-by-run", rerun=0, infra=[], pending=None)
 
 
@@ -788,9 +788,9 @@ def own_push(state, snap, head):
     path = f"{repo}/activity?ref=refs/heads/{state['branch']}&per_page=100&direction=desc"  # newest first, as `rules.own_push` reads it
     entries = [line.split() for line in run(["gh", "api", "--paginate", path, "-q", ACTIVITY_JQ]).stdout.splitlines()]
 
-    def changed(before, after):  # JSON keeps a newline in a name whole; previous_filename: a rename out of a path touches it
-        jq = "[.files // [] | .[] | .filename, (.previous_filename // empty)]"
-        return json.loads(run(["gh", "api", f"{repo}/compare/{before}...{after}", "-q", jq]).stdout)
+    def changed(before, after):
+        files = json.loads(run(["gh", "api", f"{repo}/compare/{before}...{after}"]).stdout).get("files") or []
+        return [n for f in files for n in (f["filename"], f.get("previous_filename")) if n]  # previous_filename: a rename out of a path touches it
 
     mine = rules.own_push(entries, head, state["gated_head"], snap["viewer"], trusted_pushers(), changed)
     if not mine:
