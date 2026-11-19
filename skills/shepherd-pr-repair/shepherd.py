@@ -48,6 +48,7 @@ import shepherd_rules as rules  # noqa: E402
 TIMEOUT_KEY = "kitchen-sink.shepherdTimeoutMinutes"
 CI_LOG_KEY = "kitchen-sink.ciLogCommand"
 CI_TRIGGER_KEY = "kitchen-sink.ciTriggerCommand"
+TRUSTED_PUSHERS_KEY = "kitchen-sink.shepherdTrustedPushers"
 CI_COMMAND_TIMEOUT = 300
 CODEX_LOOP = os.path.join(HERE, "..", "codex-review-loop", "codex_loop.py")
 CI_REMEDIATION = os.path.join(HERE, "ci_remediation.py")
@@ -167,12 +168,26 @@ def run(cmd, check=True, timeout=CALL_TIMEOUT, **kw):
     return proc
 
 
-def local_config(key):
-    """A `git config --local` key's value, or None when it is unset."""
-    proc = run(["git", "config", "--local", "--get", key], check=False)
+def local_config(key, multi=False):
+    """A `git config --local` key's value (with `multi`, the list of all its values), or None when it is unset."""
+    proc = run(["git", "config", "--local", "--get-all" if multi else "--get", key], check=False)
     if proc.returncode not in (0, 1):  # 1 means the key is unset
         raise GhError(proc.args, proc.returncode, proc.stderr)
-    return proc.stdout.strip() if proc.returncode == 0 else None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.splitlines() if multi else proc.stdout.strip()
+
+
+def trusted_pushers():
+    """`TRUSTED_PUSHERS_KEY` as {login: {path, ...}}, each value `<login>:<path>[,<path>...]`; a terminal stop when one is malformed."""
+    trusted = {}
+    for value in local_config(TRUSTED_PUSHERS_KEY, multi=True) or []:
+        login, sep, paths = value.partition(":")  # the first `:` only
+        parts = [login, *paths.split(",")]
+        if not sep or any(not p or p != p.strip() for p in parts):
+            raise Stop("STOP_TRUSTED_PUSHERS", True, [f"{TRUSTED_PUSHERS_KEY} has a value that isn't `<login>:<path>[,<path>...]`: {value!r}; fix or unset the key."])
+        trusted.setdefault(login, set()).update(parts[1:])
+    return trusted
 
 
 def ci_argv(key):
@@ -752,7 +767,7 @@ def step1_checks(state, snap):
             raise Resumable()  # the activity log lags the push
         if not mine:
             raise Stop("STOP_FOREIGN_HEAD", True, [f"Someone else pushed {head}; decide whether to gate it, then re-run /shepherd-pr."])
-        adopt(state, head)  # the viewer's push from another session: the rest of this pass gates it
+        adopt(state, head)  # the viewer's or an allowlisted actor's push: the rest of this pass gates it
     armed = pr["autoMergeRequest"] is not None
     if state["automerge"] == "on" and not armed and not queue["isInMergeQueue"]:
         if find_removal(state, snap)[0] is None:
@@ -766,12 +781,18 @@ def step1_checks(state, snap):
 
 def own_push(state, snap, head):
     """The branch's activity log, judged by `rules.own_push`: its actor is server-recorded, unlike a commit's author,
-    and anything authenticating as the viewer counts as the viewer. A positive chain must also pass GitHub's compare,
+    and anything authenticating as the viewer counts as the viewer; an actor in `TRUSTED_PUSHERS_KEY` counts too when
+    GitHub's compare shows its push touched only that actor's paths. A positive chain must also pass GitHub's compare,
     so the head provably descends from the gated SHA."""
     repo = f"repos/{state['owner']}/{state['repo']}"
     path = f"{repo}/activity?ref=refs/heads/{state['branch']}&per_page=100&direction=desc"  # newest first, as `rules.own_push` reads it
     entries = [line.split() for line in run(["gh", "api", "--paginate", path, "-q", ACTIVITY_JQ]).stdout.splitlines()]
-    mine = rules.own_push(entries, head, state["gated_head"], snap["viewer"])
+
+    def changed(before, after):  # JSON keeps a newline in a name whole; previous_filename: a rename out of a path touches it
+        jq = "[.files // [] | .[] | .filename, (.previous_filename // empty)]"
+        return json.loads(run(["gh", "api", f"{repo}/compare/{before}...{after}", "-q", jq]).stdout)
+
+    mine = rules.own_push(entries, head, state["gated_head"], snap["viewer"], trusted_pushers(), changed)
     if not mine:
         return mine  # None: the log lags; False: foreign
     return run(["gh", "api", f"{repo}/compare/{state['gated_head']}...{head}", "-q", ".status"]).stdout.strip() == "ahead"
@@ -1029,6 +1050,8 @@ def write_summary(state, snap):
     for key in (CI_LOG_KEY, CI_TRIGGER_KEY):  # shown each head for the record: a value planted in the local config is seen
         value = local_config(key)
         lines += [f"{key} (configured, runs automatically):", fence(value)] if value is not None else [f"{key}: (not set)"]
+    pushers = local_config(TRUSTED_PUSHERS_KEY, multi=True)  # for the record too: these actors' pushes are re-gated
+    lines += [f"{TRUSTED_PUSHERS_KEY} (configured):", fence("\n".join(pushers))] if pushers else [f"{TRUSTED_PUSHERS_KEY}: (not set)"]
     if diff.returncode != 0:
         lines += ["`gh pr diff` failed, so the list above is incomplete:", fence(diff.stderr)]
     if pr["isDraft"]:

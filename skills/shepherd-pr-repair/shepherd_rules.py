@@ -163,17 +163,27 @@ def reread_outcome(pr, checks, gated_sha, ejected):
     return "ejected" if ejected else "continue"
 
 
-def own_push(entries, head, gated_sha, viewer):
-    """Whether `head` is only the viewer's pushes on top of `gated_sha`; None while the log's newest entry isn't `head`.
+MAX_COMPARE_FILES = 300  # GitHub's compare lists at most 300 files, so a list that long may be truncated
+
+
+def own_push(entries, head, gated_sha, viewer, trusted=(), changed=None):
+    """Whether `head` is only fast-forward pushes on top of `gated_sha` by the viewer or a trusted actor; None while the
+    log's newest entry isn't `head`.
 
     `entries` are the branch's (before, after, activity_type, actor) newest first. Each link is sought only among
-    entries older than the last, so a SHA that recurs can't skip a foreign force-push between its two appearances."""
+    entries older than the last, so a SHA that recurs can't skip a foreign force-push between its two appearances.
+    `trusted` maps a login to the paths it may push; `changed(before, after)` lists a push's files, and a trusted
+    actor's link passes only when that list is non-empty, not possibly truncated, and within its paths."""
     if not entries or entries[0][1] != head:
         return None  # an older entry for `head` may predate a removal and a foreign re-push not logged yet
     i = 0
     while True:
-        before, _, kind, actor = entries[i]
-        if kind != "push" or actor != viewer:  # GitHub logs any non-fast-forward update as force_push
+        before, after, kind, actor = entries[i]
+        if kind != "push":  # GitHub logs any non-fast-forward update as force_push
+            return False
+        if actor != viewer and not (
+            actor in trusted and 0 < len(files := changed(before, after)) < MAX_COMPARE_FILES and set(files) <= trusted[actor]
+        ):
             return False
         if before == gated_sha:
             return True

@@ -280,6 +280,21 @@ class TestRules(unittest.TestCase):
         for name, (entries, want) in cases.items():
             with self.subTest(name):
                 self.assertIs(rules.own_push(entries, h, g, "me"), want)
+        trusted = {"bot[bot]": {"catalog.json", "lock.json"}}
+        files = {(g, a): ["catalog.json"], (a, h): ["catalog.json", "src/x.py"], (b, h): [], (g, h): ["lock.json"] * 300}
+        bot = [(a, h, "push", "me"), (g, a, "push", "bot[bot]")]
+        cases = {
+            "trusted actor, allowed paths": ([(g, a, "push", "bot[bot]")], a, True),
+            "trusted actor, another path": ([(a, h, "push", "bot[bot]"), (g, a, "push", "me")], h, False),
+            "trusted actor force-pushes": ([(g, a, "force_push", "bot[bot]")], a, False),
+            "untrusted bot": ([(g, a, "push", "other[bot]")], a, False),
+            "viewer, then trusted bot": (bot, h, True),
+            "trusted actor, no files listed": ([(b, h, "push", "bot[bot]"), (g, b, "push", "me")], h, False),
+            "trusted actor, a possibly truncated list": ([(g, h, "push", "bot[bot]")], h, False),
+        }
+        for name, (entries, head, want) in cases.items():
+            with self.subTest(name):
+                self.assertIs(rules.own_push(entries, head, g, "me", trusted, lambda x, y: files[x, y]), want)
 
     def test_queue_deadline(self):
         self.assertEqual(rules.queue_deadline(100, 200, True, 60), 1160)
@@ -851,6 +866,26 @@ class Next(NextBase):
         activity = next(c for c in self.calls if c.startswith(ACTIVITY))
         self.assertLess(self.calls.index(DISABLE), self.calls.index(activity))
         self.assertLess(self.calls.index(activity), self.calls.index(arm))
+
+    def test_trusted_pusher_regated(self):
+        self.live(automerge="off")
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
+        self.replies[f"git config --local --get-all {sh.TRUSTED_PUSHERS_KEY}"] = "app[bot]:catalog.json\nother[bot]:x\n"
+        self.activity((SHA, OTHER, "push", "app[bot]"))
+        self.replies[f"gh api repos/o/r/compare/{SHA}...{OTHER} -q ["] = json.dumps(["catalog.json"])
+        self.replies[COMPARE] = "ahead\n"
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(sh.load_state(7)["gated_head"], OTHER)
+
+    def test_trusted_pushers_malformed_stops(self):
+        self.live(automerge="off")
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, autoMergeRequest=None)
+        self.activity((SHA, OTHER, "push", "app[bot]"))
+        for value in ("app[bot]", ":a", "app[bot]:a,", "app[bot]: a", " app[bot]:a"):
+            with self.subTest(value):
+                self.live(automerge="off")
+                self.replies[f"git config --local --get-all {sh.TRUSTED_PUSHERS_KEY}"] = value + "\n"
+                self.assert_stop(self.main("next")[1], "STOP_TRUSTED_PUSHERS")
 
     def test_own_push_chain_that_diverged_is_foreign(self):
         self.live()
