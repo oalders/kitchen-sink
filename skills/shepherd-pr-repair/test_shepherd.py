@@ -2284,7 +2284,7 @@ def checks(*cs):
 
 
 def gh_run(id=11, attempt=1, conclusion="failure", **over):
-    r = {"databaseId": id, "attempt": attempt, "conclusion": conclusion, "name": "CI", "event": "pull_request", "headSha": SHA}
+    r = {"databaseId": id, "attempt": attempt, "conclusion": conclusion, "name": "CI", "event": "pull_request", "headSha": SHA, "workflowDatabaseId": 5}
     r.update(over)
     return r
 
@@ -2296,6 +2296,7 @@ DISABLE = "gh pr merge 7 --disable-auto"
 RUNS = f"gh run list --commit {SHA}"
 STATUS = f"gh api --paginate repos/o/r/commits/{SHA}/status"
 JOBS = "gh run view 11 --json jobs"
+BASE = "gh run list --branch=main --workflow=5"
 
 
 class Watch(NextBase):
@@ -2317,6 +2318,7 @@ class Watch(NextBase):
                 "gh run view 11 --log-failed": self.LOG,
                 "gh run rerun": "",
                 MATCH: (1, json.dumps({"status": "none"}), ""),
+                BASE: "[]",
             }
         )
 
@@ -2367,6 +2369,30 @@ class Watch(NextBase):
         state = sh.load_state(7)
         self.assertEqual((state["repairs"], state["automerge"], state["pending"]["cause"]), (1, "off-by-run", "checks"))
         self.assertEqual(self.reruns(), [])
+
+    def test_watch_failed_check_base_red_stops(self):
+        self.replies["gh pr checks 7"] = FAILED
+        self.replies[BASE] = json.dumps([{"conclusion": "failure", "databaseId": 99}])
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_BASE_RED")
+        state = sh.load_state(7)
+        self.assertEqual((state["repairs"], state["pending"]), (0, None))
+        report = self.report(out)
+        self.assertIn("run 99", report)
+        self.assertIn("```\nCI\n```", report)
+
+    def test_watch_failed_check_base_not_red_repairs(self):
+        self.replies["gh pr checks 7"] = FAILED
+        for name, reply in (
+            ("green", json.dumps([{"conclusion": "success", "databaseId": 99}])),
+            ("in progress", json.dumps([{"conclusion": "", "databaseId": 99}])),
+            ("no run", "[]"),
+            ("lookup failed", (1, "", "err")),
+        ):
+            with self.subTest(name):
+                self.live(shown=SHA)
+                self.replies[BASE] = reply
+                self.assertEqual(self.main("next")[1]["action"], "repair")
 
     def late_watch(self, reply, **over):
         self.live(**{"shown": SHA, "codex_passed": [SHA], "codex": late_gate(), **over})
