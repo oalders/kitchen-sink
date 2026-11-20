@@ -334,8 +334,9 @@ class TestRules(unittest.TestCase):
         self.assertEqual(rules.reread_outcome({"state": "OPEN", "headRefOid": SHA}, [{"bucket": "pass"}], SHA, False), "continue")
 
     def test_in_queue_watch(self):
-        pr = {"state": "OPEN", "mergeStateStatus": "CLEAN", "isInMergeQueue": True}
+        pr = {"state": "OPEN", "mergeStateStatus": "CLEAN", "isInMergeQueue": True, "reviewDecision": None}
         self.assertTrue(rules.in_queue_watch(pr, [{"bucket": "pass"}]))
+        self.assertFalse(rules.in_queue_watch({**pr, "reviewDecision": "CHANGES_REQUESTED"}, []))
         self.assertFalse(rules.in_queue_watch(pr, [{"bucket": "pending"}]))
         self.assertFalse(rules.in_queue_watch({**pr, "mergeStateStatus": "DIRTY"}, []))
         self.assertTrue(rules.in_queue_watch({**pr, "mergeStateStatus": "BEHIND"}, []))
@@ -935,7 +936,7 @@ class Next(NextBase):
         self.assert_stop(out, "STOP_DEADLINE_FOREIGN_HEAD")
         self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
         self.live(deadline=NOW - 1)
-        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, reviewDecision=next(iter(sh.rules.REVIEW_BLOCKED)))
+        self.replies["gh pr view 7"] = pr_full(headRefOid=OTHER, reviewDecision="REVIEW_REQUIRED")
         out = self.main("next")[1]
         self.assert_stop(out, "STOP_DEADLINE_REVIEW")  # the review hint names the code; the foreign head still reports
         self.assertIn(f"The PR's head {OTHER} is a push this run could not attribute to you", self.report(out))
@@ -2841,9 +2842,9 @@ class Watch(NextBase):
 
     def test_changes_requested_stops_at_once(self):
         self.live(shown=SHA, automerge="off")
-        self.replies["gh pr view 7"] = pr_full(reviewDecision="CHANGES_REQUESTED", autoMergeRequest=None)
+        self.replies["gh pr view 7"] = pr_full(reviewDecision="CHANGES_REQUESTED", autoMergeRequest=None, mergeStateStatus="BEHIND")
         out = self.main("next")[1]
-        self.assert_stop(out, "STOP_CHANGES_REQUESTED")
+        self.assert_stop(out, "STOP_CHANGES_REQUESTED")  # before step 1's rebase
         self.assertEqual((out["automerge"], out["queued"]), ("off", False))
         self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)
         self.assertFalse([c for c in self.calls if c.startswith("gh pr merge")])  # auto-merge is not enabled
@@ -2853,7 +2854,16 @@ class Watch(NextBase):
         self.replies["gh pr view 7"] = [pr_full(), pr_full(reviewDecision="CHANGES_REQUESTED")]
         out = self.main("next")[1]
         self.assert_stop(out, "STOP_CHANGES_REQUESTED")
+        self.assertEqual((out["automerge"], out["queued"]), ("on", False))
         self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)
+
+    def test_changes_requested_while_queued_stops(self):
+        self.replies["gh api graphql"] = queue(queued=True)
+        self.replies["gh pr view 7"] = [pr_full(), pr_full(reviewDecision="CHANGES_REQUESTED")]
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_CHANGES_REQUESTED")
+        self.assertEqual((out["automerge"], out["queued"]), ("on", True))
+        self.assertNotIn("sleep 120", self.calls)  # no wait for the queue watch's deadline
 
     def test_repair_cap(self):
         self.live(shown=SHA, repairs=3)
