@@ -2852,17 +2852,21 @@ class Watch(NextBase):
     def test_changes_requested_mid_watch_stops(self):
         self.replies["gh pr checks 7"] = [PENDING, checks(check())]
         self.replies["gh pr view 7"] = [pr_full(), pr_full(reviewDecision="CHANGES_REQUESTED")]
+        self.replies["gh pr merge 7 --disable-auto"] = ""
         out = self.main("next")[1]
+        self.assertIn("gh pr merge 7 --disable-auto", self.calls)
         self.assert_stop(out, "STOP_CHANGES_REQUESTED")
-        self.assertEqual((out["automerge"], out["queued"]), ("on", False))
+        self.assertEqual((out["automerge"], out["queued"]), ("off", False))
         self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)
 
     def test_changes_requested_while_queued_stops(self):
         self.replies["gh api graphql"] = queue(queued=True)
         self.replies["gh pr view 7"] = [pr_full(), pr_full(reviewDecision="CHANGES_REQUESTED")]
+        self.replies["gh pr merge 7 --disable-auto"] = ""
         out = self.main("next")[1]
+        self.assertIn("gh pr merge 7 --disable-auto", self.calls)
         self.assert_stop(out, "STOP_CHANGES_REQUESTED")
-        self.assertEqual((out["automerge"], out["queued"]), ("on", True))
+        self.assertEqual((out["automerge"], out["queued"]), ("off", True))
         self.assertNotIn("sleep 120", self.calls)  # no wait for the queue watch's deadline
 
     def test_repair_cap(self):

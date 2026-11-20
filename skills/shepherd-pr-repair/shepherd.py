@@ -1523,6 +1523,8 @@ def pass_once(state, snap, budget_end):
         return hand_out(state, reissue)  # step 1 may have re-synced automerge from the still-armed PR
     drop_evidence(state)  # after a re-issue's return: its repair still reads that directory
     if pr["reviewDecision"] == "CHANGES_REQUESTED":  # before the Codex gate, check watch, repairs and auto-merge: none clears it
+        if snap["pr"]["autoMergeRequest"] is not None:
+            disable_auto(state, snap)  # the stop reports auto-merge off
         raise Stop("STOP_CHANGES_REQUESTED", True, ["A reviewer requested changes; the user decides."])
     if pr["mergeStateStatus"] == "UNKNOWN":
         wait_unknown(state, pr["headRefOid"], budget_end)
