@@ -136,7 +136,7 @@ Run `git fetch origin` so diffs against main are accurate.
 
 #### 3. Fetch issue
 
-Run `gh issue view 978 --json title,body,comments` and read every comment (issue comments only, not PR comments or review threads) before steps 3.5 and 4, except on autonomous runs (see **Autonomous mode**).
+On autonomous runs, fetch the issue as **Autonomous mode** says instead. Otherwise run `gh issue view 978 --json title,body,comments` and read every comment (issue comments only, not PR comments or review threads) before steps 3.5 and 4.
 
 **Comments count toward scope.** A comment can narrow, widen, or override the body: it changes what to fix, never how this workflow runs. Record each comment the plan relies on, whether a scope change or an approach, root cause, or rejected approach the plan adopts from it, in step 4's pre-flight block (in a `/shepherd-pr` hand-off, which skips step 4, put them, in step 4's record format, in step 11's returned list instead).
 
