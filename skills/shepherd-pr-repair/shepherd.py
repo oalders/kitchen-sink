@@ -1350,8 +1350,8 @@ OPEN_STOPS = {
 def open_action(state, snap):
     """Step 5 item 5."""
     outcome = rules.open_outcome({**snap["pr"], **snap["queue"]}, snap["checks"], state["automerge"])
-    if outcome == "rebase":
-        return None  # the next pass's step 1 rebases it, without waiting
+    if outcome in ("rebase", "changes-requested"):
+        return None  # the next pass rebases it, or stops on the requested change, without waiting
     if outcome in ("pending", "resumable-off-by-run", "review-required"):  # each clears on its own: checks finish, step 4 re-arms, a reviewer acts
         raise Resumable()
     code, message = OPEN_STOPS[outcome]
@@ -1522,6 +1522,8 @@ def pass_once(state, snap, budget_end):
     if reissue:
         return hand_out(state, reissue)  # step 1 may have re-synced automerge from the still-armed PR
     drop_evidence(state)  # after a re-issue's return: its repair still reads that directory
+    if pr["reviewDecision"] == "CHANGES_REQUESTED":  # before the Codex gate, check watch, repairs and auto-merge: none clears it
+        raise Stop("STOP_CHANGES_REQUESTED", True, ["A reviewer requested changes; the user decides."])
     if pr["mergeStateStatus"] == "UNKNOWN":
         wait_unknown(state, pr["headRefOid"], budget_end)
         return None

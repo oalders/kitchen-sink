@@ -352,6 +352,7 @@ class TestRules(unittest.TestCase):
             return base
 
         out = rules.open_outcome
+        self.assertEqual(out(pr(reviewDecision="CHANGES_REQUESTED", mergeStateStatus="DIRTY"), [], "on"), "changes-requested")
         self.assertEqual(out(pr(reviewDecision="REVIEW_REQUIRED", mergeStateStatus="DIRTY"), [], "on"), "review-required")
         self.assertEqual(out(pr(mergeStateStatus="DIRTY", isInMergeQueue=True), [], "on"), "dirty-queued")
         self.assertEqual(out(pr(mergeStateStatus="BEHIND"), [], "on"), "rebase")
@@ -2820,26 +2821,39 @@ class Watch(NextBase):
         self.assertEqual((out["automerge"], out["queued"]), ("off", False))
 
     def test_open_outcomes(self):
-        for decision in sh.rules.REVIEW_BLOCKED:
-            with self.subTest(decision):
-                self.setUp()
-                self.replies["gh pr view 7"] = pr_full(reviewDecision=decision)
-                self.assertEqual(self.main("next")[1]["action"], "next")
-                self.assertEqual(self.calls.count(f"sleep {sh.RESUMABLE_WAIT}"), sh.BUDGET // sh.RESUMABLE_WAIT)  # waits for a reviewer until the budget cuts a wait
-                self.assertTrue(sh.load_state(7)["wait_first"])
-                self.assertEqual(sh.load_state(7)["automerge"], "on")
-                self.clock = NOW + 3600
-                self.calls.clear()
-                out = self.main("next")[1]
-                self.assert_stop(out, "STOP_DEADLINE_REVIEW")
-                self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)  # past the deadline, wait_first doesn't wait
-                self.assertIn("The PR still needs a review decision", self.report(out))
-                self.assertIn("#7 head c5bf4f3", self.report(out))
+        self.replies["gh pr view 7"] = pr_full(reviewDecision="REVIEW_REQUIRED")
+        self.assertEqual(self.main("next")[1]["action"], "next")
+        self.assertEqual(self.calls.count(f"sleep {sh.RESUMABLE_WAIT}"), sh.BUDGET // sh.RESUMABLE_WAIT)  # waits for a reviewer until the budget cuts a wait
+        self.assertTrue(sh.load_state(7)["wait_first"])
+        self.assertEqual(sh.load_state(7)["automerge"], "on")
+        self.clock = NOW + 3600
+        self.calls.clear()
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_DEADLINE_REVIEW")
+        self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)  # past the deadline, wait_first doesn't wait
+        self.assertIn("The PR still needs a review decision", self.report(out))
+        self.assertIn("#7 head c5bf4f3", self.report(out))
         self.setUp()
         self.replies["gh pr checks 7"] = [PENDING, checks(check())]
         self.replies["gh pr view 7"] = [pr_full(), pr_full(mergeStateStatus="BEHIND")]
         self.assertEqual(self.main("next")[1], {**self.repair("rebase"), "status": mock.ANY})  # step 1 rebases, no wait
         self.assertNotIn("sleep 120", self.calls)
+
+    def test_changes_requested_stops_at_once(self):
+        self.live(shown=SHA, automerge="off")
+        self.replies["gh pr view 7"] = pr_full(reviewDecision="CHANGES_REQUESTED", autoMergeRequest=None)
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_CHANGES_REQUESTED")
+        self.assertEqual((out["automerge"], out["queued"]), ("off", False))
+        self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)
+        self.assertFalse([c for c in self.calls if c.startswith("gh pr merge")])  # auto-merge is not enabled
+
+    def test_changes_requested_mid_watch_stops(self):
+        self.replies["gh pr checks 7"] = [PENDING, checks(check())]
+        self.replies["gh pr view 7"] = [pr_full(), pr_full(reviewDecision="CHANGES_REQUESTED")]
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_CHANGES_REQUESTED")
+        self.assertNotIn(f"sleep {sh.RESUMABLE_WAIT}", self.calls)
 
     def test_repair_cap(self):
         self.live(shown=SHA, repairs=3)

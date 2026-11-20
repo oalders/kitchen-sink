@@ -204,6 +204,8 @@ def in_queue_watch(pr, checks):
 def open_outcome(pr, checks, automerge):
     """Step 5 item 5, first match wins."""
     queued = pr["isInMergeQueue"]
+    if pr["reviewDecision"] == "CHANGES_REQUESTED":
+        return "changes-requested"
     if pr["reviewDecision"] in REVIEW_BLOCKED:
         return "review-required"
     if pr["mergeStateStatus"] == "DIRTY" and queued:
