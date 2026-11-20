@@ -68,7 +68,7 @@ MATCH_TIMEOUT = 30  # the remediation regexes are user-supplied
 LOG_LINES, LOG_BYTES = 300, 65536  # an evidence log's tail
 REPORT_LOG_LINES = 20
 FAILED_RUNS = ("failure", "timed_out", "startup_failure")  # runs with a `--log-failed`; cancelled-only queue evidence never passes
-RUN_FIELDS = "databaseId,attempt,conclusion,name,event,headSha"
+RUN_FIELDS = "databaseId,attempt,conclusion,name,event,headSha,workflowDatabaseId"
 JOBS_JQ = '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .databaseId'
 REGISTER_WAIT = 60  # checks register late
 LATE_CHECK = 60  # the watch's look for a late Codex review of a head passed by codexTimeoutAction=proceed
@@ -1407,7 +1407,26 @@ def checks_failed(state, snap):
         state["repairs"] += 1
         state["infra"].append(name)  # judge_logs passed it through rules.valid_name: the status line prints it
         raise Resumable()
+    base_red(state, failed, runs)
     return repair_action(state, "checks", out)
+
+
+def base_red(state, failed, runs):
+    """Stop instead of a repair when the default branch's latest push run of a failing check's workflow failed too."""
+    workflows = {c["workflow"] for c in failed}
+    ids = {str(r["workflowDatabaseId"]): r["name"] for r in runs if r["name"] in workflows and r["conclusion"] in FAILED_RUNS}
+    red = []
+    for wid, name in ids.items():
+        if not rules.valid_id(wid):
+            continue
+        cmd = ["gh", "run", "list", f"--branch={state['default']}", f"--workflow={wid}", "--event=push", "--limit=1"]
+        latest = parse_runs(lookup([*cmd, "--json", "conclusion,databaseId"]), ("conclusion", "databaseId"))
+        # the latest push run literally: one still in progress (empty conclusion) doesn't stop
+        if latest and latest[0]["conclusion"] in FAILED_RUNS and rules.valid_id(str(latest[0]["databaseId"])):
+            red += [f"Workflow (untrusted), failed on {state['default']} in run {latest[0]['databaseId']}:", fence(name)]
+    if red:
+        red.append(f"Re-run /shepherd-pr once {state['default']} is green; if this PR is meant to fix that, repair it by hand.")
+        raise Stop("STOP_BASE_RED", True, red)
 
 
 def rerun(ids):

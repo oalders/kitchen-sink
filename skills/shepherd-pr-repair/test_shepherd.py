@@ -2284,7 +2284,7 @@ def checks(*cs):
 
 
 def gh_run(id=11, attempt=1, conclusion="failure", **over):
-    r = {"databaseId": id, "attempt": attempt, "conclusion": conclusion, "name": "CI", "event": "pull_request", "headSha": SHA}
+    r = {"databaseId": id, "attempt": attempt, "conclusion": conclusion, "name": "CI", "event": "pull_request", "headSha": SHA, "workflowDatabaseId": 5}
     r.update(over)
     return r
 
@@ -2296,6 +2296,7 @@ DISABLE = "gh pr merge 7 --disable-auto"
 RUNS = f"gh run list --commit {SHA}"
 STATUS = f"gh api --paginate repos/o/r/commits/{SHA}/status"
 JOBS = "gh run view 11 --json jobs"
+BASE = "gh run list --branch=main --workflow=5"
 
 
 class Watch(NextBase):
@@ -2317,6 +2318,7 @@ class Watch(NextBase):
                 "gh run view 11 --log-failed": self.LOG,
                 "gh run rerun": "",
                 MATCH: (1, json.dumps({"status": "none"}), ""),
+                BASE: "[]",
             }
         )
 
@@ -2367,6 +2369,43 @@ class Watch(NextBase):
         state = sh.load_state(7)
         self.assertEqual((state["repairs"], state["automerge"], state["pending"]["cause"]), (1, "off-by-run", "checks"))
         self.assertEqual(self.reruns(), [])
+
+    def test_watch_failed_check_base_red_stops(self):
+        lint = {**check("fail", "FAILURE"), "name": "lint", "workflow": "Lint"}
+        self.replies["gh pr checks 7"] = checks(lint, check("fail", "FAILURE"))  # the red one second
+        self.replies[RUNS] = json.dumps([gh_run(), gh_run(id=12, name="Lint", workflowDatabaseId=6)])
+        self.replies["gh run view 12 --log-failed"] = self.LOG
+        self.replies[BASE] = json.dumps([{"conclusion": "failure", "databaseId": 99}])  # red on CI only
+        self.replies["gh run list --branch=main --workflow=6"] = json.dumps([{"conclusion": "success", "databaseId": 98}])
+        out = self.main("next")[1]
+        self.assert_stop(out, "STOP_BASE_RED")
+        self.assertIn(f"{BASE} --event=push --limit=1 --json conclusion,databaseId", self.calls)
+        state = sh.load_state(7)
+        self.assertEqual((state["repairs"], state["pending"]), (0, None))
+        report = self.report(out)
+        self.assertIn("run 99", report)
+        self.assertIn("```\nCI\n```", report)
+        self.assertNotIn("Lint", report)
+
+    def test_watch_failed_check_base_not_red_repairs(self):
+        red = json.dumps([{"conclusion": "failure", "databaseId": 99}])
+        for name, reply in (
+            ("green", json.dumps([{"conclusion": "success", "databaseId": 99}])),
+            ("in progress", json.dumps([{"conclusion": "", "databaseId": 99}])),
+            ("no run", "[]"),
+            ("lookup failed", (1, "", "err")),
+            ("red only for a workflow with no failing check", "[]"),
+        ):
+            with self.subTest(name):
+                self.replies["gh pr checks 7"] = FAILED
+                self.replies[BASE] = reply
+                if name.startswith("red only"):
+                    self.replies[RUNS] = json.dumps([gh_run(), gh_run(id=12, name="Other", workflowDatabaseId=7)])
+                    self.replies["gh run view 12 --log-failed"] = self.LOG
+                    self.replies["gh run list --branch=main --workflow=7"] = red
+                self.assertEqual(self.main("next")[1]["action"], "repair")
+                self.assertTrue([c for c in self.calls if c.startswith(BASE)])
+                self.setUp()
 
     def late_watch(self, reply, **over):
         self.live(**{"shown": SHA, "codex_passed": [SHA], "codex": late_gate(), **over})
