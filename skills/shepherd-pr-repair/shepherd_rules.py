@@ -196,6 +196,8 @@ def in_queue_watch(pr, checks):
     queued = pr["isInMergeQueue"]
     if pr["state"] != "OPEN" or pr["mergeStateStatus"] == "DIRTY" or _has(checks, "pending"):
         return False
+    if pr["reviewDecision"] == "CHANGES_REQUESTED":  # even when queued: the next pass stops on it
+        return False
     if pr["mergeStateStatus"] == "BEHIND" and not queued:
         return False
     return queued or (pr["autoMergeRequest"] is not None and pr["reviewDecision"] not in REVIEW_BLOCKED)
@@ -204,6 +206,8 @@ def in_queue_watch(pr, checks):
 def open_outcome(pr, checks, automerge):
     """Step 5 item 5, first match wins."""
     queued = pr["isInMergeQueue"]
+    if pr["reviewDecision"] == "CHANGES_REQUESTED":
+        return "changes-requested"
     if pr["reviewDecision"] in REVIEW_BLOCKED:
         return "review-required"
     if pr["mergeStateStatus"] == "DIRTY" and queued:
