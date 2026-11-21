@@ -171,7 +171,7 @@ When all reviewers have finished (dispatched or inline), produce a single consol
 - ...
 
 ## Pre-existing gaps (X total)
-- [security] Gap description [file:line]
+- [security] [Important] Gap description [file:line]
 
 ## Strengths
 - [Aggregated positive observations]
@@ -209,7 +209,7 @@ Same protocol as `/code-review-flow`:
   ```
 - Never self-approve (`event: "COMMENT"`)
 - Fix Critical and Important issues automatically; for diffs > 500 lines, file GitHub issues for Minor
-- Pre-existing gaps: file one GitHub issue per gap, once (don't re-file one filed in an earlier round); never fix it in-branch; it doesn't count toward a round's Critical/Important/Minor
+- Pre-existing gaps: never fix in-branch; they don't count toward a round's Critical/Important/Minor and stay out of the PR review post. On a PRIVATE repo (`gh repo view --json visibility -q .visibility`), file one issue per gap unless an open issue already covers it, following `/fix-gh-issue` step 10's follow-up rules; otherwise (PUBLIC/INTERNAL, or a failed check) report them to the user without filing, since a public issue would disclose an unpatched vulnerability.
 - Re-run the orchestrator on the new HEAD until clean
 
 ## Critical Rules
