@@ -170,6 +170,9 @@ When all reviewers have finished (dispatched or inline), produce a single consol
 ## Minor Issues (X total)
 - ...
 
+## Pre-existing gaps (X total)
+- [security] Gap description [file:line]
+
 ## Strengths
 - [Aggregated positive observations]
 
@@ -206,6 +209,7 @@ Same protocol as `/code-review-flow`:
   ```
 - Never self-approve (`event: "COMMENT"`)
 - Fix Critical and Important issues automatically; for diffs > 500 lines, file GitHub issues for Minor
+- Pre-existing gaps: file one GitHub issue per gap, once (don't re-file one filed in an earlier round); never fix it in-branch; it doesn't count toward a round's Critical/Important/Minor
 - Re-run the orchestrator on the new HEAD until clean
 
 ## Critical Rules
