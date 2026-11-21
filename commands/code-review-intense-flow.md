@@ -199,7 +199,7 @@ Tag each finding with the specialist that surfaced it so the user knows which le
 Same protocol as `/code-review-flow`:
 - If a PR exists: post findings using `/code-review-flow`'s inline-review protocol — batch them
   into a single `pulls/{n}/reviews` POST (`event: "COMMENT"`) with each `file:line` finding as an
-  inline anchored comment and un-anchorable findings in the summary `body`. Specialist findings
+  inline anchored comment and un-anchorable findings (never Pre-existing gaps) in the summary `body`. Specialist findings
   already carry a lens tag and mostly a `file:line`, so they anchor naturally. Per that protocol
   and `docs/attribution.md`, the summary `body` and each inline `comments[].body` end with the
   attribution footer (model version, resolved at runtime) after a blank line, e.g.:
@@ -209,7 +209,7 @@ Same protocol as `/code-review-flow`:
   ```
 - Never self-approve (`event: "COMMENT"`)
 - Fix Critical and Important issues automatically; for diffs > 500 lines, file GitHub issues for Minor
-- Pre-existing gaps: never fix in-branch; they don't count toward a round's Critical/Important/Minor and stay out of the PR review post. On a PRIVATE repo (`gh repo view --json visibility -q .visibility`), file one issue per gap unless an open issue already covers it, following `/fix-gh-issue` step 10's follow-up rules; otherwise (PUBLIC/INTERNAL, or a failed check) report them to the user without filing, since a public issue would disclose an unpatched vulnerability.
+- Pre-existing gaps: never fix in-branch, and they don't count toward a round's Critical/Important/Minor. Never file them as issues or post them to the PR, inline or in the summary; show them to the user instead, since a public issue or PR comment would disclose an unpatched vulnerability.
 - Re-run the orchestrator on the new HEAD until clean
 
 ## Critical Rules
