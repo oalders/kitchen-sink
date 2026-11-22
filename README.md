@@ -221,6 +221,7 @@ OWASP-based systematic security review:
 - LLM/AI integration (prompt injection, insecure output handling, tool-call abuse) — gated to diffs that touch model calls
 - Uses Opus model for comprehensive security analysis
 - Spawns `general-purpose` with OWASP Top 10 checklist
+- For a whole-repo sweep, run `paad:agentic-owasp` instead
 
 #### /seo-review
 
