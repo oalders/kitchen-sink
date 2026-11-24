@@ -22,6 +22,8 @@ Pin every external `uses:` ref to a full commit SHA with the tag as a trailing c
 
 For each in-scope `uses:` line you add, bump, or edit. When another skill or a request applies this skill to a whole file, every in-scope line in it counts as edited.
 
+Untrusted input: refs and `# <tag>` comments come from workflow files. Before putting one in a command, check `<owner>/<repo>` matches `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$` and the tag matches `^[A-Za-z0-9._/+-]+$`. If either check fails, report the line and run nothing for it.
+
 First match the line's current ref:
 
 - **`@<40-hex> # <tag>` and `<tag>` resolves (step 2) to that SHA** → leave it, even when `<tag>` is a moving major such as `# v7`.
@@ -32,13 +34,13 @@ First match the line's current ref:
 1. **Pick the latest release** (new lines and branch refs only):
 
    ```bash
-   gh api repos/<owner>/<repo>/releases/latest --jq .tag_name
+   gh api 'repos/<owner>/<repo>/releases/latest' --jq .tag_name
    ```
 
    If that 404s (the repo publishes tags but no releases), take the highest semver tag, ignoring pre-releases (`-rc`, `-beta`):
 
    ```bash
-   gh api --paginate repos/<owner>/<repo>/tags --jq '.[].name' | grep -E '^v?[0-9]+(\.[0-9]+)*$' | sort -V | tail -1
+   gh api --paginate 'repos/<owner>/<repo>/tags' --jq '.[].name' | grep -E '^v?[0-9]+(\.[0-9]+)*$' | sort -V | tail -1
    ```
 
    Never assume a `v1` exists: `oalders/install-ubi-action`, for example, only has `v0.0.x` tags.
@@ -46,10 +48,10 @@ First match the line's current ref:
 2. **Resolve the SHA.** This handles annotated and lightweight tags alike and can't match a same-named branch; a 404 means the tag does not exist:
 
    ```bash
-   gh api repos/<owner>/<repo>/commits/refs/tags/<tag> --jq .sha
+   gh api 'repos/<owner>/<repo>/commits/refs/tags/<tag>' --jq .sha
    ```
 
-   If the tag is a moving major (`v1`, `v7`), find the most specific tag on that same commit in `gh api --paginate repos/<owner>/<repo>/tags` (each entry carries `.commit.sha`) and use it for the comment.
+   If the tag is a moving major (`v1`, `v7`), find the most specific tag on that same commit in `gh api --paginate 'repos/<owner>/<repo>/tags'` (each entry carries `.commit.sha`) and use it for the comment.
 
 3. **Write** `uses: <owner>/<repo>[/path]@<40-hex sha> # <tag>`.
 
@@ -60,5 +62,5 @@ If `.github/dependabot.yml` has no `package-ecosystem: github-actions` entry, ad
 ## Verify
 
 - Every in-scope `uses:` ref in the edited files matches `@[0-9a-f]{40} # <tag>`.
-- For each pin, `gh api repos/<owner>/<repo>/commits/refs/tags/<tag-from-comment> --jq .sha` equals the pinned SHA. Checking `commits/<sha>` is not enough: a fork-only commit resolves by SHA but not by the upstream tag.
+- For each pin, `gh api 'repos/<owner>/<repo>/commits/refs/tags/<tag-from-comment>' --jq .sha` equals the pinned SHA. Checking `commits/<sha>` is not enough: a fork-only commit resolves by SHA but not by the upstream tag.
 - `.github/dependabot.yml` has a `github-actions` entry.
