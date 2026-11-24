@@ -325,7 +325,7 @@ test_macos:
    Exit early with "no Perl workflows found" if the set is empty.
 2. For each transform in order [1..8]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. Skip any file that is already conformant for this transform (idempotent no-op for that file).
+     b. Skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear
@@ -351,7 +351,7 @@ Suggested commit subjects:
 | 5 | `workflow: add concurrency block to cancel superseded runs` |
 | 6 | `workflow: install deps with setup-cpm + cpm install` |
 | 7 | `workflow: drop macOS/Windows tests for Perls < 5.24` |
-| 8 | `workflow: SHA-pin action refs` |
+| 8 | `workflow: SHA-pin action refs` (or `dependabot: add github-actions updates` when only `dependabot.yml` changes) |
 | timeouts | `workflow: set timeout-minutes on every job` |
 
 ## Default branch resolution

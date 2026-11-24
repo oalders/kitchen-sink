@@ -16,7 +16,7 @@ Pin every external `uses:` ref to a full commit SHA with the tag as a trailing c
 
 **Why:** a tag or branch can be moved to different code after you review it; a commit SHA cannot. The comment keeps the pin readable and lets Dependabot bump SHA and comment together.
 
-**Scope:** every action or reusable-workflow ref of the form `owner/repo[/path]@ref`, first-party `actions/*` included — there is no exemption. Local `./` refs and `docker://` refs are deliberately out of scope: the first is code in the same commit, the second is an image reference, not a git ref.
+**Scope:** every action or reusable-workflow ref of the form `owner/repo[/path]@ref`, first-party `actions/*` included — there is no exemption. Local `./` refs and `docker://` refs are deliberately out of scope: the first is code in the same commit, the second is an image reference, not a git ref, and its tag is mutable too, so this exclusion is a known residual risk, not a safe case.
 
 ## Algorithm
 
@@ -24,9 +24,9 @@ For each in-scope `uses:` line you add, bump, or edit. When another skill or a r
 
 First match the line's current ref:
 
-- **`@<40-hex> # <tag>` and `<tag>` resolves (step 2) to that SHA** → leave it.
+- **`@<40-hex> # <tag>` and `<tag>` resolves (step 2) to that SHA** → leave it, even when `<tag>` is a moving major such as `# v7`.
 - **A 40-hex SHA with no comment, or a comment whose tag doesn't resolve to it** → keep the SHA; comment it with the most specific tag on that commit from the step 2 `/tags` listing. If no tag points at it, report the line rather than guess.
-- **A branch (`@main`, `@master`)** → pin the latest release (step 1) and note the version change in the commit message.
+- **A branch (`@main`, `@master`)** → pin the latest release (steps 1 then 2) and note the version change in the commit message.
 - **A tag** → pin that tag; pinning is not a version bump. Go to step 2.
 
 1. **Pick the latest release** (new lines and branch refs only):
@@ -55,7 +55,7 @@ First match the line's current ref:
 
 ## Dependabot
 
-If `.github/dependabot.yml` has no `package-ecosystem: github-actions` entry, add one with `directory: /` and `schedule.interval: weekly` (create the file with `version: 2` and an `updates:` list if it does not exist), then apply `kitchen-sink:tune-dependabot-config` to add its groups and cooldown — follow its steps inline, since a subagent can't invoke slash commands. Without the entry, pinned SHAs never get bumped.
+If `.github/dependabot.yml` has no `package-ecosystem: github-actions` entry, add one with `directory: /` and `schedule.interval: weekly` (create the file with `version: 2` and an `updates:` list if it does not exist), then apply `kitchen-sink:tune-dependabot-config` to add its groups and cooldown — follow its steps inline, since a subagent can't invoke slash commands. Without the entry, pinned SHAs never get bumped. If the repo has composite actions in subdirectories (e.g. `.github/actions/*/action.yml`), the entry uses `directories:` listing `/` plus each of those directories instead of `directory: /`, so their pins get bumped too.
 
 ## Verify
 

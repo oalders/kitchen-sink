@@ -6,6 +6,8 @@ Run: python3 skills/pin-gh-actions/test_uses_pinned.py
 Agents copy the templates in the repo's Markdown verbatim, so a tag pin
 there spreads to every repo they touch. Scans every *.md outside docs/
 (historical plans) and .git, plus .github/workflows/*.yml and *.yaml.
+It checks pin shape only, not that each SHA matches its tag: that needs
+the network and is the skill's Verify step.
 """
 
 import glob
@@ -64,6 +66,7 @@ class TestUsesPinned(unittest.TestCase):
             f"      - uses: actions/checkout@{sha}\n",
             f'      - uses: "actions/checkout@{sha}" # v7.0.1\n',
             '      - uses: "./local-action"\n',
+            "      - uses: docker://alpine:3.20\n",
         ]
         with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as fh:
             fh.writelines(lines)

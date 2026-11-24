@@ -26,7 +26,7 @@ version: 1.8.0
 |---|---|---|
 | Migrate | Repo has `.tidyallrc`, `tidyall.ini`, or `[Test::TidyAll]` in `dist.ini` | All seven transforms apply |
 | Greenfield | Perl repo, no tidyall config, no `precious.toml` | T1 + T2 (consolidate any visible `perltidyrc`) + T5 + T6 + T7 |
-| Tune | `precious.toml` already exists | T1–T6 run as no-ops, surfacing drift between current config and canonical recipe; T7 still pins any unpinned `lint.yml` refs and adds the Dependabot entry if missing |
+| Tune | `precious.toml` already exists | T1–T6 run as no-ops, surfacing drift between current config and canonical recipe; T7 (skipped when `lint.yml` does not exist) still pins any unpinned `lint.yml` refs and adds the Dependabot entry if missing |
 | Typos-only | No Perl files, but `typos.toml` / `_typos.toml` / `.typos.toml` is present | T1 (typos block only) + T5 + T7; T2/T3/T4 are no-ops |
 
 ## Dispatch this skill to a subagent
@@ -573,7 +573,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 ### 7. SHA-pin `uses:` refs
 
-**What:** apply `kitchen-sink:pin-gh-actions` to the whole of `.github/workflows/lint.yml`, including its `.github/dependabot.yml` step; both files' edits go in this transform's one commit. Skip if T5 left no `lint.yml`.
+**What:** apply `kitchen-sink:pin-gh-actions` to the whole of `.github/workflows/lint.yml`, including its `.github/dependabot.yml` step; both files' edits go in this transform's one commit. Skip when `.github/workflows/lint.yml` does not exist.
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs its tag pins fixed, and a separate commit keeps that revertable.
 
