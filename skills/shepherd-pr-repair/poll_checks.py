@@ -12,7 +12,7 @@ and skipped checks are the failing ones); `PR_HEAD=` (on STALL, when the PR's he
 `VERDICT=GREEN|FAILED|STALL|TIMEOUT`. Exit 0, 1, 2 or 3 to match; 64 for a usage error.
 
 Env: POLL_INTERVAL (20), POLL_TIMEOUT (1780) and POLL_STALL_AFTER (300) seconds. POLL_REQUIRE_CHECK, a
-regex some check's name must match before GREEN, is env-only, for project monitor commands.
+regex some passing check's name must match before GREEN, is env-only, for project monitor commands.
 """
 
 import json
@@ -23,6 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import shepherd  # noqa: E402
+import shepherd_rules  # noqa: E402
 
 EXIT = {"GREEN": 0, "FAILED": 1, "STALL": 2, "TIMEOUT": 3}
 FAILED_STATES = ("STALE", "STARTUP_FAILURE")  # gh buckets these as pending, but they never finish
@@ -42,8 +43,8 @@ def snapshot(pr, head):
     args = ["pr", "view", pr, "--json", "headRefOid"]
     view = shepherd.gh_json(args)
     pr_head = view.get("headRefOid") if isinstance(view, dict) else None
-    if not isinstance(pr_head, str):  # a malformed reply is a blip like a non-zero exit: retried
-        raise shepherd.GhError(["gh", *args], 0, "reply has no headRefOid")
+    if not (isinstance(pr_head, str) and shepherd_rules.valid_sha(pr_head)):  # a blip like a non-zero exit: retried
+        raise shepherd.GhError(["gh", *args], 0, "reply has no valid headRefOid")
     return pr_head, (shepherd.read_checks(pr) if pr_head == head else [])
 
 
@@ -58,7 +59,7 @@ def verdict(checks, require):
         return None, [], [], False
     if not any(c["bucket"] == "pass" for c in checks):  # all cancelled or skipped: nothing ran green
         return "FAILED", checks, cancelled, True
-    if require and not any(require.search(c["name"]) for c in checks):
+    if require and not any(c["bucket"] == "pass" and require.search(c["name"]) for c in checks):
         return None, [], [], False
     return "GREEN", [], cancelled, bool(cancelled)
 
@@ -83,6 +84,7 @@ def poll(pr, head, interval, timeout, stall_after, require):
         if checks is not None:
             result, failing, cancelled, needs_attention = verdict(checks, require)
             if result:
+                # when nothing passed, failing already holds the cancelled checks: print each once
                 for c in failing + [c for c in cancelled if c not in failing]:
                     print(check_line(c))
                 if result == "FAILED":

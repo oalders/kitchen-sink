@@ -69,7 +69,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/codebase-health** | Systematic health check optimizing codebase for AI consumption—dead code, token waste, and discoverability |
 | **/fix-linter-warnings** | Linter busywork in bite-sized chunks—your robot's idea of a good time, not yours |
 | **/git-rebase** | Rebase without the cruel and unusual punishment of solving your own merge conflicts |
-| **/poll-ci** | Polls the current branch's PR checks for HEAD and reports pass/fail/in-progress (generic `gh` fallback for `/monitor-ci`) |
+| **/poll-ci** | Polls the current branch's PR checks for HEAD and reports the result (generic `gh` fallback for `/monitor-ci`) |
 
 ### Skills
 

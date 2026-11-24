@@ -54,9 +54,9 @@ class Poll(unittest.TestCase):
         os.environ.pop("POLL_REQUIRE_CHECK", None)
 
     def fake_run(self, cmd, check=True, **kw):
-        line = " ".join(cmd)
-        key = max((k for k in self.replies if line.startswith(k)), key=len, default=None)
-        self.assertIsNotNone(key, f"unexpected command: {line}")
+        cmdline = " ".join(cmd)
+        key = max((k for k in self.replies if cmdline.startswith(k)), key=len, default=None)
+        self.assertIsNotNone(key, f"unexpected command: {cmdline}")
         if key == CHECKS:
             self.assertIn("link", cmd[cmd.index("--json") + 1].split(","))
         reply = self.replies[key]
@@ -177,7 +177,7 @@ class Poll(unittest.TestCase):
         self.assertEqual(self.main(), (3, ["VERDICT=TIMEOUT"]))
 
     def test_malformed_pr_view_retried(self):
-        for bad in ("<html>", json.dumps({}), json.dumps([HEAD])):
+        for bad in ("<html>", json.dumps({}), json.dumps([HEAD]), json.dumps({"headRefOid": HEAD + "\nx"})):
             with self.subTest(bad):
                 self.replies["gh pr view 7"] = [bad, json.dumps({"headRefOid": HEAD})]
                 self.replies[CHECKS] = checks(check())
@@ -189,6 +189,11 @@ class Poll(unittest.TestCase):
         self.assertEqual(self.main(), (0, ["VERDICT=GREEN"]))
         self.assertEqual(self.sleeps, [10])
 
+    def test_require_check_needs_a_pass(self):
+        os.environ["POLL_REQUIRE_CHECK"] = "^deploy$"
+        self.replies[CHECKS] = checks(check(), check("deploy", "skipping", "SKIPPED"))
+        self.assertEqual(self.main(), (3, ["VERDICT=TIMEOUT"]))
+
     def test_bad_env_resets_to_default(self):
         for value in ("0", "-5", "junk"):
             with self.subTest(value):
@@ -197,6 +202,12 @@ class Poll(unittest.TestCase):
                 self.replies[CHECKS] = [checks(check(bucket="pending", state="QUEUED")), checks(check())]
                 self.main()
                 self.assertEqual(self.sleeps, [20])
+        with self.subTest("POLL_TIMEOUT=junk"):
+            self.sleeps.clear()
+            os.environ.update(POLL_INTERVAL="20", POLL_TIMEOUT="junk")
+            self.replies[CHECKS] = checks(check(bucket="pending", state="QUEUED"))
+            self.assertEqual(self.main(), (3, ["VERDICT=TIMEOUT"]))
+            self.assertEqual(len(self.sleeps), 89)  # 1780 / 20
 
     def test_invalid_regex(self):
         os.environ["POLL_REQUIRE_CHECK"] = "("
