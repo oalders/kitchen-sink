@@ -397,7 +397,7 @@ Rebases the current branch onto origin/main:
 
 #### /poll-ci
 
-Waits for the checks on the current branch's PR to settle for HEAD and reports pass/fail/needs-attention/in-progress; the generic `gh`-based fallback for a project-specific `/monitor-ci`.
+Waits for the checks on the current branch's PR to settle for HEAD and reports pass/fail/needs-attention/in-progress.
 
 ## Skills Overview
 

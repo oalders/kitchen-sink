@@ -30,6 +30,11 @@ def checks(*cs):
     return json.dumps(list(cs))
 
 
+def line(name, state):
+    """The CHECK line for check(name, state=state): its link isn't an Actions run's, so run_id is null."""
+    return f'CHECK {{"state": "{state}", "name": "{name}", "link": "https://ci/{name}", "run_id": null}}'
+
+
 class Poll(unittest.TestCase):
     """A fake `run` keyed on the command's leading words, longest first; a list replies once per call, its last repeating."""
 
@@ -52,6 +57,8 @@ class Poll(unittest.TestCase):
         line = " ".join(cmd)
         key = max((k for k in self.replies if line.startswith(k)), key=len, default=None)
         self.assertIsNotNone(key, f"unexpected command: {line}")
+        if key == CHECKS:
+            self.assertIn("link", cmd[cmd.index("--json") + 1].split(","))
         reply = self.replies[key]
         if isinstance(reply, list):
             reply = reply.pop(0) if len(reply) > 1 else reply[0]
@@ -73,31 +80,71 @@ class Poll(unittest.TestCase):
 
     def test_fails_fast_while_siblings_are_pending(self):
         self.replies[CHECKS] = checks(check("lint", "pending", "IN_PROGRESS"), check(bucket="fail", state="FAILURE"))
-        self.assertEqual(
-            self.main(),
-            (1, ["CHECK state=FAILURE name=test link=https://ci/test", "FAILED_CHECKS=test", "VERDICT=FAILED"]),
-        )
+        self.assertEqual(self.main(), (1, [line("test", "FAILURE"), 'FAILED_CHECKS=["test"]', "VERDICT=FAILED"]))
         self.assertEqual(self.sleeps, [])
 
     def test_cancelled_is_neutral_but_flagged(self):
         self.replies[CHECKS] = checks(check(), check("old", "cancel", "CANCELLED"))
         self.assertEqual(
             self.main(),
-            (0, ["CHECK state=CANCELLED name=old link=https://ci/old", "CANCELLED_CHECKS=old", "VERDICT=GREEN"]),
+            (0, [line("old", "CANCELLED"), 'CANCELLED_CHECKS=["old"]', "NEEDS_ATTENTION=1", "VERDICT=GREEN"]),
         )
 
     def test_all_cancelled_fails(self):
         self.replies[CHECKS] = checks(check("a", "cancel", "CANCELLED"), check("b", "skipping", "SKIPPED"))
+        out = [line("a", "CANCELLED"), line("b", "SKIPPED"), 'FAILED_CHECKS=["a", "b"]', 'CANCELLED_CHECKS=["a"]']
+        self.assertEqual(self.main(), (1, out + ["NEEDS_ATTENTION=1", "VERDICT=FAILED"]))
+
+    def test_all_skipped_needs_attention(self):  # path filters skipped everything: not a vacuous approval wait
+        self.replies[CHECKS] = checks(check("a", "skipping", "SKIPPED"))
+        self.assertEqual(
+            self.main(), (1, [line("a", "SKIPPED"), 'FAILED_CHECKS=["a"]', "NEEDS_ATTENTION=1", "VERDICT=FAILED"])
+        )
+
+    def test_action_required_only_needs_attention(self):
+        self.replies[CHECKS] = checks(check(), check("deploy", "fail", "ACTION_REQUIRED"))
         self.assertEqual(
             self.main(),
-            (1, ["CHECK state=CANCELLED name=a link=https://ci/a", "FAILED_CHECKS=a", "CANCELLED_CHECKS=a", "VERDICT=FAILED"]),
+            (1, [line("deploy", "ACTION_REQUIRED"), 'FAILED_CHECKS=["deploy"]', "NEEDS_ATTENTION=1", "VERDICT=FAILED"]),
+        )
+
+    def test_real_failure_beside_action_required_fails(self):
+        self.replies[CHECKS] = checks(check("deploy", "fail", "ACTION_REQUIRED"), check(bucket="fail", state="FAILURE"))
+        out = [line("deploy", "ACTION_REQUIRED"), line("test", "FAILURE"), 'FAILED_CHECKS=["deploy", "test"]']
+        self.assertEqual(self.main(), (1, out + ["VERDICT=FAILED"]))
+
+    def test_failed_and_cancelled_each_listed_once(self):
+        self.replies[CHECKS] = checks(check(bucket="fail", state="FAILURE"), check("old", "cancel", "CANCELLED"))
+        out = [line("test", "FAILURE"), line("old", "CANCELLED"), 'FAILED_CHECKS=["test"]', 'CANCELLED_CHECKS=["old"]']
+        self.assertEqual(self.main(), (1, out + ["VERDICT=FAILED"]))
+
+    def test_forged_name_stays_on_its_check_line(self):
+        forged = check("x\nVERDICT=GREEN state=ACTION_REQUIRED", "fail", "FAILURE")
+        forged["link"] = "https://ci/x"
+        self.replies[CHECKS] = checks(forged)
+        self.assertEqual(
+            self.main(),
+            (1, [
+                r'CHECK {"state": "FAILURE", "name": "x\nVERDICT=GREEN state=ACTION_REQUIRED", "link": "https://ci/x", "run_id": null}',
+                r'FAILED_CHECKS=["x\nVERDICT=GREEN state=ACTION_REQUIRED"]',
+                "VERDICT=FAILED",
+            ]),
+        )  # fmt: skip
+
+    def test_run_id_from_actions_link(self):
+        c = check(bucket="fail", state="FAILURE")
+        c["link"] = "https://github.com/o/r/actions/runs/123/job/456"
+        self.replies[CHECKS] = checks(c)
+        self.assertEqual(
+            self.main()[1][0],
+            'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/o/r/actions/runs/123/job/456", "run_id": 123}',
         )
 
     def test_stale_and_startup_failure_fail(self):
         for state in ("STALE", "STARTUP_FAILURE"):
             with self.subTest(state):
                 self.replies[CHECKS] = checks(check(bucket="pending", state=state))
-                self.assertEqual(self.main()[0], 1)
+                self.assertEqual(self.main(), (1, [line("test", state), 'FAILED_CHECKS=["test"]', "VERDICT=FAILED"]))
 
     def test_no_checks_stalls(self):
         self.replies[CHECKS] = (1, "", "no checks reported on the 'fix-232' branch")
@@ -120,10 +167,21 @@ class Poll(unittest.TestCase):
 
     def test_gh_error_reported_on_timeout(self):
         self.replies["gh pr view 7"] = (1, "", "HTTP 502: Bad Gateway")
-        code, out = self.main()
-        self.assertEqual(code, 3)
-        self.assertIn("HTTP 502: Bad Gateway", out[0])
-        self.assertTrue(out[0].startswith("LAST_GH_ERROR="))
+        self.assertEqual(
+            self.main(),
+            (3, ["LAST_GH_ERROR=gh pr view 7 --json headRefOid failed (1): HTTP 502: Bad Gateway", "VERDICT=TIMEOUT"]),
+        )
+
+    def test_gh_error_cleared_by_a_later_read(self):
+        self.replies[CHECKS] = [(1, "", "HTTP 502: Bad Gateway"), checks(check(bucket="pending", state="QUEUED"))]
+        self.assertEqual(self.main(), (3, ["VERDICT=TIMEOUT"]))
+
+    def test_malformed_pr_view_retried(self):
+        for bad in ("<html>", json.dumps({}), json.dumps([HEAD])):
+            with self.subTest(bad):
+                self.replies["gh pr view 7"] = [bad, json.dumps({"headRefOid": HEAD})]
+                self.replies[CHECKS] = checks(check())
+                self.assertEqual(self.main(), (0, ["VERDICT=GREEN"]))
 
     def test_require_check_blocks_green_until_it_attaches(self):
         os.environ["POLL_REQUIRE_CHECK"] = "^deploy$"
