@@ -2480,7 +2480,7 @@ class Watch(NextBase):
         i = self.calls.index("gh run rerun 11")
         after = [c for c in self.calls[i + 1 :] if not c.startswith("git ")]  # save_state finds the state dir
         self.assertEqual(after[0], "sleep 120")
-        self.assertIn("gh pr checks 7 --json name,bucket,state,workflow", after[1:])  # another pass
+        self.assertIn("gh pr checks 7 --json name,bucket,state,workflow,link", after[1:])  # another pass
         self.assertLessEqual(self.clock - NOW, 540)
         state = sh.load_state(7)
         self.assertEqual((state["rerun"], state["repairs"], state["ended"]), (1, 0, False))

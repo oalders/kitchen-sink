@@ -573,7 +573,7 @@ def reread(state):
 
 def read_checks(n):
     """`gh pr checks` exits non-zero for pending or failing checks, so its JSON decides."""
-    cmd = ["gh", "pr", "checks", n, "--json", "name,bucket,state,workflow"]
+    cmd = ["gh", "pr", "checks", n, "--json", "name,bucket,state,workflow,link"]
     proc = run(cmd, check=False)
     if "no checks reported" in proc.stderr:
         return []

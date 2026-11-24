@@ -69,7 +69,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/codebase-health** | Systematic health check optimizing codebase for AI consumption—dead code, token waste, and discoverability |
 | **/fix-linter-warnings** | Linter busywork in bite-sized chunks—your robot's idea of a good time, not yours |
 | **/git-rebase** | Rebase without the cruel and unusual punishment of solving your own merge conflicts |
-| **/poll-ci** | Polls the current branch's CI run and reports pass/fail/in-progress (generic `gh` fallback for `/monitor-ci`) |
+| **/poll-ci** | Polls the current branch's PR checks for HEAD and reports pass/fail/in-progress (generic `gh` fallback for `/monitor-ci`) |
 
 ### Skills
 
@@ -397,11 +397,7 @@ Rebases the current branch onto origin/main:
 
 #### /poll-ci
 
-Polls the current branch's CI run and reports back when it finishes:
-- Generic `gh`-based fallback for when a project-specific `/monitor-ci` isn't present
-- Finds the latest run for the branch, warns if HEAD hasn't triggered a run yet
-- Polls every ~20s for up to ~30 min, reporting status changes
-- Reports pass/fail/needs-attention/in-progress, surfacing failing jobs and offering `--log-failed`
+Waits for the checks on the current branch's PR to settle for HEAD and reports pass/fail/needs-attention/in-progress; the generic `gh`-based fallback for a project-specific `/monitor-ci`.
 
 ## Skills Overview
 

@@ -1,38 +1,22 @@
 ---
-description: Use when polling the current branch's CI run for pass/fail/in-progress status and no /monitor-ci command is available in the environment.
+description: Use when polling the current branch's PR checks for pass/fail/in-progress status and no /monitor-ci command is available in the environment.
 ---
 
-Poll the status of the current branch's CI run and report back when it finishes.
+Poll the checks on the current branch's PR until they settle for HEAD, and report the result.
 
 Use this as a fallback for monitoring CI **when a `/monitor-ci` command is not present** in the environment. If `/monitor-ci` is available, prefer it — it is purpose-built for this project. `poll-ci` is the generic, `gh`-based fallback.
 
 Steps:
-1. Determine the current branch:
-   ```bash
-   git rev-parse --abbrev-ref HEAD
-   ```
+1. Find the PR: `gh pr view --json number -q .number`. If there is no PR for the branch, say so, suggest opening one (after `git push` if the branch isn't pushed), and stop.
 
-2. Find the most recent CI run for that branch:
-   ```bash
-   gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 1 \
-     --json databaseId,status,conclusion,workflowName,headSha,url
-   ```
-   - If no runs are found, tell the user no CI run exists for the branch yet (CI may not have started, or the branch may not be pushed). Suggest `git push` if the branch has no remote counterpart, then stop.
-   - If the latest run's `headSha` does not match `git rev-parse HEAD`, warn the user that the newest commit has not triggered a run yet, and ask whether to poll the existing run or wait. If they choose to wait, use one Monitor call (never a foreground `sleep`, which the harness blocks) with `timeout_ms` 1800000, running a script that sets `branch=$(git rev-parse --abbrev-ref HEAD)` and `head=$(git rev-parse HEAD)`, then until-loops on this `gh run list` with `--branch "$branch"` until a run's `headSha` equals `"$head"`, `sleep 20` between checks, capped inside the script with `SECONDS` at 1780 (~30 minutes), loop output silenced, printing one line on exit; a `gh` error inside it only keeps it waiting. The script reads the branch and HEAD itself; never paste them into it (a branch name can contain shell syntax). Run nothing else until the Monitor call's exit notification, then re-run this `gh run list`: if a run for HEAD exists, poll that run; otherwise stop, saying no run for HEAD was seen within ~30 minutes.
+2. Run `python3 <codex-review-loop base dir>/../shepherd-pr-repair/poll_checks.py <number> "$(git rev-parse HEAD)"` (the `codex-review-loop` skill's base directory) with the Bash tool's `run_in_background`; never a foreground `sleep` or a Monitor call. It does the polling and waits up to ~30 minutes. Run nothing else until its completion notification, then act on its last `VERDICT=` line.
 
-3. Poll until the run completes with one Monitor call with `timeout_ms` 1800000, running an until-loop on `gh run view <databaseId> --json status` (by id, so a newer run can't take its place) until `status` is `completed`, `sleep 20` between checks, capped inside the script with `SECONDS` at 1780, printing a line only when `status` is non-empty and differs from the last one printed, so `queued` -> `in_progress` -> `completed` transitions are reported as they happen and a `gh` error (empty `status`) prints nothing. Run nothing else until the Monitor call's exit notification, then read `gh run view <databaseId> --json status,conclusion,url` once: if `status` still isn't `completed`, the cap was hit, so report **In progress** per step 4; otherwise report per step 4.
-
-4. Report the final status to the user:
-   - **Pass** — `conclusion` is `success`. State that CI passed and include the run URL. Treat `skipped` and `neutral` as non-failing outcomes too: report success but note the qualifier.
-   - **Fail** — `conclusion` is `failure`, `cancelled`, `timed_out`, `startup_failure`, or `stale`. State that CI failed, include the run URL, and surface the failing jobs:
-     ```bash
-     gh run view <databaseId> --json jobs \
-       -q '.jobs[] | select(.conclusion != "success") | .name'
-     ```
-     Offer to show failing logs with `gh run view <databaseId> --log-failed`.
-   - **Needs attention** — `conclusion` is `action_required` (e.g. a job awaiting manual approval). This is not a failure; report that the run is paused pending action and include the run URL so the user can approve or investigate.
-   - **In progress** — only if polling was stopped early (timeout or user interrupt). Report the current `status` and the run URL so the user can resume checking.
-   - **Any other `conclusion`** — report the raw value verbatim along with the run URL rather than guessing, so no terminal state is silently swallowed.
+3. Report per `VERDICT`:
+   - **GREEN** — **Pass**. If it printed `CANCELLED_CHECKS=`, also list those checks under **Needs attention**: they were cancelled, not passed.
+   - **FAILED** — if every check named in `FAILED_CHECKS=` has `state=ACTION_REQUIRED` on its `CHECK` line, report **Needs attention** (e.g. awaiting approval); otherwise **Fail**. List the `CHECK` lines, and offer `gh run view <run id> --log-failed`, the run id taken from the check's `link`.
+   - **STALL** — no checks are attached for HEAD. If it printed `PR_HEAD=`, the PR's head is that commit, not HEAD: suggest `git push`. Otherwise suggest `gh pr view --json mergeStateStatus,isDraft` to look for a merge conflict or a draft that CI skips.
+   - **TIMEOUT** — **In progress**: checks were still running after ~30 minutes. Include `LAST_GH_ERROR=` if it printed one.
+   - Exit 64 or any other output — report it verbatim rather than guessing.
 
 **Notes:**
-- Operate on the current branch's CI; do not switch branches.
+- Operate on the current branch; do not switch branches.
