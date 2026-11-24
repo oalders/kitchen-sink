@@ -20,38 +20,45 @@ Pin every external `uses:` ref to a full commit SHA with the tag as a trailing c
 
 ## Algorithm
 
-For each in-scope `uses:` line you add, bump, or edit:
+For each in-scope `uses:` line you add, bump, or edit. When another skill or a request applies this skill to a whole file, every in-scope line in it counts as edited.
 
-1. **Pick the version.** When pinning a ref that already names a tag, keep that tag — pinning is not a version bump — and go to step 2. Otherwise use the latest release:
+First match the line's current ref:
+
+- **`@<40-hex> # <tag>` and `<tag>` resolves (step 2) to that SHA** → leave it.
+- **A 40-hex SHA with no comment, or a comment whose tag doesn't resolve to it** → keep the SHA; comment it with the most specific tag on that commit from the step 2 `/tags` listing. If no tag points at it, report the line rather than guess.
+- **A branch (`@main`, `@master`)** → pin the latest release (step 1) and note the version change in the commit message.
+- **A tag** → pin that tag; pinning is not a version bump. Go to step 2.
+
+1. **Pick the latest release** (new lines and branch refs only):
 
    ```bash
    gh api repos/<owner>/<repo>/releases/latest --jq .tag_name
    ```
 
-   If that 404s (the repo publishes tags but no releases), take the highest semver tag from:
+   If that 404s (the repo publishes tags but no releases), take the highest semver tag, ignoring pre-releases (`-rc`, `-beta`):
 
    ```bash
-   gh api --paginate repos/<owner>/<repo>/tags --jq '.[].name'
+   gh api --paginate repos/<owner>/<repo>/tags --jq '.[].name' | grep -E '^v?[0-9]+(\.[0-9]+)*$' | sort -V | tail -1
    ```
 
    Never assume a `v1` exists: `oalders/install-ubi-action`, for example, only has `v0.0.x` tags.
 
-2. **Resolve the SHA.** This handles annotated and lightweight tags alike; a 404 means the tag does not exist:
+2. **Resolve the SHA.** This handles annotated and lightweight tags alike and can't match a same-named branch; a 404 means the tag does not exist:
 
    ```bash
-   gh api repos/<owner>/<repo>/commits/<tag> --jq .sha
+   gh api repos/<owner>/<repo>/commits/refs/tags/<tag> --jq .sha
    ```
 
-   If the tag is a moving major (`v1`, `v7`), find the most specific tag on that same commit in the `/tags` listing (each entry carries `.commit.sha`) and use it for the comment.
+   If the tag is a moving major (`v1`, `v7`), find the most specific tag on that same commit in `gh api --paginate repos/<owner>/<repo>/tags` (each entry carries `.commit.sha`) and use it for the comment.
 
 3. **Write** `uses: <owner>/<repo>[/path]@<40-hex sha> # <tag>`.
 
 ## Dependabot
 
-If `.github/dependabot.yml` has no `package-ecosystem: github-actions` entry, add one with `directory: /` and `schedule.interval: weekly` (create the file with `version: 2` and an `updates:` list if it does not exist), then run `/tune-dependabot-config` to add its groups and cooldown. Without the entry, pinned SHAs never get bumped.
+If `.github/dependabot.yml` has no `package-ecosystem: github-actions` entry, add one with `directory: /` and `schedule.interval: weekly` (create the file with `version: 2` and an `updates:` list if it does not exist), then apply `kitchen-sink:tune-dependabot-config` to add its groups and cooldown — follow its steps inline, since a subagent can't invoke slash commands. Without the entry, pinned SHAs never get bumped.
 
 ## Verify
 
 - Every in-scope `uses:` ref in the edited files matches `@[0-9a-f]{40} # <tag>`.
-- `gh api repos/<owner>/<repo>/commits/<sha> --jq .sha` returns the same SHA for each new pin.
+- For each pin, `gh api repos/<owner>/<repo>/commits/refs/tags/<tag-from-comment> --jq .sha` equals the pinned SHA. Checking `commits/<sha>` is not enough: a fork-only commit resolves by SHA but not by the upstream tag.
 - `.github/dependabot.yml` has a `github-actions` entry.

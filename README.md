@@ -513,10 +513,7 @@ Flag-only reviewer that applies the living standards in `STANDARDS.md` to change
 
 #### pin-gh-actions
 
-Pins each `uses:` ref you add or bump in a workflow or `action.yml` to a commit SHA, so a moved tag can't change what runs:
-- Writes `owner/repo@<sha> # <tag>` and never assumes a `v1` exists
-- Covers first-party `actions/*` too; leaves local `./` and `docker://` refs alone
-- Adds a Dependabot `github-actions` entry if missing, then tunes it with `tune-dependabot-config`
+`pin-gh-actions` pins the `uses:` refs it touches in a workflow or `action.yml` to a commit SHA with a tag comment, and makes sure Dependabot bumps them.
 
 #### tune-dependabot-config
 

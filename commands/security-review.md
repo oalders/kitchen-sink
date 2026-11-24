@@ -158,7 +158,7 @@ Task(general-purpose):
     - Security headers: see Response Path
     - Error handling: Generic errors to users, detailed logs server-side?
     - HTTPS: Enforced everywhere?
-    - GitHub Actions: Every added or changed external `uses:` ref pinned to a 40-hex commit SHA, not a tag or branch? Fix per `pin-gh-actions`.
+    - GitHub Actions: Every added or changed external `uses:` ref pinned to a 40-hex commit SHA with a `# <tag>` comment, not a tag or branch? (Fix: `kitchen-sink:pin-gh-actions`.)
 
     ### Broken Access Control
 

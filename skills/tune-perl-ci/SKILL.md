@@ -17,7 +17,7 @@ version: 1.6.0
 5. Add a workflow-level `concurrency:` cancel-in-progress block
 6. Install deps with `setup-cpm` + a `cpm install` run step
 7. Drop macOS + Windows tests for Perls < 5.24
-8. SHA-pin every `uses:` ref via `pin-gh-actions`
+8. SHA-pin every `uses:` ref and ensure `.github/dependabot.yml` bumps them, via `kitchen-sink:pin-gh-actions`
 
 Then, as a final step, set `timeout-minutes` on every job via `kitchen-sink:tune-gh-actions-timeouts`.
 
@@ -228,7 +228,7 @@ The matrix-conditional `version:` expression is gone entirely — `version: comp
 - `setup-cpm` installs cpm itself and leaves the install command explicit and inspectable, instead of hiding the dependency install behind a composite action's input surface. It also migrates away from the legacy `install-with-cpanm` action (cpanm-based, serial, no parallelism).
 - The `version: compat` default auto-selects cpm `0.998003` on Perls ≤ 5.22 (the last cpm release compatible with them) and the latest cpm on newer Perls, replacing the hand-rolled matrix-conditional pin.
 
-**Resolve the `setup-cpm` pin per `pin-gh-actions`** — the SHAs in this skill's snippets were current when it was written; don't copy them.
+**Resolve the `setup-cpm` pin per `kitchen-sink:pin-gh-actions`** — the SHAs in this skill's snippets were current when it was written; don't copy them.
 
 **Before:**
 
@@ -308,7 +308,7 @@ test_macos:
 
 ### 8. SHA-pin every `uses:` ref
 
-**What:** apply `pin-gh-actions` to every in-scope workflow: pin each external `uses:` ref to a commit SHA with a version comment, keeping the version it already names, and add the Dependabot `github-actions` entry if it is missing.
+**What:** apply `kitchen-sink:pin-gh-actions` to the whole of every in-scope workflow, including its `.github/dependabot.yml` step; the workflow and Dependabot edits go in this transform's one commit.
 
 **Why:** a tag can be moved to different code after review; a SHA cannot. Transform 6 already writes a pinned `setup-cpm`, so this catches every other ref.
 
@@ -563,7 +563,7 @@ After **each** transform's edit, before committing:
 | 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
 | 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm` step with `version: compat`; no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
-| 8 | the `pin-gh-actions` Verify checks pass for every in-scope workflow |
+| 8 | the `kitchen-sink:pin-gh-actions` Verify checks pass for every in-scope workflow and `.github/dependabot.yml` |
 | timeouts | see `tune-gh-actions-timeouts` Verification |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
@@ -582,7 +582,7 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 | Carrying the old `sudo:` key onto the `cpm install` run step | There is no `sudo:` input on a `run:` step, and the install target is already writable (root container / user-local Perl) | Drop `sudo:` when converting to `setup-cpm` + `cpm install` |
 | Carrying `--with-develop` onto a macOS-only or Windows-only `cpm install` step | Develop-phase prereqs are author/release tooling the cross-platform matrix never runs, and they often fail to build on hosted macOS/Windows runners | Strip `--with-develop` from the args on macOS-only/Windows-only jobs; keep it on Linux and mixed-OS jobs |
 | Leaving `perl-actions/install-with-cpanm` in place | The cpanm action is the legacy serial installer; cpm is parallel and the supported path | Rewrite any `install-with-cpanm@*` step to `setup-cpm` + `cpm install` in the same transform |
-| Pinning an action to a tag (`@v1`) | A tag can be moved to different code, and not every action publishes a given major | Pin a commit SHA with a version comment per `pin-gh-actions` |
+| Pinning an action to a tag (`@v1`) | A tag can be moved to different code, and not every action publishes a given major | Pin a commit SHA with a version comment per `kitchen-sink:pin-gh-actions` |
 | Trimming pre-5.24 Perls from Linux container jobs | `perldocker/perl-tester` images carry working older Perls; transform 6 already covers the cpm install path via `version: compat` | Transform 7 only touches macOS-only and Windows-only jobs |
 | Trimming pre-5.24 entries from a mixed-OS matrix (`os: [ubuntu, macos]`) | `perl-version` is a single axis — dropping one entry kills the cell on every OS, including Linux | Skip mixed matrices in transform 7; use `matrix.exclude:` manually if you really want per-OS trimming |
 
