@@ -92,9 +92,10 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Skill | Description |
 |-------|-------------|
 | **perl-review** | Flags Perl code that strays from your project standards — quoting, core-module use, URL building, test hygiene — reading a living rules doc you edit freely |
+| **pin-gh-actions** | Pins every GitHub Actions `uses:` ref to a commit SHA with a version comment, and makes sure Dependabot bumps them |
 | **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown; optionally auto-merges minor/patch PRs |
 | **tune-gh-actions-timeouts** | Sets `timeout-minutes` on every GitHub Actions job, sized from recent successful run durations |
-| **tune-perl-ci** | Seven idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI, then job timeouts |
+| **tune-perl-ci** | Eight idempotent transforms to modernize Dist::Zilla-style Perl GitHub Actions CI, then job timeouts |
 | **tune-precious** | Migrates a Perl repo from `Code::TidyAll` to `precious` (or sets up `precious` from scratch) — config, `.perltidyrc`, `dist.ini`, CI lint job |
 | **working-with-dist-zilla** | Stops your robot from committing 100 lines of regenerated `META.json` and other `dzil` faceplants |
 
@@ -510,6 +511,13 @@ Flag-only reviewer that applies the living standards in `STANDARDS.md` to change
 - Makes no edits and no commits—you apply the fixes; groups the report by rule with `file:line — detail` hits
 - Dispatches to a `general-purpose` subagent so the token-heavy read doesn't fill the caller's context
 
+#### pin-gh-actions
+
+Pins each `uses:` ref you add or bump in a workflow or `action.yml` to a commit SHA, so a moved tag can't change what runs:
+- Writes `owner/repo@<sha> # <tag>` and never assumes a `v1` exists
+- Covers first-party `actions/*` too; leaves local `./` and `docker://` refs alone
+- Adds a Dependabot `github-actions` entry if missing, then tunes it with `tune-dependabot-config`
+
 #### tune-dependabot-config
 
 Groups Dependabot minor/patch updates per ecosystem (majors stay individual) and adds a 7-day cooldown so churning releases settle before a PR opens:
@@ -529,25 +537,28 @@ Caps every job in `.github/workflows/*.y*ml` below GitHub's 360-minute default, 
 
 #### tune-perl-ci
 
-Seven idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions workflows under `.github/workflows/`:
+Eight idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions workflows under `.github/workflows/`:
 - `fail-fast: false` on every matrix job
 - Extends Linux + macOS matrices through Perl 5.44
 - Bumps build + coverage jobs to `perldocker/perl-tester:5.44`
 - Restricts the `push:` trigger to the default branch
 - Adds a workflow-level `concurrency:` cancel-in-progress block
-- Replaces each `install-with-cpm`/`install-with-cpanm` step with `setup-cpm@v1` + an explicit `cpm install` run step (`version: compat` pins cpm for Perls ≤ 5.22)
+- Replaces each `install-with-cpm`/`install-with-cpanm` step with `setup-cpm` + an explicit `cpm install` run step (`version: compat` pins cpm for Perls ≤ 5.22)
 - Drops pre-5.24 macOS/Windows matrix cells
+- SHA-pins every `uses:` ref via `pin-gh-actions`
 - Finishes by setting `timeout-minutes` on every job via `tune-gh-actions-timeouts`
 - Each transform lands as its own commit; re-running is a no-op apart from tightening marked timeout defaults
 
 #### tune-precious
 
-Lands [`precious`](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo via five idempotent transforms:
+Lands [`precious`](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo via seven idempotent transforms:
 - Generates (or refreshes) `precious.toml` with `perltidy`, `perlvars`, `omegasort-gitignore`, `omegasort-stopwords`, and optionally `perlcritic`
 - Consolidates the perltidy profile to the hidden `.perltidyrc` and strips `-b`
 - Deletes `Code::TidyAll` config (`.tidyallrc`, `tidyall.ini`, `.tidyall.d/` ignore line)
 - Edits `dist.ini` to drop `Test::TidyAll` and its prereqs via `PluginRemover` + `[RemovePrereqs]`
 - Adds a `.github/workflows/lint.yml` job running `precious lint` — incrementally (`--git-diff-from` the PR base) on pull requests, `--all` on every other event, with a default `timeout-minutes`
+- Adds a checked-in `.githooks/pre-commit` hook that runs `precious lint --staged`
+- SHA-pins every `uses:` ref in `lint.yml` via `pin-gh-actions`
 
 Handles three modes: migrate (tidyall present), greenfield (no precious yet), tune (precious already configured). Each transform commits separately; re-running on a tuned repo is a no-op.
 

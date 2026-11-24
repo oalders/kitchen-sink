@@ -1,14 +1,14 @@
 ---
 name: tune-perl-ci
 description: Use when modernizing, tuning, or hardening a Perl project's GitHub Actions CI, when a workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`/`install-with-cpanm` and looks stale, or when a Dist::Zilla starter template's CI workflow is a few years old.
-version: 1.5.0
+version: 1.6.0
 ---
 
 # Tune Perl CI
 
 ## Overview
 
-**Seven transforms applied to Perl CI workflows under `.github/workflows/`:**
+**Eight transforms applied to Perl CI workflows under `.github/workflows/`:**
 
 1. `fail-fast: false` on every matrix job
 2. Extend Linux + macOS matrices through Perl 5.44
@@ -17,6 +17,7 @@ version: 1.5.0
 5. Add a workflow-level `concurrency:` cancel-in-progress block
 6. Install deps with `setup-cpm` + a `cpm install` run step
 7. Drop macOS + Windows tests for Perls < 5.24
+8. SHA-pin every `uses:` ref via `pin-gh-actions`
 
 Then, as a final step, set `timeout-minutes` on every job via `kitchen-sink:tune-gh-actions-timeouts`.
 
@@ -24,11 +25,11 @@ Then, as a final step, set `timeout-minutes` on every job via `kitchen-sink:tune
 
 ## Dispatch this skill to a subagent
 
-When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the seven transforms inline in the caller's context.**
+When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the eight transforms inline in the caller's context.**
 
 Why:
-- Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across seven transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
-- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the seven transforms' commits; the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
+- Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across eight transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the eight transforms' commits; the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
@@ -61,7 +62,7 @@ Other workflows are skipped silently. If no workflow file matches across the rep
 
 If the caller passes a single workflow path as an argument, operate only on that file (still apply the detection rule for safety; bail out with a clear message if it isn't Perl-shaped).
 
-## The Seven Transforms
+## The Eight Transforms
 
 ### 1. `fail-fast: false` on every matrix job
 
@@ -199,7 +200,7 @@ concurrency:
 1. A setup step that installs the single-file `cpm` tool:
 
    ```yaml
-   - uses: perl-actions/setup-cpm@v1
+   - uses: perl-actions/setup-cpm@fffc509393becdb9b4d894af16591b7757afe94e # v1.0.1
      with:
        version: compat
    ```
@@ -221,32 +222,26 @@ Mapping rules:
 
 The matrix-conditional `version:` expression is gone entirely — `version: compat` on the `setup-cpm` step auto-selects cpm `0.998003` for old Perls (≤ 5.22) and the latest cpm for newer ones, handling the old-Perl pinning upstream.
 
-**Skip** a step already in `setup-cpm@v1` + `cpm install` form — it is a no-op. Still convert any remaining `install-with-cpm`/`install-with-cpanm` step in the file.
+**Skip** a step already in `setup-cpm` + `cpm install` form — it is a no-op. Still convert any remaining `install-with-cpm`/`install-with-cpanm` step in the file.
 
 **Why:**
 - `setup-cpm` installs cpm itself and leaves the install command explicit and inspectable, instead of hiding the dependency install behind a composite action's input surface. It also migrates away from the legacy `install-with-cpanm` action (cpanm-based, serial, no parallelism).
 - The `version: compat` default auto-selects cpm `0.998003` on Perls ≤ 5.22 (the last cpm release compatible with them) and the latest cpm on newer Perls, replacing the hand-rolled matrix-conditional pin.
 
-**Verify the action ref exists before writing it.** This transform pins `perl-actions/setup-cpm@v1`. Confirm the tag resolves before emitting the ref:
-
-```bash
-gh api repos/perl-actions/setup-cpm/git/refs/tags/v1   # 404 → the tag does not exist
-```
-
-Action tags move, and not every action ever publishes a given major version — never assume `@v1` is available. Pin only a ref you have confirmed exists.
+**Resolve the `setup-cpm` pin per `pin-gh-actions`** — the SHAs in this skill's snippets were current when it was written; don't copy them.
 
 **Before:**
 
 ```yaml
 - name: install deps using cpm
-  uses: perl-actions/install-with-cpm@v1.9
+  uses: perl-actions/install-with-cpm@8b1a9840b26cc3885ae2889749a48629be2501b0 # v1.9
   with:
     cpanfile: "cpanfile"
     args: "--with-suggests --with-recommends --with-test"
     sudo: false
 
 - name: install deps using cpanm
-  uses: perl-actions/install-with-cpanm@v1
+  uses: perl-actions/install-with-cpanm@10d60f00b4073f484fc29d45bfbe2f776397ab3d # v1.7
   with:
     cpanfile: "cpanfile"
     args: "--with-suggests --with-recommends --with-test"
@@ -256,13 +251,13 @@ Action tags move, and not every action ever publishes a given major version — 
 **After:**
 
 ```yaml
-- uses: perl-actions/setup-cpm@v1
+- uses: perl-actions/setup-cpm@fffc509393becdb9b4d894af16591b7757afe94e # v1.0.1
   with:
     version: compat
 - name: install deps using cpm
   run: cpm install -g --cpanfile cpanfile --with-suggests --with-recommends --with-test
 
-- uses: perl-actions/setup-cpm@v1
+- uses: perl-actions/setup-cpm@fffc509393becdb9b4d894af16591b7757afe94e # v1.0.1
   with:
     version: compat
 - name: install deps using cpanm
@@ -311,9 +306,15 @@ test_macos:
         - "5.34"
 ```
 
+### 8. SHA-pin every `uses:` ref
+
+**What:** apply `pin-gh-actions` to every in-scope workflow: pin each external `uses:` ref to a commit SHA with a version comment, keeping the version it already names, and add the Dependabot `github-actions` entry if it is missing.
+
+**Why:** a tag can be moved to different code after review; a SHA cannot. Transform 6 already writes a pinned `setup-cpm`, so this catches every other ref.
+
 ## Final step: job timeouts
 
-**What:** after the seven transforms, apply `kitchen-sink:tune-gh-actions-timeouts` to every in-scope (Perl-detected) workflow and no others — not only the ones a transform changed, so an already-tuned repo still gets timeouts. The "no Perl workflows found" early exit skips this step too. Follow it inline (this skill already runs in a subagent), passing the in-scope paths.
+**What:** after the eight transforms, apply `kitchen-sink:tune-gh-actions-timeouts` to every in-scope (Perl-detected) workflow and no others — not only the ones a transform changed, so an already-tuned repo still gets timeouts. The "no Perl workflows found" early exit skips this step too. Follow it inline (this skill already runs in a subagent), passing the in-scope paths.
 
 **Why:** a job without `timeout-minutes` gets GitHub's 360-minute default. The sizing heuristic lives in that skill only.
 
@@ -322,7 +323,7 @@ test_macos:
 ```
 1. Scan .github/workflows/*.yml. Keep files matching the detection rule.
    Exit early with "no Perl workflows found" if the set is empty.
-2. For each transform in order [1..7]:
+2. For each transform in order [1..8]:
      a. For each in-scope file, compute the diff this transform would produce.
      b. Skip any file that is already conformant for this transform (idempotent no-op for that file).
      c. Write the remaining changed files.
@@ -333,7 +334,7 @@ test_macos:
 3. Apply tune-gh-actions-timeouts inline to every in-scope file (its own
    verification and single commit).
 4. Report summary: "Applied N transforms across M files in K commits"
-   (K counts the seven transforms' commits only), then the timeouts
+   (K counts the eight transforms' commits only), then the timeouts
    step's report and SHA on their own lines.
 ```
 
@@ -350,6 +351,7 @@ Suggested commit subjects:
 | 5 | `workflow: add concurrency block to cancel superseded runs` |
 | 6 | `workflow: install deps with setup-cpm + cpm install` |
 | 7 | `workflow: drop macOS/Windows tests for Perls < 5.24` |
+| 8 | `workflow: SHA-pin action refs` |
 | timeouts | `workflow: set timeout-minutes on every job` |
 
 ## Default branch resolution
@@ -362,7 +364,7 @@ git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@
 
 - If that prints a branch name, use it.
 - Otherwise check `git show-ref --verify --quiet refs/remotes/origin/master` first, then `refs/heads/master`; if either succeeds, fall back to `master`.
-- Otherwise, bail out of transform 4 with a clear message — do not block transforms 1–3, 5, 6.
+- Otherwise, bail out of transform 4 with a clear message — do not block transforms 1–3, 5–8.
 
 ## Worked Example
 
@@ -388,7 +390,7 @@ jobs:
     container:
       image: perldocker/perl-tester:5.34
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build Dist
         run: dzil build
 
@@ -398,8 +400,8 @@ jobs:
     container:
       image: perldocker/perl-tester:5.34
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
 
   test_linux:
     name: Perl ${{ matrix.perl-version }} on ubuntu-latest
@@ -413,9 +415,9 @@ jobs:
     container:
       image: perldocker/perl-tester:${{ matrix.perl-version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install deps
-        uses: perl-actions/install-with-cpm@v1.9
+        uses: perl-actions/install-with-cpm@8b1a9840b26cc3885ae2889749a48629be2501b0 # v1.9
         with:
           cpanfile: "cpanfile"
           args: "--with-recommends --with-suggests --with-test --with-develop"
@@ -433,19 +435,19 @@ jobs:
           - "5.34"
     needs: build
     steps:
-      - uses: actions/checkout@v7
-      - uses: shogo82148/actions-setup-perl@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: shogo82148/actions-setup-perl@eebc5c886de14ebbfcd2493d49a12007d2c30477 # v1.44.5
         with:
           perl-version: ${{ matrix.perl-version }}
       - name: install deps using cpm
-        uses: perl-actions/install-with-cpm@v1.9
+        uses: perl-actions/install-with-cpm@8b1a9840b26cc3885ae2889749a48629be2501b0 # v1.9
         with:
           cpanfile: "cpanfile"
           args: "--with-recommends --with-suggests --with-test --with-develop"
           sudo: false
 ```
 
-### After (seven transforms applied, default branch is `main`)
+### After (eight transforms applied, default branch is `main`)
 
 ```yaml
 name: dzil build and test
@@ -469,7 +471,7 @@ jobs:
     container:
       image: perldocker/perl-tester:5.44
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build Dist
         run: dzil build
 
@@ -479,8 +481,8 @@ jobs:
     container:
       image: perldocker/perl-tester:5.44
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
 
   test_linux:
     name: Perl ${{ matrix.perl-version }} on ubuntu-latest
@@ -500,8 +502,8 @@ jobs:
     container:
       image: perldocker/perl-tester:${{ matrix.perl-version }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: perl-actions/setup-cpm@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: perl-actions/setup-cpm@fffc509393becdb9b4d894af16591b7757afe94e # v1.0.1
         with:
           version: compat
       - name: Install deps
@@ -523,11 +525,11 @@ jobs:
           - "5.44"
     needs: build
     steps:
-      - uses: actions/checkout@v7
-      - uses: shogo82148/actions-setup-perl@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: shogo82148/actions-setup-perl@eebc5c886de14ebbfcd2493d49a12007d2c30477 # v1.44.5
         with:
           perl-version: ${{ matrix.perl-version }}
-      - uses: perl-actions/setup-cpm@v1
+      - uses: perl-actions/setup-cpm@fffc509393becdb9b4d894af16591b7757afe94e # v1.0.1
         with:
           version: compat
       - name: install deps using cpm
@@ -540,9 +542,10 @@ Things to notice in the after-state:
 - `pull_request.branches: ["*"]` is preserved — transform 4 only touches `on.push.branches`.
 - Quotes are preserved on existing list entries; new entries match (here, double quotes).
 - `test_macos.strategy.fail-fast: true` was flipped to `false`; `test_linux` had no `fail-fast` key — transform 1 inserts `fail-fast: false` regardless.
-- Both `install-with-cpm` steps became a `setup-cpm@v1` step (`version: compat`) followed by an explicit `cpm install -g` run step that carries the old step's `name:`; the old `sudo:` key was dropped (the perl-tester container runs as root and the macOS Perl is user-local) and the matrix-conditional `version:` expression is gone — `version: compat` pins old Perls upstream.
+- Both `install-with-cpm` steps became a `setup-cpm` step (`version: compat`) followed by an explicit `cpm install -g` run step that carries the old step's `name:`; the old `sudo:` key was dropped (the perl-tester container runs as root and the macOS Perl is user-local) and the matrix-conditional `version:` expression is gone — `version: compat` pins old Perls upstream.
 - `test_linux` keeps `--with-develop` in its `cpm install`, but `test_macos` (a macOS-only job) dropped it — develop-phase prereqs are author/release tooling the cross-platform matrix never exercises and often fail to build on hosted macOS/Windows runners.
 - `test_macos.matrix.perl-version` lost `"5.20"` (transform 7) but `test_linux.matrix.perl-version` keeps `"5.10"` — transform 7 leaves Linux container jobs alone.
+- The Before refs were already SHA-pinned, so transform 8 leaves this file unchanged.
 
 ## Verification
 
@@ -558,8 +561,9 @@ After **each** transform's edit, before committing:
 | 3 | every `container.image` whose tag contains no `${{` ends in `:5.44` |
 | 4 | `on.push.branches` is a single-item list with the resolved default branch |
 | 5 | top-level `concurrency.group` and `concurrency.cancel-in-progress: true` present |
-| 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm@v1` step with `version: compat` (and the `v1` tag resolves via `gh api`); no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
+| 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm` step with `version: compat`; no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
+| 8 | the `pin-gh-actions` Verify checks pass for every in-scope workflow |
 | timeouts | see `tune-gh-actions-timeouts` Verification |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
@@ -573,12 +577,12 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 | Adding `concurrency:` when the user already has one | Overwrites their grouping/cancellation choice | Skip transform 5 if any `concurrency:` exists at workflow level |
 | Stripping `pull_request.branches` | Spec says leave `pull_request:` alone | Only touch `on.push.branches`, never `pull_request` |
 | Hardcoding a single cpm `version:` on the `setup-cpm` step | Forces one cpm release across all Perls instead of per-Perl selection | Use `version: compat` so old Perls get cpm `0.998003` and newer Perls get the latest |
-| Batching all seven transforms into one commit | Can't revert one transform without the others | One commit per transform |
+| Batching all eight transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Auto-reverting on verification failure | Hides bugs in the skill | Stop, surface the failure, leave files uncommitted |
 | Carrying the old `sudo:` key onto the `cpm install` run step | There is no `sudo:` input on a `run:` step, and the install target is already writable (root container / user-local Perl) | Drop `sudo:` when converting to `setup-cpm` + `cpm install` |
 | Carrying `--with-develop` onto a macOS-only or Windows-only `cpm install` step | Develop-phase prereqs are author/release tooling the cross-platform matrix never runs, and they often fail to build on hosted macOS/Windows runners | Strip `--with-develop` from the args on macOS-only/Windows-only jobs; keep it on Linux and mixed-OS jobs |
-| Leaving `perl-actions/install-with-cpanm` in place | The cpanm action is the legacy serial installer; cpm is parallel and the supported path | Rewrite any `install-with-cpanm@*` step to `setup-cpm@v1` + `cpm install` in the same transform |
-| Pinning `setup-cpm@v1` (or any action ref) without checking the tag exists | Action tags move and some actions never publish a given major; a non-existent ref fails the workflow on every run | Confirm the tag resolves with `gh api repos/<owner>/<repo>/git/refs/tags/<ref>` before writing the `uses:` line |
+| Leaving `perl-actions/install-with-cpanm` in place | The cpanm action is the legacy serial installer; cpm is parallel and the supported path | Rewrite any `install-with-cpanm@*` step to `setup-cpm` + `cpm install` in the same transform |
+| Pinning an action to a tag (`@v1`) | A tag can be moved to different code, and not every action publishes a given major | Pin a commit SHA with a version comment per `pin-gh-actions` |
 | Trimming pre-5.24 Perls from Linux container jobs | `perldocker/perl-tester` images carry working older Perls; transform 6 already covers the cpm install path via `version: compat` | Transform 7 only touches macOS-only and Windows-only jobs |
 | Trimming pre-5.24 entries from a mixed-OS matrix (`os: [ubuntu, macos]`) | `perl-version` is a single axis — dropping one entry kills the cell on every OS, including Linux | Skip mixed matrices in transform 7; use `matrix.exclude:` manually if you really want per-OS trimming |
 

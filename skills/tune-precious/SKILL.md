@@ -1,14 +1,14 @@
 ---
 name: tune-precious
 description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`), or when a repo still lints with Code::TidyAll (`.tidyallrc`, `tidyall.ini`, or `Test::TidyAll`, a tidyall prereqs block, or `[PerlCritic]` in `dist.ini`).
-version: 1.7.0
+version: 1.8.0
 ---
 
 # Tune Precious
 
 ## Overview
 
-**Six idempotent transforms that land [precious](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo (or any repo that has opted into `typos`):**
+**Seven idempotent transforms that land [precious](https://github.com/houseabsolute/precious) as the canonical tidy/lint driver for a Perl repo (or any repo that has opted into `typos`):**
 
 1. Generate or refresh `precious.toml` with `perltidy`, `perlvars`, `omegasort-gitignore`, `omegasort-stopwords`, optionally `perlcritic`, and optionally `typos`.
 2. Consolidate the `perltidy` profile to the hidden `.perltidyrc` and strip `-b` (precious manages backup mode).
@@ -16,6 +16,7 @@ version: 1.7.0
 4. Edit `dist.ini` to remove the tidyall plugin + prereqs via the bundle's `PluginRemover` and a trailing `[RemovePrereqs]` block.
 5. Add a `.github/workflows/lint.yml` job that installs `precious` + `omegasort` (+ `typos` when wired) via ubi and runs `precious lint` — incrementally (`--git-diff-from` the PR base) on `pull_request` events, `--all` on every other event.
 6. Add a self-installing `.githooks/pre-commit` shell hook — a checked-in `.githooks/` directory activated with a relative `core.hooksPath` (worktree-safe) — that runs `precious lint --staged` and blocks direct commits to the default branch, so contributors catch tidy/lint drift before pushing. Optionally wire a `make init` target that activates it.
+7. SHA-pin every `uses:` ref in `.github/workflows/lint.yml` via `pin-gh-actions`.
 
 **Core principle:** apply the canonical recipe without changing the user's tidy/lint intent. Each transform is its own commit so any single change is revertable. Re-running on an already-tuned repo is a no-op.
 
@@ -23,17 +24,17 @@ version: 1.7.0
 
 | Mode | Trigger | What changes |
 |---|---|---|
-| Migrate | Repo has `.tidyallrc`, `tidyall.ini`, or `[Test::TidyAll]` in `dist.ini` | All six transforms apply |
-| Greenfield | Perl repo, no tidyall config, no `precious.toml` | T1 + T2 (consolidate any visible `perltidyrc`) + T5 + T6 |
+| Migrate | Repo has `.tidyallrc`, `tidyall.ini`, or `[Test::TidyAll]` in `dist.ini` | All seven transforms apply |
+| Greenfield | Perl repo, no tidyall config, no `precious.toml` | T1 + T2 (consolidate any visible `perltidyrc`) + T5 + T6 + T7 |
 | Tune | `precious.toml` already exists | All transforms run as no-ops; surfaces drift between current config and canonical recipe |
-| Typos-only | No Perl files, but `typos.toml` / `_typos.toml` / `.typos.toml` is present | T1 (typos block only) + T5; T2/T3/T4 are no-ops |
+| Typos-only | No Perl files, but `typos.toml` / `_typos.toml` / `.typos.toml` is present | T1 (typos block only) + T5 + T7; T2/T3/T4 are no-ops |
 
 ## Dispatch this skill to a subagent
 
-When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the six transforms inline in the caller's context.**
+When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the seven transforms inline in the caller's context.**
 
 Why:
-- Each transform reads several files, computes a diff, writes the files, verifies with `precious config list` / TOML parse / YAML parse / `dzil build --no-tgz`, then stages and commits. Across six transforms and several files, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
+- Each transform reads several files, computes a diff, writes the files, verifies with `precious config list` / TOML parse / YAML parse / `dzil build --no-tgz`, then stages and commits. Across seven transforms and several files, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
 - The caller only needs the final summary line (`Applied N transforms across M files in K commits`) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
@@ -74,6 +75,8 @@ digraph tune_precious {
     "Verify + commit T5" [shape=box];
     "T6: add pre-commit hook" [shape=box];
     "Verify + commit T6" [shape=box];
+    "T7: SHA-pin uses: refs" [shape=box];
+    "Verify + commit T7" [shape=box];
     "Report summary" [shape=box];
 
     "Detect mode" -> "Migrate, Greenfield, Tune, or Typos-only?";
@@ -89,7 +92,9 @@ digraph tune_precious {
     "T5: add CI lint job" -> "Verify + commit T5";
     "Verify + commit T5" -> "T6: add pre-commit hook";
     "T6: add pre-commit hook" -> "Verify + commit T6";
-    "Verify + commit T6" -> "Report summary";
+    "Verify + commit T6" -> "T7: SHA-pin uses: refs";
+    "T7: SHA-pin uses: refs" -> "Verify + commit T7";
+    "Verify + commit T7" -> "Report summary";
 }
 ```
 
@@ -122,7 +127,7 @@ Before running, fingerprint the repo:
 
 **Rule:** only wire `typos` when the user has already opted in by writing a typos config. Don't introduce a new lint dimension on a previously-clean tree.
 
-## The Six Transforms
+## The Seven Transforms
 
 ### 1. Generate or refresh `precious.toml`
 
@@ -341,14 +346,7 @@ git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@
 
 Substitute the resolved name (or fall back to `main`) into the `branches:` list below. Repos still on `master` need `master` here, or the push trigger silently never fires.
 
-**Before emitting the file, verify every action version.** The `@`-refs in the template below were correct when this skill was written, but action tags move and not every action ever reaches `v1`. For each `uses:` line, resolve a tag that actually exists before writing it:
-
-```bash
-gh api repos/<owner>/<repo>/releases/latest --jq .tag_name   # newest release, if the repo cuts releases
-gh api repos/<owner>/<repo>/tags --jq '.[].name'             # all tags, for repos with no "latest" release
-```
-
-Never assume `@v1`. `oalders/install-ubi-action`, for example, has never tagged a `v1` — its latest is in the `v0.0.x` line, which is why the template pins `@v0.0.6`. When an action only publishes `v0.0.x` tags, pin the exact latest `v0.0.x`; when it publishes a moving major tag (`actions/checkout` → `v7`), that major tag is fine.
+**Before emitting the file, re-resolve every `uses:` pin per `pin-gh-actions`** — the SHAs below were current when this skill was written; don't copy them.
 
 ```yaml
 name: lint
@@ -370,20 +368,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15   # default, not measured; see tune-gh-actions-timeouts
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # full history so `precious lint --git-diff-from <base>` can resolve the merge base
-      - uses: shogo82148/actions-setup-perl@v1
+      - uses: shogo82148/actions-setup-perl@eebc5c886de14ebbfcd2493d49a12007d2c30477 # v1.44.5
         with:
           perl-version: "5.42"
-      - uses: oalders/install-ubi-action@v0.0.6   # ← verify the latest tag before writing (see above)
+      - uses: oalders/install-ubi-action@27bdce90e4b0e0a6c26023610ab03e375c6ed3e3 # v0.0.6
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           projects: |
             houseabsolute/precious
             houseabsolute/omegasort
             crate-ci/typos
-      - uses: perl-actions/setup-cpm@v1
+      - uses: perl-actions/setup-cpm@fffc509393becdb9b4d894af16591b7757afe94e # v1.0.1
       - name: install CPAN tools
         run: cpm install -g App::perlvars Perl::Tidy
       - name: precious lint
@@ -419,7 +417,7 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 
 - `precious` is the single entry point — no per-tool step.
 - `oalders/install-ubi-action` installs precompiled binaries (precious + omegasort + typos are Rust/Go); skips compile time. The input is `projects:` (newline-delimited list of `owner/repo` slugs passed to `ubi --project`). Always pass `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` under `with:` — ubi pulls binaries through the GitHub releases API, and without an authenticated token the unauthenticated rate limit fails the install step intermittently.
-- `setup-cpm@v1` installs `cpm`, and the explicit `cpm install -g` run step installs the two CPAN tools precious shells out to.
+- `setup-cpm` installs `cpm`, and the explicit `cpm install -g` run step installs the two CPAN tools precious shells out to.
 - A single recent stable Perl is enough for the lint job; nothing in this job exercises older Perls.
 - The `timeout-minutes` line carries the default marker defined in `tune-gh-actions-timeouts`; write the comment verbatim so that skill can later tighten the value.
 - `branches: [<default>]` + workflow-level `concurrency:` block — same conventions as `tune-perl-ci`. Resolve the default branch with the `git symbolic-ref` command shown above and substitute before writing the file.
@@ -435,7 +433,7 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 
 T5 writes `timeout-minutes` only in a freshly written `lint.yml`; it never adds or changes one in an existing file — `tune-gh-actions-timeouts` sets that from run history.
 
-**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds the GHA context to `env:` (`EVENT_NAME` / `BASE_REF`) rather than interpolating `${{ … }}` into `run:`, and its incremental arm fetches `origin/$BASE_REF` before diffing against it; the `checkout` step sets `fetch-depth: 0`; if T5 wrote the file fresh, the `precious` job sets `timeout-minutes`; every `uses:` ref in the file resolves to a tag that exists (`gh api repos/<owner>/<repo>/git/refs/tags/<ref>` returns the ref, not a 404).
+**Verify:** `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds the GHA context to `env:` (`EVENT_NAME` / `BASE_REF`) rather than interpolating `${{ … }}` into `run:`, and its incremental arm fetches `origin/$BASE_REF` before diffing against it; the `checkout` step sets `fetch-depth: 0`; if T5 wrote the file fresh, the `precious` job sets `timeout-minutes`.
 
 ### 6. Add `.githooks/pre-commit` hook for `precious lint`
 
@@ -573,11 +571,19 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 - `grep -q 'precious lint' .githooks/pre-commit` — the precious invocation survived.
 - If `dist.ini` exists: `dzil build --no-tgz` exits 0 AND `find <DistName>-*/ -path '*/.githooks/pre-commit'` returns nothing — confirms the prune landed.
 
+### 7. SHA-pin `uses:` refs
+
+**What:** apply `pin-gh-actions` to `.github/workflows/lint.yml`: pin every external `uses:` ref to a commit SHA with a version comment, and add the Dependabot `github-actions` entry if it is missing. Skip if T5 left no `lint.yml`.
+
+**Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs its tag pins fixed, and a separate commit keeps that revertable.
+
+**Verify:** the `pin-gh-actions` Verify checks pass for `lint.yml`.
+
 ## Algorithm
 
 ```
 1. Detect mode (migrate / greenfield / tune / typos-only). Exit clean if no Perl files AND no typos config.
-2. For each transform T1..T6 in order, classify into one of:
+2. For each transform T1..T7 in order, classify into one of:
    - NO-OP:   change set is empty; skip silently.
    - APPLY:   change set is non-empty AND it is safe to write
               (the transform's per-step rules don't say "report drift").
@@ -604,6 +610,7 @@ Suggested commit subjects:
 | 4 | `dist.ini: drop Code::TidyAll plugin and prereqs` |
 | 5 | `ci: add precious lint job` |
 | 6 | `hooks: add .githooks/pre-commit for precious lint` |
+| 7 | `ci: SHA-pin lint.yml actions` |
 
 Every commit ends with a blank line then the `Co-authored-by` trailer from `docs/attribution.md`
 (display name = the model running at runtime).
@@ -653,7 +660,7 @@ select = .stopwords
 
 ### After
 
-Six commits land:
+Seven commits land:
 
 1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config). Because this is a dzil repo and the `[@Author::OALDERS]` bundle owns `[Git::GatherDir]`, the same commit also keeps `precious.toml` out of the dist by appending `filename = precious.toml` to a `[PruneFiles]` block — `exclude_filename` isn't reachable from `dist.ini` when the bundle owns the gather step (see `working-with-dist-zilla` §7). Its commit message ends with a blank line then the trailer from `docs/attribution.md`:
 
@@ -696,6 +703,7 @@ Six commits land:
    ```
 
    Commit body notes that contributors activate the hook once per clone with `.githooks/pre-commit --init` (or `git config core.hooksPath .githooks`), which the shared `.git` config then applies to every worktree.
+7. `ci: SHA-pin lint.yml actions` — T5 already wrote SHA pins, so this commit only adds the `github-actions` entry to `.github/dependabot.yml` (the repo had none) and runs `tune-dependabot-config` on it.
 
 `cpanfile` is regenerated by T4's `dzil build` and is the only build-output file committed alongside `dist.ini`; `META.json`, `Makefile.PL`, `README.md` are reverted.
 
@@ -709,8 +717,9 @@ After **each** transform, before committing:
 | 2 | `grep -E '(^\|\s)(-b\|--backup-and-modify-in-place)(\s\|$)' .perltidyrc` returns nothing; `git ls-files perltidyrc` returns nothing |
 | 3 | `git ls-files \| grep -E '(^\|/)tidyall'` returns nothing; `.gitignore` has no `tidyall` line |
 | 4 | `dzil build --no-tgz` exits 0; `grep -E '(Code::TidyAll\|Test::Vars\|Pod::Wordlist\|Parallel::ForkManager)' <DistName>-*/META.json` returns nothing |
-| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds `EVENT_NAME`/`BASE_REF` via `env:` (no `${{ … }}` in `run:`), has a `--git-diff-from origin/$BASE_REF` PR arm and an `--all` else arm, and `checkout` uses `fetch-depth: 0`; if T5 wrote the file fresh, the `precious` job sets `timeout-minutes`; every `uses:` ref resolves to an existing tag |
+| 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds `EVENT_NAME`/`BASE_REF` via `env:` (no `${{ … }}` in `run:`), has a `--git-diff-from origin/$BASE_REF` PR arm and an `--all` else arm, and `checkout` uses `fetch-depth: 0`; if T5 wrote the file fresh, the `precious` job sets `timeout-minutes` |
 | 6 | `sh -n .githooks/pre-commit` exits 0; `[ -x .githooks/pre-commit ]`; `grep -q 'precious lint' .githooks/pre-commit`; if a `make init` target was added, it runs `git config core.hooksPath .githooks`; if `dist.ini` exists, `dzil build --no-tgz` exits 0 and `find <DistName>-*/ -path '*/.githooks/pre-commit'` returns nothing |
+| 7 | the `pin-gh-actions` Verify checks pass for `lint.yml` |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
 
@@ -728,7 +737,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Wiring up `typos` in `precious.toml` without a typos config | Introduces a new lint dimension on a previously-clean tree; users get noisy false positives | Only emit the `typos` block when `typos.toml` / `_typos.toml` / `.typos.toml` exists at repo root |
 | Adding `crate-ci/typos` to the ubi `projects:` list without wiring the `typos` command | CI installs a tool the lint run won't use; wastes a download and confuses readers | Add `crate-ci/typos` to T5 only when T1 wired the typos block |
 | Using `tools:` for the ubi-action input | `oalders/install-ubi-action` reads `inputs.projects`, not `inputs.tools` — unknown inputs are silently dropped, so no binaries get installed and `precious lint --all` fails on missing commands | Use `projects:` (the documented input name) |
-| Pinning an action to `@v1` (or any tag) without checking it exists | Not every action reaches `v1` — `oalders/install-ubi-action`'s latest is `v0.0.6`. A non-existent ref fails the workflow on every run | Resolve a real tag with `gh api repos/<owner>/<repo>/releases/latest` (or `/tags`) before writing each `uses:` line |
+| Pinning an action to a tag (`@v1`, `@v0.0.6`) | A tag can be moved to different code, and not every action has a `v1` | Pin a commit SHA with a version comment per `pin-gh-actions` |
 | Omitting `GITHUB_TOKEN` from the `install-ubi-action` step | ubi hits the GitHub releases API unauthenticated; the lower rate limit fails the install step intermittently | Pass `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` under the action's `with:` |
 | Adding a precious-lint job to a workflow that has a build job, with no `needs:` | Lint burns a runner while the build is already broken; the failure signal is muddied | Give the lint job `needs: <build-job>` whenever it shares a workflow with a build job |
 | Running `precious lint --all` unconditionally on every event | Re-lints the whole tree on every PR, so unrelated pre-existing lint debt fails an otherwise-clean PR, and it's slower than checking only the diff | Gate on `github.event_name == "pull_request"` (bind it to `EVENT_NAME` via `env:`): incremental `--git-diff-from "origin/$BASE_REF"` on PRs, `--all` otherwise |
@@ -737,7 +746,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 | Interpolating `${{ github.base_ref }}` directly into the lint step's `run:` block | Untrusted context substituted as literal script text is only safe because GitHub's ref-name validation happens to reject shell metacharacters — a template that relies on that external check is fragile | Bind `BASE_REF`/`EVENT_NAME` under `env:` and reference `"$BASE_REF"` / `"$EVENT_NAME"`; safe by construction (GitHub's documented hardening guidance) |
 | Leaving `actions/checkout` at the default shallow depth | `--git-diff-from <base>` needs the merge base; a `fetch-depth: 1` clone can omit it, so the diff fails or over-reports on long-lived branches | Set `fetch-depth: 0` on the `checkout` step |
 | Adding `App::perlvars` to runtime prereqs | It's a develop-only tool | Use `[Prereqs / DevelopRequires]` |
-| Bundling all six transforms into one commit | Can't revert one transform without the others | One commit per transform |
+| Bundling all seven transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Overwriting an existing `.github/workflows/lint.yml` | The user may have a custom lint shape | Detect drift, surface it, skip — don't overwrite hand-rolled workflows |
 | Guessing the tidyall prereqs-block moniker | Bundle authors pick these ad-hoc; `'Modules for use with tidyall'` is `@Author::OALDERS`-specific | `perldoc -lm Dist::Zilla::PluginBundle::Author::Foo` and read the source |
 | Hardcoding `default_branch="main"` in `.githooks/pre-commit` on a `master` repo | The branch guard silently never fires; direct commits to `master` slip through | Resolve via `git symbolic-ref --short refs/remotes/origin/HEAD` before writing T6 — same recipe as T5 |
@@ -758,7 +767,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **`precious lint --all` passes locally but the new CI job fails on `omegasort` (or any other binary)** → `oalders/install-ubi-action` step missing, using `tools:` instead of `projects:` (silently dropped → nothing installed), or wrong slug in `projects:`; check the input key is `projects:` and the slug is `houseabsolute/omegasort`.
 - **The merge queue fails with `fatal: ambiguous argument 'origin/': unknown revision or path not in the working tree`** → the lint step's incremental arm is gated on `github.ref` (or runs unconditionally) instead of `github.event_name`. `github.base_ref` is empty in `merge_group`/`push`, so `--git-diff-from origin/` has no ref. Gate on `github.event_name == "pull_request"` so the diff arm only runs where `base_ref` is populated.
 - **`--git-diff-from origin/<base>` fails on a PR against a non-default branch** → the step fetched a hardcoded default branch instead of the PR base, so `origin/<base>` was never created locally. Bind `BASE_REF: ${{ github.base_ref }}` under `env:` and fetch `"$BASE_REF:refs/remotes/origin/$BASE_REF"` before diffing.
-- **A workflow run fails immediately with `Unable to resolve action owner/repo@vN, repository or version not found`** → the pinned action tag does not exist (e.g. `install-ubi-action@v1` — there is no `v1`); resolve the real latest tag with `gh api` and re-pin.
+- **A workflow run fails immediately with `Unable to resolve action owner/repo@vN, repository or version not found`** → the pinned ref does not exist (e.g. `install-ubi-action@v1` — there is no `v1`); re-pin per `pin-gh-actions`.
 - **The `install-ubi-action` step fails intermittently with a GitHub API 403 / rate-limit error** → `GITHUB_TOKEN` is missing from the step's `with:`; add `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}`.
 - **`precious config list` errors with TOML parse failure after T1** → quoting issue in the heredoc that generated the file; re-emit `precious.toml` from a real template, not string concatenation.
 - **`Test::Vars` still appears in `develop_requires` of `META.json`** → the bundle's tidyall Prereqs block uses a moniker different from `'Modules for use with tidyall'`; read the bundle source and use the right name in `-remove`.
@@ -775,7 +784,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 ## Related
 
 - `kitchen-sink:working-with-dist-zilla` — `dzil` patterns this skill leans on (PluginRemover vs RemovePrereqs, `CopyFilesFromBuild` rule, `dzil test --release --author`, and §7's tooling-config exclusion — the canonical `exclude_filename` vs `[PruneFiles]` list this skill defers to for `precious.toml` / `.perltidyrc` / `.githooks/pre-commit`).
-- `kitchen-sink:tune-perl-ci` — sister skill for the test workflow; the lint job in T5 follows its conventions (concurrency, default-branch push, `setup-cpm@v1` + an explicit `cpm install` run step). The lint job pins Perl 5.42, so the `version: compat` selector from `tune-perl-ci` transform 6 (which pins cpm `0.998003` for Perls ≤ 5.22) is intentionally omitted here — on 5.42 `setup-cpm` installs the latest cpm anyway.
+- `kitchen-sink:tune-perl-ci` — sister skill for the test workflow; the lint job in T5 follows its conventions (concurrency, default-branch push, `setup-cpm` + an explicit `cpm install` run step). The lint job pins Perl 5.42, so the `version: compat` selector from `tune-perl-ci` transform 6 (which pins cpm `0.998003` for Perls ≤ 5.22) is intentionally omitted here — on 5.42 `setup-cpm` installs the latest cpm anyway.
 - `kitchen-sink:tune-gh-actions-timeouts` — owns the `timeout-minutes` marker heuristic.
 - [precious on GitHub](https://github.com/houseabsolute/precious) — tool homepage.
 - [omegasort on GitHub](https://github.com/houseabsolute/omegasort) — sorter used by `omegasort-gitignore` / `omegasort-stopwords`.
