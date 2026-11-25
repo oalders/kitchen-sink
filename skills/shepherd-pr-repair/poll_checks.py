@@ -30,6 +30,12 @@ EXIT = {"GREEN": 0, "FAILED": 1, "STALL": 2, "TIMEOUT": 3, "ERROR": 4}
 FAILED_STATES = ("STALE", "STARTUP_FAILURE")  # gh buckets these as pending, but they never finish
 RUN_LINK = re.compile(r"^https://github\.com/([^/]+/[^/]+)/actions/runs/(\d+)")
 PR_URL = re.compile(r"^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/\d+$")
+# gh's network errors have no stable wording, so only clearly permanent ones stop the poll; the rest are retried
+PERMANENT = re.compile(
+    r"HTTP 40[14]\b|gh auth login|Could not resolve to a PullRequest|no pull requests found"
+    r"|a bucket this script doesn't know",  # shepherd.read_checks
+    re.IGNORECASE,
+)
 
 
 def env_seconds(name, default):
@@ -97,7 +103,7 @@ def poll(pr, head, interval, timeout, stall_after, require):
             last_error = None  # an error a good read followed isn't why we give up
         except shepherd.GhError as e:  # retried next poll, unless retrying can't help
             last_error = str(e).splitlines()[0]
-            if not shepherd_rules.is_resumable_gh_error(e.cmd, e.stderr):
+            if PERMANENT.search(e.stderr):
                 print(f"LAST_GH_ERROR={last_error}")
                 return "ERROR"
         if checks is not None:

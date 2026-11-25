@@ -206,8 +206,15 @@ class Poll(unittest.TestCase):
         self.assertEqual(len(self.sleeps), 10)
 
     def test_gh_error_retried(self):
-        self.replies[CHECKS] = [(1, "", "HTTP 502: Bad Gateway"), checks(check())]
-        self.assertEqual(self.main(), (0, ["VERDICT=GREEN"]))
+        for stderr in (
+            "HTTP 502: Bad Gateway",
+            "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com",
+            "HTTP 403: API rate limit exceeded for user ID 1.",
+            "",
+        ):
+            with self.subTest(stderr):
+                self.replies[CHECKS] = [(1, "", stderr), checks(check())]
+                self.assertEqual(self.main(), (0, ["VERDICT=GREEN"]))
 
     def test_gh_error_reported_on_timeout(self):
         self.replies["gh pr view 7"] = (1, "", "HTTP 502: Bad Gateway")
