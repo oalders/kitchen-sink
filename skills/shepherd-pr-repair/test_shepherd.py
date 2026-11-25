@@ -486,12 +486,25 @@ class TestReadChecks(Env):
                 with self.assertRaises(sh.GhError):
                     sh.read_checks("7")
 
-    def test_malformed_checks_raise(self):
-        for bad in ({"name": "t"}, [1], [{"name": "t", "bucket": "pass"}], [{"name": 1, "bucket": "pass", "state": "SUCCESS"}]):
+    def test_check_attached_between_reads_is_reread(self):
+        good = [{"name": "t", "bucket": "pass", "state": "SUCCESS", "workflow": "w", "link": ""}]
+        self.replies.update({"gh pr checks 7": [self.NONE, (0, json.dumps(good), "")], self.ROLLUP: json.dumps({"statusCheckRollup": [{"name": "t"}]})})
+        self.assertEqual(sh.read_checks("7"), good)
+
+    def test_malformed_checks_raise_resumable(self):
+        bad_replies = (
+            {"name": "t"},
+            [1],
+            [{"name": "t", "bucket": "pass"}],
+            [{"name": 1, "bucket": "pass", "state": "SUCCESS"}],
+            [{"name": "t", "bucket": "someday", "state": "SUCCESS"}],
+        )
+        for bad in bad_replies:
             with self.subTest(bad):
                 self.replies["gh pr checks 7"] = json.dumps(bad)
-                with self.assertRaises(sh.GhError):
+                with self.assertRaises(sh.GhError) as cm:
                     sh.read_checks("7")
+                self.assertTrue(rules.is_resumable_gh_error(cm.exception.cmd, cm.exception.stderr))
 
 
 class TestStart(Env):
