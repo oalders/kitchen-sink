@@ -471,6 +471,29 @@ class TestWriteTail(unittest.TestCase):
         self.assertEqual(text, "a" * (sh.LOG_BYTES - 1))
 
 
+class TestReadChecks(Env):
+    NONE = (1, "", "no checks reported on the 'fix-174' branch")
+    ROLLUP = "gh pr view 7 --json statusCheckRollup"
+
+    def test_no_checks_confirmed_by_an_empty_rollup(self):
+        self.replies.update({"gh pr checks 7": self.NONE, self.ROLLUP: json.dumps({"statusCheckRollup": []})})
+        self.assertEqual(sh.read_checks("7"), [])
+
+    def test_not_json_with_a_rollup_raises(self):
+        for rollup in (json.dumps({"statusCheckRollup": [{"name": "t"}]}), json.dumps({}), "[]"):
+            with self.subTest(rollup):
+                self.replies.update({"gh pr checks 7": self.NONE, self.ROLLUP: rollup})
+                with self.assertRaises(sh.GhError):
+                    sh.read_checks("7")
+
+    def test_malformed_checks_raise(self):
+        for bad in ({"name": "t"}, [1], [{"name": "t", "bucket": "pass"}], [{"name": 1, "bucket": "pass", "state": "SUCCESS"}]):
+            with self.subTest(bad):
+                self.replies["gh pr checks 7"] = json.dumps(bad)
+                with self.assertRaises(sh.GhError):
+                    sh.read_checks("7")
+
+
 class TestStart(Env):
     def test_start_writes_state(self):
         code, out = self.main("start", "--model", "Opus 5.5")

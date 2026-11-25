@@ -20,6 +20,7 @@ _spec.loader.exec_module(pc)
 
 HEAD = "c5bf4f3aed0123456789abcdef0123456789abcd"
 CHECKS = "gh pr checks 7"
+ROLLUP = "gh pr view 7 --json statusCheckRollup"
 
 
 def check(name="test", bucket="pass", state="SUCCESS"):
@@ -28,6 +29,10 @@ def check(name="test", bucket="pass", state="SUCCESS"):
 
 def checks(*cs):
     return json.dumps(list(cs))
+
+
+def view(head=HEAD, fork=False):
+    return json.dumps({"headRefOid": head, "isCrossRepository": fork})
 
 
 def line(name, state):
@@ -39,7 +44,7 @@ class Poll(unittest.TestCase):
     """A fake `run` keyed on the command's leading words, longest first; a list replies once per call, its last repeating."""
 
     def setUp(self):
-        self.replies = {"gh pr view 7": json.dumps({"headRefOid": HEAD})}
+        self.replies = {"gh pr view 7": view()}
         self.sleeps = []
         for target, name, fake in (
             (pc.shepherd, "run", self.fake_run),
@@ -148,11 +153,35 @@ class Poll(unittest.TestCase):
 
     def test_no_checks_stalls(self):
         self.replies[CHECKS] = (1, "", "no checks reported on the 'fix-232' branch")
+        self.replies[ROLLUP] = json.dumps({"statusCheckRollup": []})
         self.assertEqual(self.main(), (2, ["VERDICT=STALL"]))
         self.assertEqual(self.sleeps, [10, 10, 10])
 
+    def test_unconfirmed_no_checks_retried(self):  # gh's reply isn't JSON, but the rollup has checks
+        self.replies[CHECKS] = (1, "", "no checks reported on the 'fix-232' branch")
+        self.replies[ROLLUP] = json.dumps({"statusCheckRollup": [{"name": "test"}]})
+        self.assertEqual(self.main()[1][-1], "VERDICT=TIMEOUT")
+
+    def test_malformed_checks_retried(self):
+        for bad in (json.dumps({"name": "test"}), json.dumps([1]), json.dumps([{"name": "test", "bucket": "pass"}])):
+            with self.subTest(bad):
+                self.sleeps.clear()
+                self.replies[CHECKS] = [bad, checks(check())]
+                self.assertEqual(self.main(), (0, ["VERDICT=GREEN"]))
+                self.assertEqual(self.sleeps, [10])
+
+    def test_fork_green_needs_attention(self):
+        self.replies["gh pr view 7"] = view(fork=True)
+        self.replies[CHECKS] = checks(check())
+        self.assertEqual(self.main(), (0, ["FORK_PR=1", "NEEDS_ATTENTION=1", "VERDICT=GREEN"]))
+
+    def test_fork_failed_is_not_flagged(self):
+        self.replies["gh pr view 7"] = view(fork=True)
+        self.replies[CHECKS] = checks(check(bucket="fail", state="FAILURE"))
+        self.assertEqual(self.main(), (1, [line("test", "FAILURE"), 'FAILED_CHECKS=["test"]', "VERDICT=FAILED"]))
+
     def test_pr_head_not_head_stalls(self):
-        self.replies["gh pr view 7"] = json.dumps({"headRefOid": "0" * 40})
+        self.replies["gh pr view 7"] = view("0" * 40)
         self.replies[CHECKS] = checks(check())  # the old head's green checks don't count
         self.assertEqual(self.main(), (2, ["PR_HEAD=" + "0" * 40, "VERDICT=STALL"]))
 
@@ -169,7 +198,7 @@ class Poll(unittest.TestCase):
         self.replies["gh pr view 7"] = (1, "", "HTTP 502: Bad Gateway")
         self.assertEqual(
             self.main(),
-            (3, ["LAST_GH_ERROR=gh pr view 7 --json headRefOid failed (1): HTTP 502: Bad Gateway", "VERDICT=TIMEOUT"]),
+            (3, ["LAST_GH_ERROR=gh pr view 7 --json headRefOid,isCrossRepository failed (1): HTTP 502: Bad Gateway", "VERDICT=TIMEOUT"]),
         )
 
     def test_gh_error_cleared_by_a_later_read(self):
@@ -177,11 +206,17 @@ class Poll(unittest.TestCase):
         self.assertEqual(self.main(), (3, ["VERDICT=TIMEOUT"]))
 
     def test_malformed_pr_view_retried(self):
-        for bad in ("<html>", json.dumps({}), json.dumps([HEAD]), json.dumps({"headRefOid": HEAD + "\nx"})):
+        for bad in ("<html>", json.dumps({}), json.dumps([HEAD]), json.dumps({"headRefOid": HEAD}), view(fork="yes")):
             with self.subTest(bad):
-                self.replies["gh pr view 7"] = [bad, json.dumps({"headRefOid": HEAD})]
+                self.replies["gh pr view 7"] = [bad, view()]
                 self.replies[CHECKS] = checks(check())
                 self.assertEqual(self.main(), (0, ["VERDICT=GREEN"]))
+        with self.subTest("headRefOid is not a SHA"):  # main rejects a non-SHA head, so drive poll directly
+            self.sleeps.clear()
+            self.replies["gh pr view 7"] = [view("main"), view()]
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = pc.poll("7", "main", 10, 100, 30, None)  # read at once, unguarded, it would be GREEN
+            self.assertEqual((result, self.sleeps), ("STALL", [10, 10, 10]))
 
     def test_require_check_blocks_green_until_it_attaches(self):
         os.environ["POLL_REQUIRE_CHECK"] = "^deploy$"
@@ -214,7 +249,9 @@ class Poll(unittest.TestCase):
         self.assertEqual(self.main(), (64, []))
 
     def test_usage(self):
-        self.assertEqual(self.main("7"), (64, []))
+        for argv in (("7",), ("x7", HEAD), ("7", "main"), ("7", HEAD.upper())):
+            with self.subTest(argv):
+                self.assertEqual(self.main(*argv), (64, []))
 
 
 if __name__ == "__main__":

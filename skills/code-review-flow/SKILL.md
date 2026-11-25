@@ -250,7 +250,7 @@ Once the review finds no remaining issues:
 1. Post the final clean review to the PR (if one exists)
 2. **Check if `/monitor-ci` slash command exists** in the current project's available skills
 3. If `/monitor-ci` exists, invoke it to monitor CI status
-4. If `/monitor-ci` does not exist, fall back to `/poll-ci` (the generic `gh`-based CI poller) to monitor CI status
+4. If `/monitor-ci` does not exist, fall back to `/poll-ci` (the generic `gh`-based CI poller) to monitor CI status; it needs an open PR for the branch (see `/poll-ci`)
 5. If neither command is available, inform the user the review is complete
 
 ## Example

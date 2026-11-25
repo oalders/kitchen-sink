@@ -5,7 +5,8 @@ Usage: poll_checks.py PR HEAD_SHA
 
 Prints one `CHECK <json>` line per failing or cancelled check, with keys state, name, link and run_id (the
 Actions run id from link, else null); then JSON arrays of names in `FAILED_CHECKS=` (on FAILED) and
-`CANCELLED_CHECKS=` (when any were cancelled); `NEEDS_ATTENTION=1` on GREEN with a cancelled check, or on
+`CANCELLED_CHECKS=` (when any were cancelled); `FORK_PR=1` on GREEN for a PR from a fork, whose author controls
+its workflows and check names; `NEEDS_ATTENTION=1` on GREEN with a cancelled check or from a fork, or on
 FAILED when nothing failed for real (every failure is ACTION_REQUIRED, or nothing passed: then the cancelled
 and skipped checks are the failing ones); `PR_HEAD=` (on STALL, when the PR's head isn't HEAD_SHA) and
 `LAST_GH_ERROR=` (on TIMEOUT, after a `gh` error since the last good read); and last
@@ -39,13 +40,16 @@ def env_seconds(name, default):
 
 
 def snapshot(pr, head):
-    """The PR's head and its checks; checks on another head aren't HEAD's, so they count as none yet."""
-    args = ["pr", "view", pr, "--json", "headRefOid"]
+    """The PR's head, whether it is from a fork, and its checks; checks on another head aren't HEAD's, so they count as
+    none yet."""
+    args = ["pr", "view", pr, "--json", "headRefOid,isCrossRepository"]
     view = shepherd.gh_json(args)
-    pr_head = view.get("headRefOid") if isinstance(view, dict) else None
-    if not (isinstance(pr_head, str) and shepherd_rules.valid_sha(pr_head)):  # a blip like a non-zero exit: retried
-        raise shepherd.GhError(["gh", *args], 0, "reply has no valid headRefOid")
-    return pr_head, (shepherd.read_checks(pr) if pr_head == head else [])
+    view = view if isinstance(view, dict) else {}
+    pr_head, fork = view.get("headRefOid"), view.get("isCrossRepository")
+    # a blip like a non-zero exit: retried
+    if not (isinstance(pr_head, str) and shepherd_rules.valid_sha(pr_head) and isinstance(fork, bool)):
+        raise shepherd.GhError(["gh", *args], 0, "reply has no valid headRefOid or isCrossRepository")
+    return pr_head, fork, (shepherd.read_checks(pr) if pr_head == head else [])
 
 
 def verdict(checks, require):
@@ -77,7 +81,7 @@ def poll(pr, head, interval, timeout, stall_after, require):
     while True:
         checks = None
         try:
-            pr_head, checks = snapshot(pr, head)
+            pr_head, fork, checks = snapshot(pr, head)
             last_error = None  # an error a good read followed isn't why we give up
         except shepherd.GhError as e:  # retried next poll
             last_error = str(e).splitlines()[0]
@@ -91,7 +95,10 @@ def poll(pr, head, interval, timeout, stall_after, require):
                     print("FAILED_CHECKS=" + json.dumps([c["name"] for c in failing]))
                 if cancelled:
                     print("CANCELLED_CHECKS=" + json.dumps([c["name"] for c in cancelled]))
-                if needs_attention:
+                fork = fork and result == "GREEN"  # a fork's author controls its workflows and check names
+                if fork:
+                    print("FORK_PR=1")
+                if needs_attention or fork:
                     print("NEEDS_ATTENTION=1")
                 return result
             if not checks and elapsed >= stall_after:
@@ -107,7 +114,7 @@ def poll(pr, head, interval, timeout, stall_after, require):
 
 
 def main(argv):
-    if len(argv) != 2:
+    if len(argv) != 2 or not shepherd_rules.valid_id(argv[0]) or not shepherd_rules.valid_sha(argv[1]):
         print("usage: poll_checks.py PR HEAD_SHA", file=sys.stderr)
         return 64
     try:

@@ -572,15 +572,21 @@ def reread(state):
 
 
 def read_checks(n):
-    """`gh pr checks` exits non-zero for pending or failing checks, so its JSON decides."""
+    """`gh pr checks` exits non-zero for pending or failing checks, so its JSON decides. With no checks attached its
+    reply isn't JSON; an empty statusCheckRollup, which it is built from, confirms that."""
     cmd = ["gh", "pr", "checks", n, "--json", "name,bucket,state,workflow,link"]
     proc = run(cmd, check=False)
-    if "no checks reported" in proc.stderr:
-        return []
     try:
-        return json.loads(proc.stdout)
+        checks = json.loads(proc.stdout)
     except ValueError:
+        view = gh_json(["pr", "view", n, "--json", "statusCheckRollup"])
+        if isinstance(view, dict) and view.get("statusCheckRollup") == []:
+            return []
         raise GhError(cmd, proc.returncode, proc.stderr) from None
+    fields = ("name", "bucket", "state")
+    if not (isinstance(checks, list) and all(isinstance(c, dict) and all(isinstance(c.get(k), str) for k in fields) for c in checks)):
+        raise GhError(cmd, proc.returncode, "reply is not a list of checks")
+    return checks
 
 
 def status(state, snap):
