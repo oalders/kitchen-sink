@@ -158,6 +158,7 @@ Task(general-purpose):
     - Security headers: see Response Path
     - Error handling: Generic errors to users, detailed logs server-side?
     - HTTPS: Enforced everywhere?
+    - GitHub Actions: Every added or changed external `uses:` ref pinned to a 40-hex commit SHA with a `# <tag>` comment, not a tag or branch? (Fix: `kitchen-sink:pin-gh-actions`.)
 
     ### Broken Access Control
 
@@ -213,7 +214,7 @@ Task(general-purpose):
     [Remote code execution, authentication bypass, data breach, privilege escalation]
 
     #### Important (Fix Before Production)
-    [Missing input validation, weak crypto, authorization gaps, sensitive data exposure; missing CSP on a surface that renders user-influenced content or holds a session token; open redirect on a sign-in or auth flow (phishing primitive)]
+    [Missing input validation, weak crypto, authorization gaps, sensitive data exposure; missing CSP on a surface that renders user-influenced content or holds a session token; open redirect on a sign-in or auth flow (phishing primitive); an added or changed external `uses:` ref not pinned to a commit SHA]
 
     #### Minor (Harden When Possible)
     [Other missing hardening headers, verbose errors, outdated dependencies]

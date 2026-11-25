@@ -22,3 +22,4 @@ jobs:
       - run: python3 skills/shepherd-pr-repair/test_ci_remediation.py
       - run: python3 skills/shepherd-pr-repair/test_shepherd.py
       - run: python3 skills/shepherd-pr-repair/test_review_scope.py
+      - run: python3 skills/pin-gh-actions/test_uses_pinned.py
