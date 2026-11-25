@@ -22,7 +22,7 @@ Pin every external `uses:` ref to a full commit SHA with the tag as a trailing c
 
 For each in-scope `uses:` line you add, bump, or edit. When another skill or a request applies this skill to a whole file, every in-scope line in it counts as edited.
 
-Untrusted input: refs and `# <tag>` comments come from workflow files. Before putting one in a command, check `<owner>/<repo>` matches `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$` and the tag matches `^[A-Za-z0-9._/+-]+$`. If either check fails, report the line and run nothing for it.
+Untrusted input: refs and `# <tag>` comments come from workflow files, and tag names from `gh api` come from the action's maintainer. Before putting any of them in a command or a comment, check `<owner>/<repo>` matches `^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$` and the tag matches `^[A-Za-z0-9][A-Za-z0-9._+-]*(/[A-Za-z0-9][A-Za-z0-9._+-]*)*$` and contains no `..`. If a check fails, report the line and run nothing for it.
 
 First match the line's current ref:
 
