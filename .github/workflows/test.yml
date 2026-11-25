@@ -21,5 +21,6 @@ jobs:
       - run: python3 skills/codex-review-loop/test_codex_loop.py
       - run: python3 skills/shepherd-pr-repair/test_ci_remediation.py
       - run: python3 skills/shepherd-pr-repair/test_shepherd.py
+      - run: python3 skills/shepherd-pr-repair/test_poll_checks.py
       - run: python3 skills/shepherd-pr-repair/test_review_scope.py
       - run: python3 skills/pin-gh-actions/test_uses_pinned.py

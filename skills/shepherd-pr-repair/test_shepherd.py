@@ -471,6 +471,50 @@ class TestWriteTail(unittest.TestCase):
         self.assertEqual(text, "a" * (sh.LOG_BYTES - 1))
 
 
+class TestReadChecks(Env):
+    NONE = (1, "", "no checks reported on the 'fix-174' branch")
+    ROLLUP = "gh pr view 7 --json statusCheckRollup"
+
+    def test_no_checks_confirmed_by_an_empty_rollup(self):
+        self.replies.update({"gh pr checks 7": self.NONE, self.ROLLUP: json.dumps({"statusCheckRollup": []})})
+        self.assertEqual(sh.read_checks("7"), [])
+
+    def test_not_json_with_a_rollup_raises(self):
+        # a rollup with checks on both reads is a blip, waited out; an unreadable rollup is gh's own error
+        for rollup, resumable in ((json.dumps({"statusCheckRollup": [{"name": "t"}]}), True), (json.dumps({}), False), ("[]", False)):
+            with self.subTest(rollup):
+                self.replies.update({"gh pr checks 7": self.NONE, self.ROLLUP: rollup})
+                with self.assertRaises(sh.GhError) as cm:
+                    sh.read_checks("7")
+                self.assertEqual(rules.is_resumable_gh_error(cm.exception.cmd, cm.exception.stderr), resumable)
+
+    def test_check_attached_between_reads_is_reread(self):
+        good = [{"name": "t", "bucket": "pass", "state": "SUCCESS", "workflow": "w", "link": ""}]
+        self.replies.update({"gh pr checks 7": [self.NONE, (0, json.dumps(good), "")], self.ROLLUP: json.dumps({"statusCheckRollup": [{"name": "t"}]})})
+        self.assertEqual(sh.read_checks("7"), good)
+
+    def test_malformed_checks_raise_resumable(self):
+        bad_replies = (
+            {"name": "t"},
+            [1],
+            [{"name": "t", "bucket": "pass"}],
+            [{"name": 1, "bucket": "pass", "state": "SUCCESS"}],
+        )
+        for bad in bad_replies:
+            with self.subTest(bad):
+                self.replies["gh pr checks 7"] = json.dumps(bad)
+                with self.assertRaises(sh.GhError) as cm:
+                    sh.read_checks("7")
+                self.assertTrue(rules.is_resumable_gh_error(cm.exception.cmd, cm.exception.stderr))
+
+    def test_unknown_bucket_stops(self):
+        self.replies["gh pr checks 7"] = json.dumps([{"name": "t", "bucket": "someday", "state": "SUCCESS"}])
+        with self.assertRaises(sh.GhError) as cm:
+            sh.read_checks("7")
+        self.assertFalse(rules.is_resumable_gh_error(cm.exception.cmd, cm.exception.stderr))
+        self.assertIn("bucket", cm.exception.stderr)
+
+
 class TestStart(Env):
     def test_start_writes_state(self):
         code, out = self.main("start", "--model", "Opus 5.5")
@@ -2480,7 +2524,7 @@ class Watch(NextBase):
         i = self.calls.index("gh run rerun 11")
         after = [c for c in self.calls[i + 1 :] if not c.startswith("git ")]  # save_state finds the state dir
         self.assertEqual(after[0], "sleep 120")
-        self.assertIn("gh pr checks 7 --json name,bucket,state,workflow", after[1:])  # another pass
+        self.assertIn("gh pr checks 7 --json name,bucket,state,workflow,link", after[1:])  # another pass
         self.assertLessEqual(self.clock - NOW, 540)
         state = sh.load_state(7)
         self.assertEqual((state["rerun"], state["repairs"], state["ended"]), (1, 0, False))

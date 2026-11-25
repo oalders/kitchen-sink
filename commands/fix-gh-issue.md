@@ -293,7 +293,7 @@ In a `/shepherd-pr` hand-off, don't run this step: list anything in the **Leave 
 - You're not sure.
 
 **Otherwise run `gh pr ready`, then monitor CI** with a project-specific `/monitor-ci` if one exists, else `/poll-ci`.
-- The ready-flip fires `ready_for_review`, which starts a new run only if the workflow lists that trigger (GitHub's defaults don't). Otherwise monitoring finds the last push's run; `/poll-ci` handles "no run for HEAD yet."
+- The ready-flip fires `ready_for_review`, which starts a new run only if the workflow lists that trigger (GitHub's defaults don't). Otherwise monitoring watches the last push's checks; `/poll-ci` waits for checks on HEAD and reports when none attach.
 - A `pull_request_target` workflow listening for `ready_for_review` runs base-repo code with write-scoped secrets, so on such repos treat marking ready as secret-bearing and lean toward draft.
 - Monitoring is read-only: report the result and surface failing jobs. Never silently mark the task done, and never re-run `gh pr ready` or re-enter the workflow on a failure or timeout.
 

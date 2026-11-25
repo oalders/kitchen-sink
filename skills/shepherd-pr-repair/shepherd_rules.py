@@ -42,7 +42,7 @@ def timeout_minutes(raw):
 
 # --- Decision rules: pure functions of what GitHub reported, ported from /shepherd-pr's steps 3-6. ---
 
-FAILED_BUCKETS = ("fail", "cancel")
+FAILED_BUCKETS = ("fail", "cancel")  # cancel too, so rerun_choice reruns it before merging; poll_checks.verdict: neutral
 KNOWN_BUCKETS = ("pass", "fail", "pending", "skipping", "cancel")
 REVIEW_BLOCKED = ("REVIEW_REQUIRED", "CHANGES_REQUESTED")
 MAX_REPAIRS = 3
