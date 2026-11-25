@@ -67,6 +67,8 @@ class Poll(unittest.TestCase):
         reply = self.replies[key]
         if isinstance(reply, list):
             reply = reply.pop(0) if len(reply) > 1 else reply[0]
+        if isinstance(reply, Exception):
+            raise reply
         rc, out, err = reply if isinstance(reply, tuple) else (0, reply, "")
         if check and rc != 0:
             raise pc.shepherd.GhError(cmd, rc, err)
@@ -240,6 +242,12 @@ class Poll(unittest.TestCase):
         self.replies["gh pr view 7"] = json.dumps({"headRefOid": HEAD, "isCrossRepository": False, "url": "https://ghes.example/o/r/pull/7"})
         self.replies[CHECKS] = checks(c)
         self.assertEqual(self.main()[1][0], 'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/o/r/actions/runs/123", "run_id": null}')
+
+    def test_hung_gh_past_the_hard_end_times_out(self):
+        self.replies[CHECKS] = [(1, "", "HTTP 502: Bad Gateway"), pc.shepherd.OutOfBudget()]
+        code, (error, last) = self.main()
+        self.assertEqual((code, last, len(self.sleeps)), (3, "VERDICT=TIMEOUT", 1))
+        self.assertTrue(error.endswith(": HTTP 502: Bad Gateway"), error)
 
     def test_gh_error_cleared_by_a_later_read(self):
         self.replies[CHECKS] = [(1, "", "HTTP 502: Bad Gateway"), checks(check(bucket="pending", state="QUEUED"))]

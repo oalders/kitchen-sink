@@ -96,11 +96,14 @@ def check_line(c, repo):
 def poll(pr, head, interval, timeout, stall_after, require):
     pr_head, last_error = None, None
     elapsed = 0
+    shepherd.hard_end = time.time() + timeout + shepherd.CALL_TIMEOUT  # hung gh calls can't stretch the poll past it
     while True:
         checks = None
         try:
             pr_head, fork, repo, checks = snapshot(pr, head)
             last_error = None  # an error a good read followed isn't why we give up
+        except shepherd.OutOfBudget:
+            elapsed = timeout
         except shepherd.GhError as e:  # retried next poll, unless retrying can't help
             last_error = str(e).splitlines()[0]
             if PERMANENT.search(e.stderr):
