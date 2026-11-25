@@ -32,7 +32,7 @@ def checks(*cs):
 
 
 def view(head=HEAD, fork=False):
-    return json.dumps({"headRefOid": head, "isCrossRepository": fork})
+    return json.dumps({"headRefOid": head, "isCrossRepository": fork, "url": "https://github.com/o/r/pull/7"})
 
 
 def line(name, state):
@@ -145,6 +145,21 @@ class Poll(unittest.TestCase):
             'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/o/r/actions/runs/123/job/456", "run_id": 123}',
         )
 
+    def test_no_run_id_from_another_repos_link(self):
+        c = check(bucket="fail", state="FAILURE")
+        c["link"] = "https://github.com/evil/r/actions/runs/123"
+        self.replies[CHECKS] = checks(c)
+        self.assertEqual(
+            self.main()[1][0],
+            'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/evil/r/actions/runs/123", "run_id": null}',
+        )
+
+    def test_checks_read_as_the_head_moves_are_discarded(self):
+        moved = "0" * 40
+        self.replies["gh pr view 7"] = [view(), view(moved)]  # a push lands between the head read and the checks read
+        self.replies[CHECKS] = checks(check())  # the new head's checks, which gh can't tell apart from HEAD's
+        self.assertEqual(self.main(), (2, ["PR_HEAD=" + moved, "VERDICT=STALL"]))
+
     def test_stale_and_startup_failure_fail(self):
         for state in ("STALE", "STARTUP_FAILURE"):
             with self.subTest(state):
@@ -198,7 +213,7 @@ class Poll(unittest.TestCase):
         self.replies["gh pr view 7"] = (1, "", "HTTP 502: Bad Gateway")
         self.assertEqual(
             self.main(),
-            (3, ["LAST_GH_ERROR=gh pr view 7 --json headRefOid,isCrossRepository failed (1): HTTP 502: Bad Gateway", "VERDICT=TIMEOUT"]),
+            (3, ["LAST_GH_ERROR=gh pr view 7 --json headRefOid,isCrossRepository,url failed (1): HTTP 502: Bad Gateway", "VERDICT=TIMEOUT"]),
         )
 
     def test_gh_error_cleared_by_a_later_read(self):
@@ -206,7 +221,7 @@ class Poll(unittest.TestCase):
         self.assertEqual(self.main(), (3, ["VERDICT=TIMEOUT"]))
 
     def test_malformed_pr_view_retried(self):
-        for bad in ("<html>", json.dumps({}), json.dumps([HEAD]), json.dumps({"headRefOid": HEAD}), view(fork="yes")):
+        for bad in ("<html>", json.dumps({}), json.dumps([HEAD]), json.dumps({"headRefOid": HEAD, "isCrossRepository": False}), view(fork="yes")):
             with self.subTest(bad):
                 self.replies["gh pr view 7"] = [bad, view()]
                 self.replies[CHECKS] = checks(check())

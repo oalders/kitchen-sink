@@ -587,13 +587,11 @@ def read_checks(n, reread=True):
             return read_checks(n, reread=False)
         raise GhError(cmd, proc.returncode, proc.stderr) from None
     fields = ("name", "bucket", "state")
-    if not (
-        isinstance(checks, list)
-        and all(isinstance(c, dict) and all(isinstance(c.get(k), str) for k in fields) for c in checks)
-        and all(c["bucket"] in rules.KNOWN_BUCKETS for c in checks)  # a bucket newer than this code isn't a pass
-    ):
+    if not (isinstance(checks, list) and all(isinstance(c, dict) and all(isinstance(c.get(k), str) for k in fields) for c in checks)):
         # worded like gh_json's blip so the classifier waits it out rather than stopping
-        raise GhError(cmd, proc.returncode, "unexpected EOF: reply is not a list of known checks")
+        raise GhError(cmd, proc.returncode, "unexpected EOF: reply is not a list of checks")
+    if not all(c["bucket"] in rules.KNOWN_BUCKETS for c in checks):  # a bucket newer than this code isn't a pass
+        raise GhError(cmd, proc.returncode, "a check has a bucket this script doesn't know; update shepherd")
     return checks
 
 

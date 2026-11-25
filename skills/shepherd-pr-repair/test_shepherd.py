@@ -497,7 +497,6 @@ class TestReadChecks(Env):
             [1],
             [{"name": "t", "bucket": "pass"}],
             [{"name": 1, "bucket": "pass", "state": "SUCCESS"}],
-            [{"name": "t", "bucket": "someday", "state": "SUCCESS"}],
         )
         for bad in bad_replies:
             with self.subTest(bad):
@@ -505,6 +504,12 @@ class TestReadChecks(Env):
                 with self.assertRaises(sh.GhError) as cm:
                     sh.read_checks("7")
                 self.assertTrue(rules.is_resumable_gh_error(cm.exception.cmd, cm.exception.stderr))
+
+    def test_unknown_bucket_stops(self):
+        self.replies["gh pr checks 7"] = json.dumps([{"name": "t", "bucket": "someday", "state": "SUCCESS"}])
+        with self.assertRaises(sh.GhError) as cm:
+            sh.read_checks("7")
+        self.assertFalse(rules.is_resumable_gh_error(cm.exception.cmd, cm.exception.stderr))
 
 
 class TestStart(Env):
