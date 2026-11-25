@@ -9,8 +9,8 @@ Actions run id from a link to this PR's repo, else null); then JSON arrays of na
 its workflows and check names; `NEEDS_ATTENTION=1` on GREEN with a cancelled check or from a fork, or on
 FAILED when nothing failed for real (every failure is ACTION_REQUIRED, or nothing passed: then the cancelled
 and skipped checks are the failing ones); `PR_HEAD=` (on STALL, when the PR's head isn't HEAD_SHA) and
-`LAST_GH_ERROR=` (on TIMEOUT, after a `gh` error since the last good read); and last
-`VERDICT=GREEN|FAILED|STALL|TIMEOUT`. Exit 0, 1, 2 or 3 to match; 64 for a usage error.
+`LAST_GH_ERROR=` (on TIMEOUT, after a `gh` error since the last good read, and on ERROR, a `gh` error that retrying
+won't fix); and last `VERDICT=GREEN|FAILED|STALL|TIMEOUT|ERROR`. Exit 0-4 to match; 64 for a usage error.
 
 Env: POLL_INTERVAL (20), POLL_TIMEOUT (1780) and POLL_STALL_AFTER (300) seconds. POLL_REQUIRE_CHECK, a
 regex some passing check's name must match before GREEN, is env-only, for project monitor commands.
@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import shepherd  # noqa: E402
 import shepherd_rules  # noqa: E402
 
-EXIT = {"GREEN": 0, "FAILED": 1, "STALL": 2, "TIMEOUT": 3}
+EXIT = {"GREEN": 0, "FAILED": 1, "STALL": 2, "TIMEOUT": 3, "ERROR": 4}
 FAILED_STATES = ("STALE", "STARTUP_FAILURE")  # gh buckets these as pending, but they never finish
 RUN_LINK = re.compile(r"^https://github\.com/([^/]+/[^/]+)/actions/runs/(\d+)")
 PR_URL = re.compile(r"^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/\d+$")
@@ -45,11 +45,11 @@ def pr_view(pr):
     view = shepherd.gh_json(args)
     view = view if isinstance(view, dict) else {}
     pr_head, fork, url = view.get("headRefOid"), view.get("isCrossRepository"), view.get("url")
-    repo = PR_URL.match(url) if isinstance(url, str) else None
-    # a blip like a non-zero exit: retried
-    if not (isinstance(pr_head, str) and shepherd_rules.valid_sha(pr_head) and isinstance(fork, bool) and repo):
-        raise shepherd.GhError(["gh", *args], 0, "reply has no valid headRefOid, isCrossRepository or url")
-    return pr_head, fork, repo[1]
+    # worded like gh_json's blip, so poll retries it
+    if not (isinstance(pr_head, str) and shepherd_rules.valid_sha(pr_head) and isinstance(fork, bool)):
+        raise shepherd.GhError(["gh", *args], 0, "unexpected EOF: reply has no valid headRefOid or isCrossRepository")
+    repo = PR_URL.match(url) if isinstance(url, str) else None  # None (e.g. on GHES): no run_id, polling still works
+    return pr_head, fork, repo and repo[1].lower()
 
 
 def snapshot(pr, head):
@@ -82,7 +82,7 @@ def verdict(checks, require):
 def check_line(c, repo):
     link = c.get("link")
     m = RUN_LINK.match(link) if isinstance(link, str) else None
-    run_id = int(m[2]) if m and m[1] == repo else None  # a link to another repo's run would show the wrong logs
+    run_id = int(m[2]) if m and repo and m[1].lower() == repo else None  # a link to another repo's run would show the wrong logs
     # json.dumps escapes newlines, so an untrusted name or link can't start a protocol line of its own
     return "CHECK " + json.dumps({"state": c["state"], "name": c["name"], "link": link, "run_id": run_id})
 
@@ -95,8 +95,11 @@ def poll(pr, head, interval, timeout, stall_after, require):
         try:
             pr_head, fork, repo, checks = snapshot(pr, head)
             last_error = None  # an error a good read followed isn't why we give up
-        except shepherd.GhError as e:  # retried next poll
+        except shepherd.GhError as e:  # retried next poll, unless retrying can't help
             last_error = str(e).splitlines()[0]
+            if not shepherd_rules.is_resumable_gh_error(e.cmd, e.stderr):
+                print(f"LAST_GH_ERROR={last_error}")
+                return "ERROR"
         if checks is not None:
             result, failing, cancelled, needs_attention = verdict(checks, require)
             if result:

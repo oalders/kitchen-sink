@@ -22,6 +22,7 @@ Steps:
    - **FAILED** — **Fail**, unless it printed `NEEDS_ATTENTION=1`: then **Needs attention** (e.g. awaiting approval, or cancelled or skipped with nothing passing). List the `CHECK` lines, and offer `gh run view <run_id> --log-failed` only for a `CHECK` whose `run_id` is a number.
    - **STALL** — no checks are attached for HEAD. If it printed `PR_HEAD=`, HEAD isn't the PR's head (the PR is at that commit): push, or sync with the PR branch. Otherwise suggest `gh pr view --json mergeStateStatus,isDraft` to look for a merge conflict or a draft that CI skips, or a repo that runs no CI on PRs.
    - **TIMEOUT** — **In progress**: no verdict within ~30 minutes. Include `LAST_GH_ERROR=` if it printed one.
+   - **ERROR** — **Unknown**: polling stopped on a `gh` error that retrying won't fix; report its `LAST_GH_ERROR=` line.
    - Exit 64 or any other output — report it verbatim rather than guessing.
 
 **Notes:**

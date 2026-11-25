@@ -480,11 +480,13 @@ class TestReadChecks(Env):
         self.assertEqual(sh.read_checks("7"), [])
 
     def test_not_json_with_a_rollup_raises(self):
-        for rollup in (json.dumps({"statusCheckRollup": [{"name": "t"}]}), json.dumps({}), "[]"):
+        # a rollup with checks on both reads is a blip, waited out; an unreadable rollup is gh's own error
+        for rollup, resumable in ((json.dumps({"statusCheckRollup": [{"name": "t"}]}), True), (json.dumps({}), False), ("[]", False)):
             with self.subTest(rollup):
                 self.replies.update({"gh pr checks 7": self.NONE, self.ROLLUP: rollup})
-                with self.assertRaises(sh.GhError):
+                with self.assertRaises(sh.GhError) as cm:
                     sh.read_checks("7")
+                self.assertEqual(rules.is_resumable_gh_error(cm.exception.cmd, cm.exception.stderr), resumable)
 
     def test_check_attached_between_reads_is_reread(self):
         good = [{"name": "t", "bucket": "pass", "state": "SUCCESS", "workflow": "w", "link": ""}]
@@ -510,6 +512,7 @@ class TestReadChecks(Env):
         with self.assertRaises(sh.GhError) as cm:
             sh.read_checks("7")
         self.assertFalse(rules.is_resumable_gh_error(cm.exception.cmd, cm.exception.stderr))
+        self.assertIn("bucket", cm.exception.stderr)
 
 
 class TestStart(Env):

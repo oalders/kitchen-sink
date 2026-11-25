@@ -571,7 +571,7 @@ def reread(state):
     return {"pr": pr, "checks": checks, "queue": queue}
 
 
-def read_checks(n, reread=True):
+def read_checks(n, retry=True):
     """`gh pr checks` exits non-zero for pending or failing checks, so its JSON decides. With no checks attached its
     reply isn't JSON; an empty statusCheckRollup, which it is built from, confirms that."""
     cmd = ["gh", "pr", "checks", n, "--json", "name,bucket,state,workflow,link"]
@@ -583,12 +583,14 @@ def read_checks(n, reread=True):
         rollup = view.get("statusCheckRollup") if isinstance(view, dict) else None
         if rollup == []:
             return []
-        if reread and rollup:  # a check attached between the two reads
-            return read_checks(n, reread=False)
+        if rollup and retry:  # a check attached between the two reads
+            return read_checks(n, retry=False)
+        if rollup:  # the two reads still disagree: worded as a blip, like the malformed reply below, so it's waited out
+            raise GhError(cmd, proc.returncode, "unexpected EOF: no checks reported, but the rollup has some") from None
         raise GhError(cmd, proc.returncode, proc.stderr) from None
     fields = ("name", "bucket", "state")
     if not (isinstance(checks, list) and all(isinstance(c, dict) and all(isinstance(c.get(k), str) for k in fields) for c in checks)):
-        # worded like gh_json's blip so the classifier waits it out rather than stopping
+        # worded like gh_json's blip so rules.is_resumable_gh_error waits it out rather than stopping
         raise GhError(cmd, proc.returncode, "unexpected EOF: reply is not a list of checks")
     if not all(c["bucket"] in rules.KNOWN_BUCKETS for c in checks):  # a bucket newer than this code isn't a pass
         raise GhError(cmd, proc.returncode, "a check has a bucket this script doesn't know; update shepherd")

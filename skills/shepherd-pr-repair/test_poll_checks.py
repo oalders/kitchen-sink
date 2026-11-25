@@ -211,17 +211,35 @@ class Poll(unittest.TestCase):
 
     def test_gh_error_reported_on_timeout(self):
         self.replies["gh pr view 7"] = (1, "", "HTTP 502: Bad Gateway")
-        self.assertEqual(
-            self.main(),
-            (3, ["LAST_GH_ERROR=gh pr view 7 --json headRefOid,isCrossRepository,url failed (1): HTTP 502: Bad Gateway", "VERDICT=TIMEOUT"]),
-        )
+        code, (error, last) = self.main()
+        self.assertEqual((code, last), (3, "VERDICT=TIMEOUT"))
+        self.assertTrue(error.startswith("LAST_GH_ERROR=gh pr view 7 ") and error.endswith(": HTTP 502: Bad Gateway"), error)
+
+    def test_permanent_gh_error_stops_at_once(self):
+        for name, reply in (
+            ("unknown bucket", checks(check(bucket="someday"))),
+            ("auth", (1, "", "HTTP 401: Bad credentials")),
+        ):
+            with self.subTest(name):
+                self.sleeps.clear()
+                self.replies[CHECKS] = reply
+                code, (error, last) = self.main()
+                self.assertEqual((code, last, self.sleeps), (4, "VERDICT=ERROR", []))
+                self.assertTrue(error.startswith("LAST_GH_ERROR=gh pr checks 7 "), error)
+
+    def test_pr_url_off_github_still_polls(self):  # e.g. GHES: no repo to match a run link against, so no run_id
+        c = check(bucket="fail", state="FAILURE")
+        c["link"] = "https://github.com/o/r/actions/runs/123"
+        self.replies["gh pr view 7"] = json.dumps({"headRefOid": HEAD, "isCrossRepository": False, "url": "https://ghes.example/o/r/pull/7"})
+        self.replies[CHECKS] = checks(c)
+        self.assertEqual(self.main()[1][0], 'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/o/r/actions/runs/123", "run_id": null}')
 
     def test_gh_error_cleared_by_a_later_read(self):
         self.replies[CHECKS] = [(1, "", "HTTP 502: Bad Gateway"), checks(check(bucket="pending", state="QUEUED"))]
         self.assertEqual(self.main(), (3, ["VERDICT=TIMEOUT"]))
 
     def test_malformed_pr_view_retried(self):
-        for bad in ("<html>", json.dumps({}), json.dumps([HEAD]), json.dumps({"headRefOid": HEAD, "isCrossRepository": False}), view(fork="yes")):
+        for bad in ("<html>", json.dumps({}), json.dumps([HEAD]), json.dumps({"headRefOid": HEAD}), view(fork="yes")):
             with self.subTest(bad):
                 self.replies["gh pr view 7"] = [bad, view()]
                 self.replies[CHECKS] = checks(check())
