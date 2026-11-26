@@ -9,8 +9,8 @@ at most 200 characters, read through its job link, else null); then JSON arrays 
 `CANCELLED_CHECKS=` (when any were cancelled); `FORK_PR=1` on GREEN or FAILED for a PR from a fork, whose author
 controls its workflows and check and step names; `NEEDS_ATTENTION=1` on GREEN with a cancelled check or from a fork, or on
 FAILED when nothing failed for real (every failure is ACTION_REQUIRED, or nothing passed: then the cancelled
-and skipped checks are the failing ones); `PR_HEAD=` (on STALL, when the PR's head isn't HEAD_SHA; else
-`MERGE_STATE=`, the PR's mergeStateStatus, and `DRAFT=1` for a draft) and
+and skipped checks are the failing ones); on STALL: `PR_HEAD=` when the PR's head isn't HEAD_SHA, else
+`MERGE_STATE=`, the PR's mergeStateStatus, and `DRAFT=1` for a draft; and
 `LAST_GH_ERROR=` (on TIMEOUT, after a `gh` error since the last good read, and on ERROR, a `gh` error that retrying
 won't fix); and last `VERDICT=GREEN|FAILED|STALL|TIMEOUT|ERROR`. Exit 0-4 to match; 64 for a usage error.
 

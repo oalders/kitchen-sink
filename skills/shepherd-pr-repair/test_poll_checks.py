@@ -149,16 +149,16 @@ class Poll(unittest.TestCase):
         a, b = check("a", "fail", "FAILURE"), check("b", "fail", "FAILURE")
         a["link"], b["link"] = (f"https://github.com/o/r/actions/runs/123/job/{j}" for j in (456, 789))
         self.replies[CHECKS] = checks(a, b)
-        # one lookup per run: a second call would get the error
+        # one lookup per run: a second call would get the error, leaving b's step null
         self.replies["gh run view 123 --json jobs"] = [
-            jobs((789, [("Set up job", "success")]), (456, [("Checkout", "success"), ("Test", "failure"), ("Lint", "failure")])),
+            jobs((789, [("Set up job", "success"), ("Lint", "failure")]), (456, [("Checkout", "success"), ("Test", "failure"), ("Lint", "failure")])),
             (1, "", "HTTP 502: Bad Gateway"),
         ]
         self.assertEqual(
             self.main()[1][:2],
             [
                 'CHECK {"state": "FAILURE", "name": "a", "link": "https://github.com/o/r/actions/runs/123/job/456", "run_id": 123, "step": "Test"}',
-                'CHECK {"state": "FAILURE", "name": "b", "link": "https://github.com/o/r/actions/runs/123/job/789", "run_id": 123, "step": null}',
+                'CHECK {"state": "FAILURE", "name": "b", "link": "https://github.com/o/r/actions/runs/123/job/789", "run_id": 123, "step": "Lint"}',
             ],
         )  # fmt: skip
 
@@ -233,7 +233,11 @@ class Poll(unittest.TestCase):
         self.assertEqual(self.sleeps, [10, 10, 10])
 
     def test_stall_explains_merge_state_and_draft(self):
-        for state, draft, out in (("DIRTY", True, ["MERGE_STATE=DIRTY", "DRAFT=1"]), ("CLEAN", False, ["MERGE_STATE=CLEAN"])):
+        for state, draft, out in (
+            ("DIRTY", True, ["MERGE_STATE=DIRTY", "DRAFT=1"]),
+            ("CLEAN", False, ["MERGE_STATE=CLEAN"]),
+            (None, True, ["DRAFT=1"]),
+        ):
             with self.subTest(state):
                 self.replies["gh pr view 7"] = view(mergeStateStatus=state, isDraft=draft)
                 self.replies[CHECKS] = checks()
