@@ -5,12 +5,14 @@ Run: python3 skills/least-privilege-gh-actions/test_least_privilege.py
 
 Agents copy the YAML templates in tune-precious and tune-perl-ci verbatim,
 so a template without these settings spreads to every repo they touch.
-Scans fenced ```yaml blocks in those two skills (skipping "Before" examples)
-plus every .github/workflows/*.yml and *.yaml file. A full workflow (one
+Scans fenced ```yaml blocks in those two skills and least-privilege-gh-actions
+(skipping "Before" examples) plus every .github/workflows/*.yml and *.yaml file. A full workflow (one
 with a column-0 `jobs:`) must have exactly `permissions:` / `contents: read`
 at top level, and every actions/checkout step must set
 `persist-credentials: false`; a block whose checkouts all do must not run
 `git fetch`, `git push` or `git pull`, which need the persisted token.
+Requiring exactly `contents: read` is deliberately stricter than the skill,
+which also accepts narrower blocks.
 Stdlib only: CI runs plain python3.
 """
 
@@ -21,7 +23,7 @@ import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SKILLS = [os.path.join(ROOT, "skills", s, "SKILL.md") for s in ("tune-precious", "tune-perl-ci")]
+SKILLS = [os.path.join(ROOT, "skills", s, "SKILL.md") for s in ("least-privilege-gh-actions", "tune-precious", "tune-perl-ci")]
 FENCE = re.compile(r"^\s*```")
 LABEL = re.compile(r"^(?:#{1,6}\s|\*\*)")
 # "**Before:**", "### Before", "### Before (x)" -- not "**Before emitting the file**".

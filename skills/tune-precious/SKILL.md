@@ -417,8 +417,8 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 - **`--all` on every PR is the wrong default.** It re-lints the whole tree, so unrelated pre-existing lint debt fails an otherwise-clean PR, and it's slower than checking only what the PR changed. `--all` is right for `push`/`merge_group`/scheduled runs — where you *do* want the whole tree green — not for PRs.
 - **Gate on `github.event_name`, never on `github.ref`.** `github.base_ref` is populated **only for `pull_request` events**. In a `merge_group` event the ref is `refs/heads/gh-readonly-queue/<branch>/pr-...` and `base_ref` is empty, so a ref-based gate falls through to the incremental arm and runs `precious lint -q --git-diff-from origin/` → `git diff … origin/` → `fatal: ambiguous argument 'origin/': unknown revision`, exit 128, **blocking the merge queue**. Gating on `github.event_name == "pull_request"` keeps the incremental arm scoped to the only event where `base_ref` exists.
 - **Pass the GHA context through `env:`, never interpolate `${{ … }}` straight into `run:`.** `github.base_ref` is a branch name, and although GitHub's ref-name validation rejects shell metacharacters today, a template that substitutes `${{ github.base_ref }}` as literal text into the script body is only safe because of that *external* validation — a `"` in the value would close the template's quotes and the rest would execute. Binding the context to `EVENT_NAME` / `BASE_REF` under `env:` and referencing `"$EVENT_NAME"` / `"$BASE_REF"` makes the step safe by construction: the shell receives the values from the environment and never re-parses them as script. This is GitHub's documented hardening guidance for untrusted `${{ }}` values in `run:` steps.
-- **`fetch-depth: 0` on `actions/checkout`.** `--git-diff-from <base>` needs the merge base between the PR head and the base branch. The default shallow clone (`fetch-depth: 1`) can omit that commit, making the diff fail or over-report; a full-history checkout resolves it regardless of how precious computes the diff. The PR arm diffs against `origin/$BASE_REF`, which exists only because `fetch-depth: 0` makes checkout fetch every branch, so it resolves for a PR against *any* base (a release/maintenance branch, not just the default). A shallow clone would lose it, and an explicit `git fetch` would need the persisted credentials that `persist-credentials: false` removes. The `else` (`--all`) arm doesn't need history, but the single checkout serves both arms.
-- **`permissions: contents: read` and `persist-credentials: false`.** Least-privilege token and checkout defaults per `kitchen-sink:least-privilege-gh-actions`; T8 applies them to an existing `lint.yml`.
+- **`fetch-depth: 0` on `actions/checkout`, and no `git fetch`.** The PR arm's `--git-diff-from "origin/$BASE_REF"` needs full history; see the shallow-checkout and `git fetch` rows in Common Mistakes.
+- **`permissions: contents: read` and `persist-credentials: false`.** Per `kitchen-sink:least-privilege-gh-actions`.
 - **`merge_group:` is in the trigger list so the merge-queue arm is real.** When a repo enables a merge queue, GitHub fires `merge_group` events; the `else` arm lints `--all` there (a full-tree green gate before the merge lands). The trigger is inert on repos without a merge queue, so it costs nothing to include and keeps the `event_name` gate meaningful. `schedule:` is intentionally omitted — it needs a cron the maintainer must choose; the `else` arm already handles it if they add one.
 
 **Why this shape:**
@@ -590,11 +590,11 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 ### 8. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to `.github/workflows/lint.yml` as this transform's one commit. Skip when `.github/workflows/lint.yml` does not exist.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to `.github/workflows/lint.yml` as this transform's one commit. Skip when `.github/workflows/lint.yml` does not exist. T8 covers only `lint.yml`; for a lint job T5 adds to another workflow file, run `kitchen-sink:least-privilege-gh-actions` on that file separately.
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs a least-privilege token and checkout, and a separate commit keeps that revertable.
 
-**Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`. If the skill reports `lint.yml` (drift, unclear job needs, the push exception), T8 is DRIFT in the Algorithm: write nothing and carry the report into the drift list.
+**Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`. If the skill reports `lint.yml`, T8 is DRIFT in the Algorithm: write nothing and carry the report into the drift list.
 
 ## Algorithm
 
@@ -678,7 +678,7 @@ select = .stopwords
 
 ### After
 
-Seven commits land; T8 is a no-op (item 8):
+Seven commits land (T8 is a no-op, see item 8):
 
 1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config). Because this is a dzil repo and the `[@Author::OALDERS]` bundle owns `[Git::GatherDir]`, the same commit also keeps `precious.toml` out of the dist by appending `filename = precious.toml` to a `[PruneFiles]` block — `exclude_filename` isn't reachable from `dist.ini` when the bundle owns the gather step (see `working-with-dist-zilla` §7). Its commit message ends with a blank line then the trailer from `docs/attribution.md`:
 
@@ -786,7 +786,7 @@ Do not auto-revert on failure — that hides bugs in the skill. Stop and surface
 - **PR diff includes ~100 lines of regenerated `META.json` / `Makefile.PL`** → T4's cleanup step skipped; revert those files.
 - **`precious lint --all` passes locally but the new CI job fails on `omegasort` (or any other binary)** → `oalders/install-ubi-action` step missing, using `tools:` instead of `projects:` (silently dropped → nothing installed), or wrong slug in `projects:`; check the input key is `projects:` and the slug is `houseabsolute/omegasort`.
 - **The merge queue fails with `fatal: ambiguous argument 'origin/': unknown revision or path not in the working tree`** → the lint step's incremental arm is gated on `github.ref` (or runs unconditionally) instead of `github.event_name`. `github.base_ref` is empty in `merge_group`/`push`, so `--git-diff-from origin/` has no ref. Gate on `github.event_name == "pull_request"` so the diff arm only runs where `base_ref` is populated.
-- **`--git-diff-from origin/<base>` fails with `unknown revision`** → the checkout is shallow, so `origin/<base>` was never fetched. Set `fetch-depth: 0` on `actions/checkout`; don't add a `git fetch`, which fails on a private repo without persisted credentials.
+- **`--git-diff-from origin/<base>` fails with `unknown revision`** → the checkout is shallow; set `fetch-depth: 0` (see the shallow-checkout and `git fetch` rows in Common Mistakes).
 - **A workflow run fails immediately with `Unable to resolve action owner/repo@vN, repository or version not found`** → the pinned ref does not exist (e.g. `install-ubi-action@v1` — there is no `v1`); re-pin per `kitchen-sink:pin-gh-actions`.
 - **The `install-ubi-action` step fails intermittently with a GitHub API 403 / rate-limit error** → `GITHUB_TOKEN` is missing from the step's `with:`; add `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}`.
 - **`precious config list` errors with TOML parse failure after T1** → quoting issue in the heredoc that generated the file; re-emit `precious.toml` from a real template, not string concatenation.

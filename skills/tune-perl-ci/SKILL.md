@@ -315,9 +315,9 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. Leave a file the skill reports (drift, unclear job needs, the push exception) unchanged, list it in the final report as skipped with the reason, and don't count it in N/M/K.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. Leave a file the skill reports unchanged, list it in the final report as skipped with the reason, and don't count it in N/M/K.
 
-**Why:** a workflow with no `permissions:` block gets the repo or org default token scope, and a default checkout leaves that token in `.git/config` for every later step.
+**Why:** see `kitchen-sink:least-privilege-gh-actions`.
 
 ## Final step: job timeouts
 
