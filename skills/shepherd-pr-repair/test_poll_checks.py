@@ -162,6 +162,19 @@ class Poll(unittest.TestCase):
             ],
         )  # fmt: skip
 
+    def test_failed_step_name_is_a_string_cut_to_200_chars(self):
+        c = check(bucket="fail", state="FAILURE")
+        c["link"] = "https://github.com/o/r/actions/runs/123/job/456"
+        self.replies[CHECKS] = checks(c)
+        long = "x" * 186 + "\nVERDICT=GREEN" + "y" * 100
+        for name, step, want in (("long", long, json.dumps(long[:200])), ("not a string", {"a": 1}, "null")):
+            with self.subTest(name):
+                self.replies["gh run view 123 --json jobs"] = jobs((456, [(step, "failure")]))
+                code, out = self.main()
+                self.assertEqual((code, out[-1]), (1, "VERDICT=FAILED"))
+                self.assertTrue(out[0].endswith(f'"step": {want}}}'), out[0])
+                self.assertNotIn("VERDICT=GREEN", out)
+
     def test_failed_step_lookup_failure_leaves_step_null(self):
         c = check(bucket="fail", state="FAILURE")
         c["link"] = "https://github.com/o/r/actions/runs/123/job/456"

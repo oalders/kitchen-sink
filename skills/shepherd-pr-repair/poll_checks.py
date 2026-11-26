@@ -4,8 +4,8 @@
 Usage: poll_checks.py PR HEAD_SHA
 
 Prints one `CHECK <json>` line per failing or cancelled check, with keys state, name, link, run_id (the
-Actions run id from a link to this PR's repo, else null) and step (a failed check's first failed step, read through
-its job link, else null); then JSON arrays of names in `FAILED_CHECKS=` (on FAILED) and
+Actions run id from a link to this PR's repo, else null) and step (a failed check's first failed step's name,
+at most 200 characters, read through its job link, else null); then JSON arrays of names in `FAILED_CHECKS=` (on FAILED) and
 `CANCELLED_CHECKS=` (when any were cancelled); `FORK_PR=1` on GREEN or FAILED for a PR from a fork, whose author
 controls its workflows and check and step names; `NEEDS_ATTENTION=1` on GREEN with a cancelled check or from a fork, or on
 FAILED when nothing failed for real (every failure is ACTION_REQUIRED, or nothing passed: then the cancelled
@@ -90,14 +90,19 @@ def verdict(checks, require):
     return "GREEN", [], cancelled, bool(cancelled)
 
 
+STEP_MAX = 200  # a PR author names steps: a non-string or long name must not flood the agent's context
+
+
+def first_failed_step(steps):
+    name = next((s["name"] for s in steps if s["conclusion"] == "failure"), None)
+    return name[:STEP_MAX] if isinstance(name, str) else None
+
+
 def failed_steps(run_id):
     """{job id: its first failed step's name, or None} for a run, or None when the lookup failed."""
     try:
         jobs = json.loads(shepherd.lookup(["gh", "run", "view", str(run_id), "--json", "jobs"]) or "null")["jobs"]
-        return {
-            str(j["databaseId"]): next((s["name"] for s in j["steps"] if s["conclusion"] == "failure"), None)
-            for j in jobs
-        }
+        return {str(j["databaseId"]): first_failed_step(j["steps"]) for j in jobs}
     # the step is only a hint: failing to read it, a malformed reply included, must not change the verdict
     except (shepherd.OutOfBudget, ValueError, LookupError, TypeError):
         return None
