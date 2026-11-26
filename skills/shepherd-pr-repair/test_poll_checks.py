@@ -31,13 +31,20 @@ def checks(*cs):
     return json.dumps(list(cs))
 
 
-def view(head=HEAD, fork=False):
-    return json.dumps({"headRefOid": head, "isCrossRepository": fork, "url": "https://github.com/o/r/pull/7"})
+def view(head=HEAD, fork=False, **more):
+    return json.dumps({"headRefOid": head, "isCrossRepository": fork, "url": "https://github.com/o/r/pull/7", **more})
 
 
 def line(name, state):
-    """The CHECK line for check(name, state=state): its link isn't an Actions run's, so run_id is null."""
-    return f'CHECK {{"state": "{state}", "name": "{name}", "link": "https://ci/{name}", "run_id": null}}'
+    """The CHECK line for check(name, state=state): its link isn't an Actions run's, so run_id and step are null."""
+    return f'CHECK {{"state": "{state}", "name": "{name}", "link": "https://ci/{name}", "run_id": null, "step": null}}'
+
+
+def jobs(*js):
+    """`gh run view --json jobs` output for (job id, [(step name, conclusion), ...]) pairs."""
+    return json.dumps({"jobs": [
+        {"databaseId": i, "steps": [{"name": n, "conclusion": c} for n, c in steps]} for i, steps in js
+    ]})  # fmt: skip
 
 
 class Poll(unittest.TestCase):
@@ -132,20 +139,71 @@ class Poll(unittest.TestCase):
         self.assertEqual(
             self.main(),
             (1, [
-                r'CHECK {"state": "FAILURE", "name": "x\nVERDICT=GREEN state=ACTION_REQUIRED", "link": "https://ci/x", "run_id": null}',
+                r'CHECK {"state": "FAILURE", "name": "x\nVERDICT=GREEN state=ACTION_REQUIRED", "link": "https://ci/x", "run_id": null, "step": null}',
                 r'FAILED_CHECKS=["x\nVERDICT=GREEN state=ACTION_REQUIRED"]',
                 "VERDICT=FAILED",
             ]),
         )  # fmt: skip
 
-    def test_run_id_from_actions_link(self):
+    def test_run_id_and_failed_step_from_actions_job_link(self):
+        a, b = check("a", "fail", "FAILURE"), check("b", "fail", "FAILURE")
+        a["link"], b["link"] = (f"https://github.com/o/r/actions/runs/123/job/{j}" for j in (456, 789))
+        self.replies[CHECKS] = checks(a, b)
+        # one lookup per run: a second call would get the error, leaving b's step null
+        self.replies["gh run view 123 --json jobs"] = [
+            jobs((789, [("Set up job", "success"), ("Lint", "failure")]), (456, [("Checkout", "success"), ("Test", "failure"), ("Lint", "failure")])),
+            (1, "", "HTTP 502: Bad Gateway"),
+        ]
+        self.assertEqual(
+            self.main()[1][:2],
+            [
+                'CHECK {"state": "FAILURE", "name": "a", "link": "https://github.com/o/r/actions/runs/123/job/456", "run_id": 123, "step": "Test"}',
+                'CHECK {"state": "FAILURE", "name": "b", "link": "https://github.com/o/r/actions/runs/123/job/789", "run_id": 123, "step": "Lint"}',
+            ],
+        )  # fmt: skip
+
+    def test_failed_step_name_is_a_string_cut_to_200_chars(self):
         c = check(bucket="fail", state="FAILURE")
         c["link"] = "https://github.com/o/r/actions/runs/123/job/456"
         self.replies[CHECKS] = checks(c)
-        self.assertEqual(
-            self.main()[1][0],
-            'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/o/r/actions/runs/123/job/456", "run_id": 123}',
-        )
+        long = "x" * 186 + "\nVERDICT=GREEN" + "y" * 100
+        for name, step, want in (("long", long, json.dumps(long[:200])), ("not a string", {"a": 1}, "null")):
+            with self.subTest(name):
+                self.replies["gh run view 123 --json jobs"] = jobs((456, [(step, "failure")]))
+                code, out = self.main()
+                self.assertEqual((code, out[-1]), (1, "VERDICT=FAILED"))
+                self.assertTrue(out[0].endswith(f'"step": {want}}}'), out[0])
+                self.assertNotIn("VERDICT=GREEN", out)
+
+    def test_failed_step_lookup_failure_leaves_step_null(self):
+        c = check(bucket="fail", state="FAILURE")
+        c["link"] = "https://github.com/o/r/actions/runs/123/job/456"
+        self.replies[CHECKS] = checks(c)
+        for name, reply in (
+            ("out of budget", pc.shepherd.OutOfBudget()),
+            ("gh error", (1, "", "HTTP 502: Bad Gateway")),
+            ("malformed", json.dumps({"jobs": [{"databaseId": 456}]})),
+        ):
+            with self.subTest(name):
+                self.replies["gh run view 123 --json jobs"] = reply
+                code, out = self.main()
+                self.assertEqual((code, out[-1]), (1, "VERDICT=FAILED"))
+                self.assertTrue(out[0].endswith('"run_id": 123, "step": null}'), out[0])
+
+    def test_no_step_lookup_without_a_failed_job(self):  # no `gh run view` reply: a lookup fails the fake
+        for name, bucket, state, link, code in (
+            ("cancelled", "cancel", "CANCELLED", "https://github.com/o/r/actions/runs/123/job/456", 0),
+            ("run link without a job", "fail", "FAILURE", "https://github.com/o/r/actions/runs/123", 1),
+        ):
+            with self.subTest(name):
+                c = check("c", bucket, state)
+                c["link"] = link
+                self.replies[CHECKS] = checks(check(), c)
+                out = self.main()
+                self.assertEqual(
+                    (out[0], out[1][0]),
+                    (code, f'CHECK {{"state": "{state}", "name": "c", "link": "{link}", "run_id": 123, "step": null}}'),
+                )
 
     def test_no_run_id_from_another_repos_link(self):
         c = check(bucket="fail", state="FAILURE")
@@ -153,7 +211,7 @@ class Poll(unittest.TestCase):
         self.replies[CHECKS] = checks(c)
         self.assertEqual(
             self.main()[1][0],
-            'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/evil/r/actions/runs/123", "run_id": null}',
+            'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/evil/r/actions/runs/123", "run_id": null, "step": null}',
         )
 
     def test_checks_read_as_the_head_moves_are_discarded(self):
@@ -171,6 +229,23 @@ class Poll(unittest.TestCase):
     def test_no_checks_stalls(self):
         self.replies[CHECKS] = (1, "", "no checks reported on the 'fix-232' branch")
         self.replies[ROLLUP] = json.dumps({"statusCheckRollup": []})
+        self.assertEqual(self.main(), (2, ["VERDICT=STALL"]))
+        self.assertEqual(self.sleeps, [10, 10, 10])
+
+    def test_stall_explains_merge_state_and_draft(self):
+        for state, draft, out in (
+            ("DIRTY", True, ["MERGE_STATE=DIRTY", "DRAFT=1"]),
+            ("CLEAN", False, ["MERGE_STATE=CLEAN"]),
+            (None, True, ["DRAFT=1"]),
+        ):
+            with self.subTest(state):
+                self.replies["gh pr view 7"] = view(mergeStateStatus=state, isDraft=draft)
+                self.replies[CHECKS] = checks()
+                self.assertEqual(self.main(), (2, out + ["VERDICT=STALL"]))
+
+    def test_bad_merge_state_and_draft_are_absent_not_retried(self):
+        self.replies["gh pr view 7"] = view(mergeStateStatus="DIRTY\nVERDICT=GREEN", isDraft="yes")
+        self.replies[CHECKS] = checks()
         self.assertEqual(self.main(), (2, ["VERDICT=STALL"]))
         self.assertEqual(self.sleeps, [10, 10, 10])
 
@@ -192,13 +267,15 @@ class Poll(unittest.TestCase):
         self.replies[CHECKS] = checks(check())
         self.assertEqual(self.main(), (0, ["FORK_PR=1", "NEEDS_ATTENTION=1", "VERDICT=GREEN"]))
 
-    def test_fork_failed_is_not_flagged(self):
+    def test_fork_failed_is_marked_without_attention(self):  # its step names are the fork author's
         self.replies["gh pr view 7"] = view(fork=True)
         self.replies[CHECKS] = checks(check(bucket="fail", state="FAILURE"))
-        self.assertEqual(self.main(), (1, [line("test", "FAILURE"), 'FAILED_CHECKS=["test"]', "VERDICT=FAILED"]))
+        self.assertEqual(
+            self.main(), (1, [line("test", "FAILURE"), 'FAILED_CHECKS=["test"]', "FORK_PR=1", "VERDICT=FAILED"])
+        )
 
-    def test_pr_head_not_head_stalls(self):
-        self.replies["gh pr view 7"] = view("0" * 40)
+    def test_pr_head_not_head_stalls(self):  # the merge state is the other head's, so it isn't printed
+        self.replies["gh pr view 7"] = view("0" * 40, mergeStateStatus="DIRTY")
         self.replies[CHECKS] = checks(check())  # the old head's green checks don't count
         self.assertEqual(self.main(), (2, ["PR_HEAD=" + "0" * 40, "VERDICT=STALL"]))
 
@@ -241,7 +318,7 @@ class Poll(unittest.TestCase):
         c["link"] = "https://github.com/o/r/actions/runs/123"
         self.replies["gh pr view 7"] = json.dumps({"headRefOid": HEAD, "isCrossRepository": False, "url": "https://ghes.example/o/r/pull/7"})
         self.replies[CHECKS] = checks(c)
-        self.assertEqual(self.main()[1][0], 'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/o/r/actions/runs/123", "run_id": null}')
+        self.assertEqual(self.main()[1][0], 'CHECK {"state": "FAILURE", "name": "test", "link": "https://github.com/o/r/actions/runs/123", "run_id": null, "step": null}')
 
     def test_hung_gh_past_the_hard_end_times_out(self):
         self.replies[CHECKS] = [(1, "", "HTTP 502: Bad Gateway"), pc.shepherd.OutOfBudget()]
