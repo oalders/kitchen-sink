@@ -1,14 +1,14 @@
 ---
 name: tune-perl-ci
 description: Use when modernizing, tuning, or hardening a Perl project's GitHub Actions CI, when a workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`/`install-with-cpanm` and looks stale, or when a Dist::Zilla starter template's CI workflow is a few years old.
-version: 1.6.0
+version: 1.7.0
 ---
 
 # Tune Perl CI
 
 ## Overview
 
-**Eight transforms applied to Perl CI workflows under `.github/workflows/`:**
+**Nine transforms applied to Perl CI workflows under `.github/workflows/`:**
 
 1. `fail-fast: false` on every matrix job
 2. Extend Linux + macOS matrices through Perl 5.44
@@ -18,6 +18,7 @@ version: 1.6.0
 6. Install deps with `setup-cpm` + a `cpm install` run step
 7. Drop macOS + Windows tests for Perls < 5.24
 8. SHA-pin every `uses:` ref and ensure `.github/dependabot.yml` bumps them, via `kitchen-sink:pin-gh-actions`
+9. Set a least-privilege token and `persist-credentials: false` on every checkout, via `kitchen-sink:least-privilege-gh-actions`
 
 Then, as a final step, set `timeout-minutes` on every job via `kitchen-sink:tune-gh-actions-timeouts`.
 
@@ -25,16 +26,16 @@ Then, as a final step, set `timeout-minutes` on every job via `kitchen-sink:tune
 
 ## Dispatch this skill to a subagent
 
-When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the eight transforms inline in the caller's context.**
+When this skill is invoked, dispatch the work to a `general-purpose` subagent via the `Agent` tool. **Do not run the nine transforms inline in the caller's context.**
 
 Why:
-- Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across eight transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
-- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the eight transforms' commits; the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
+- Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across nine transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the nine transforms' commits; the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
 - Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
-- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms with reason, and the timeouts step's report and SHA.
+- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms or files with reason, and the timeouts step's report and SHA.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -62,7 +63,7 @@ Other workflows are skipped silently. If no workflow file matches across the rep
 
 If the caller passes a single workflow path as an argument, operate only on that file (still apply the detection rule for safety; bail out with a clear message if it isn't Perl-shaped).
 
-## The Eight Transforms
+## The Nine Transforms
 
 ### 1. `fail-fast: false` on every matrix job
 
@@ -312,9 +313,15 @@ test_macos:
 
 **Why:** a tag can be moved to different code after review; a SHA cannot. Transform 6 already writes a pinned `setup-cpm`, so this catches every other ref.
 
+### 9. Least-privilege token and checkout
+
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. Leave a file the skill reports unchanged, list it in the final report as skipped with the reason, and don't count it in N/M/K.
+
+**Why:** see `kitchen-sink:least-privilege-gh-actions`.
+
 ## Final step: job timeouts
 
-**What:** after the eight transforms, apply `kitchen-sink:tune-gh-actions-timeouts` to every in-scope (Perl-detected) workflow and no others — not only the ones a transform changed, so an already-tuned repo still gets timeouts. The "no Perl workflows found" early exit skips this step too. Follow it inline (this skill already runs in a subagent), passing the in-scope paths.
+**What:** after the nine transforms, apply `kitchen-sink:tune-gh-actions-timeouts` to every in-scope (Perl-detected) workflow and no others — not only the ones a transform changed, so an already-tuned repo still gets timeouts. The "no Perl workflows found" early exit skips this step too. Follow it inline (this skill already runs in a subagent), passing the in-scope paths.
 
 **Why:** a job without `timeout-minutes` gets GitHub's 360-minute default. The sizing heuristic lives in that skill only.
 
@@ -323,9 +330,9 @@ test_macos:
 ```
 1. Scan .github/workflows/*.yml. Keep files matching the detection rule.
    Exit early with "no Perl workflows found" if the set is empty.
-2. For each transform in order [1..8]:
+2. For each transform in order [1..9]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. Skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
+     b. Skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`; for transform 9, also skip any file the least-privilege skill reports, recording it for the report.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear
@@ -334,8 +341,9 @@ test_macos:
 3. Apply tune-gh-actions-timeouts inline to every in-scope file (its own
    verification and single commit).
 4. Report summary: "Applied N transforms across M files in K commits"
-   (K counts the eight transforms' commits only), then the timeouts
-   step's report and SHA on their own lines.
+   (K counts the nine transforms' commits only), then any skipped
+   files with reason, then the timeouts step's report and SHA on
+   their own lines.
 ```
 
 Each transform produces at most one commit (across all in-scope files). Transforms that produce no diff for any file produce no commit.
@@ -352,6 +360,7 @@ Suggested commit subjects:
 | 6 | `workflow: install deps with setup-cpm + cpm install` |
 | 7 | `workflow: drop macOS/Windows tests for Perls < 5.24` |
 | 8 | `workflow: SHA-pin action refs` (or `dependabot: add github-actions updates` when only `dependabot.yml` changes) |
+| 9 | `workflow: least-privilege token and checkout` |
 | timeouts | `workflow: set timeout-minutes on every job` |
 
 ## Default branch resolution
@@ -364,7 +373,7 @@ git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@
 
 - If that prints a branch name, use it.
 - Otherwise check `git show-ref --verify --quiet refs/remotes/origin/master` first, then `refs/heads/master`; if either succeeds, fall back to `master`.
-- Otherwise, bail out of transform 4 with a clear message — do not block transforms 1–3, 5–8.
+- Otherwise, bail out of transform 4 with a clear message — do not block transforms 1–3, 5–9.
 
 ## Worked Example
 
@@ -447,7 +456,7 @@ jobs:
           sudo: false
 ```
 
-### After (eight transforms applied, default branch is `main`)
+### After (nine transforms applied, default branch is `main`)
 
 ```yaml
 name: dzil build and test
@@ -464,6 +473,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build distribution
@@ -472,6 +484,8 @@ jobs:
       image: perldocker/perl-tester:5.44
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build Dist
         run: dzil build
 
@@ -482,6 +496,8 @@ jobs:
       image: perldocker/perl-tester:5.44
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
 
   test_linux:
@@ -503,6 +519,8 @@ jobs:
       image: perldocker/perl-tester:${{ matrix.perl-version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: perl-actions/setup-cpm@fffc509393becdb9b4d894af16591b7757afe94e # v1.0.1
         with:
           version: compat
@@ -526,6 +544,8 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: shogo82148/actions-setup-perl@eebc5c886de14ebbfcd2493d49a12007d2c30477 # v1.44.5
         with:
           perl-version: ${{ matrix.perl-version }}
@@ -546,6 +566,7 @@ Things to notice in the after-state:
 - `test_linux` keeps `--with-develop` in its `cpm install`, but `test_macos` (a macOS-only job) dropped it — develop-phase prereqs are author/release tooling the cross-platform matrix never exercises and often fail to build on hosted macOS/Windows runners.
 - `test_macos.matrix.perl-version` lost `"5.20"` (transform 7) but `test_linux.matrix.perl-version` keeps `"5.10"` — transform 7 leaves Linux container jobs alone.
 - The Before refs were already SHA-pinned, so transform 8 leaves this file unchanged.
+- Top-level `permissions: contents: read` sits after `concurrency:`, and every `actions/checkout` step sets `persist-credentials: false` (transform 9); no job pushes or needs a wider scope, so none gets a job-level block.
 
 ## Verification
 
@@ -564,6 +585,7 @@ After **each** transform's edit, before committing:
 | 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm` step with `version: compat`; no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
 | 8 | the `kitchen-sink:pin-gh-actions` Verify checks pass for every in-scope workflow and `.github/dependabot.yml` |
+| 9 | the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for every in-scope workflow the skill did not report |
 | timeouts | see `tune-gh-actions-timeouts` Verification |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
@@ -577,7 +599,7 @@ Do not auto-revert on failure — that would hide bugs in the skill. Stop and su
 | Adding `concurrency:` when the user already has one | Overwrites their grouping/cancellation choice | Skip transform 5 if any `concurrency:` exists at workflow level |
 | Stripping `pull_request.branches` | Spec says leave `pull_request:` alone | Only touch `on.push.branches`, never `pull_request` |
 | Hardcoding a single cpm `version:` on the `setup-cpm` step | Forces one cpm release across all Perls instead of per-Perl selection | Use `version: compat` so old Perls get cpm `0.998003` and newer Perls get the latest |
-| Batching all eight transforms into one commit | Can't revert one transform without the others | One commit per transform |
+| Batching all nine transforms into one commit | Can't revert one transform without the others | One commit per transform |
 | Auto-reverting on verification failure | Hides bugs in the skill | Stop, surface the failure, leave files uncommitted |
 | Carrying the old `sudo:` key onto the `cpm install` run step | There is no `sudo:` input on a `run:` step, and the install target is already writable (root container / user-local Perl) | Drop `sudo:` when converting to `setup-cpm` + `cpm install` |
 | Carrying `--with-develop` onto a macOS-only or Windows-only `cpm install` step | Develop-phase prereqs are author/release tooling the cross-platform matrix never runs, and they often fail to build on hosted macOS/Windows runners | Strip `--with-develop` from the args on macOS-only/Windows-only jobs; keep it on Linux and mixed-OS jobs |
