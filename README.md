@@ -168,6 +168,7 @@ Frontend-focused code review for HTML/CSS/image changes:
 - CSS best practices (custom properties, relative units, performance)
 - Visual regression checklist for manual testing
 - SVG optimization and preload hints
+- Client-side security checks (raw HTML sinks, redirects, token storage, CSP, postMessage); points to `/security-review` for depth
 - Spawns `general-purpose` with frontend-specific checklist
 
 #### /geo-review

@@ -6,7 +6,7 @@ description: Use when a diff converts image formats, changes CSS or layout, upda
 
 ## Overview
 
-Frontend-focused code review for HTML/CSS/image changes, emphasizing: (1) Image optimization and accessibility, (2) Responsive design across viewports, (3) Visual regression, (4) CSS best practices. Spawns `general-purpose` subagent.
+Frontend-focused code review for HTML/CSS/image changes, emphasizing: (1) Image optimization and accessibility, (2) Responsive design across viewports, (3) Visual regression, (4) CSS best practices, (5) client-side security. Spawns `general-purpose` subagent.
 
 ## When to Use
 
@@ -40,7 +40,7 @@ Task(general-purpose):
   prompt:
     # Frontend Code Review Agent
 
-    You are a frontend expert reviewing code for images, accessibility, responsive design, and CSS best practices.
+    You are a frontend expert reviewing code for images, accessibility, responsive design, CSS best practices, and client-side security.
 
     **Your task:**
     1. Review frontend code changes
@@ -225,6 +225,18 @@ Task(general-purpose):
     - Debounce/throttle scroll/resize handlers?
     - IntersectionObserver for visibility detection?
 
+    ### Client-side security
+
+    - **Raw HTML:** `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `dangerouslySetInnerHTML`, `v-html`, `{@html}`: is the content constant or sanitized? JSON-LD in a `<script>` with `<` escaped is fine.
+    - **Redirects and navigation:** does a value from the URL, `postMessage`, or storage reach `router.push`/`replace`, `window.location`/`window.open`, `<a href>`, or `redirect()` only after `new URL(target, ownOrigin).origin === ownOrigin` or an allowlist? String deny-lists (`//`, `/\`) are bypassable.
+    - **Token storage:** session or bearer tokens in `localStorage`/`sessionStorage`/IndexedDB? Acceptable when justified (e.g. offline PWA), but it raises the stakes on CSP.
+    - **CSP compatibility:** new inline `<script>`/`<style>`, `eval`/`new Function`, or new third-party script/style origins the page's CSP must allow? If the repo sets no CSP, say "not set in-repo; confirm at the edge" in one line rather than raising a finding.
+    - **Secrets in the bundle:** `NEXT_PUBLIC_*`/`VITE_*`/`PUBLIC_*` env vars carrying anything secret? Production source maps enabled?
+    - **`postMessage`:** do listeners check `event.origin`, and do senders name a target origin rather than `*`?
+    - **External links:** `target="_blank"` to third parties without `rel="noopener"`? Modern browsers default to it, so one line at most.
+
+    A finding exploitable with user-influenced input is a vulnerability: list it under Important labeled "security: treat as Critical". For depth on redirects, token storage and response headers, run `/security-review`.
+
     ## Output Format
 
     ### Strengths
@@ -233,7 +245,7 @@ Task(general-purpose):
     ### Issues
 
     #### Important (Should Fix)
-    [Accessibility gaps, responsive design issues, visual problems]
+    [Accessibility gaps, responsive design issues, visual problems, client-side security regressions]
 
     #### Minor (Nice to Have)
     [Optimization opportunities, code style]
