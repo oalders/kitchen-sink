@@ -35,7 +35,7 @@ Why:
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
 - Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
-- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms with reason, and the timeouts step's report and SHA.
+- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms or files with reason, and the timeouts step's report and SHA.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. Leave a file the skill reports (drift, unclear job needs, the push exception) unchanged, list it in the final report as skipped with the reason, and don't count it in N/M/K.
 
 **Why:** a workflow with no `permissions:` block gets the repo or org default token scope, and a default checkout leaves that token in `.git/config` for every later step.
 
@@ -332,7 +332,7 @@ test_macos:
    Exit early with "no Perl workflows found" if the set is empty.
 2. For each transform in order [1..9]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. Skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
+     b. Skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`; for transform 9, also skip any file the least-privilege skill reports, recording it for the report.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear
@@ -341,8 +341,9 @@ test_macos:
 3. Apply tune-gh-actions-timeouts inline to every in-scope file (its own
    verification and single commit).
 4. Report summary: "Applied N transforms across M files in K commits"
-   (K counts the nine transforms' commits only), then the timeouts
-   step's report and SHA on their own lines.
+   (K counts the nine transforms' commits only), then any skipped
+   files with reason, then the timeouts step's report and SHA on
+   their own lines.
 ```
 
 Each transform produces at most one commit (across all in-scope files). Transforms that produce no diff for any file produce no commit.

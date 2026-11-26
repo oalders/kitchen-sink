@@ -9,7 +9,9 @@ Scans fenced ```yaml blocks in those two skills (skipping "Before" examples)
 plus every .github/workflows/*.yml and *.yaml file. A full workflow (one
 with a column-0 `jobs:`) must have exactly `permissions:` / `contents: read`
 at top level, and every actions/checkout step must set
-`persist-credentials: false`. Stdlib only: CI runs plain python3.
+`persist-credentials: false`; a block whose checkouts all do must not run
+`git fetch`, `git push` or `git pull`, which need the persisted token.
+Stdlib only: CI runs plain python3.
 """
 
 import glob
@@ -26,6 +28,7 @@ LABEL = re.compile(r"^(?:#{1,6}\s|\*\*)")
 BEFORE = re.compile(r"^(?:#{1,6}\s+|\*\*)Before\b(?:\s*\(|:|\*\*|\s*$)")
 CHECKOUT = re.compile(r"""^\s*(?:-\s+)?uses:\s*["']?actions/checkout@""")
 STEP = re.compile(r"^(\s*)-\s")
+GIT_REMOTE = re.compile(r"\bgit\s+(?:fetch|push|pull)\b")
 
 
 def yaml_blocks(path):
@@ -69,11 +72,13 @@ def top_permissions_ok(lines):
 
 def problems(name, start, lines):
     bad = []
+    checkouts = 0
     if "jobs:" in lines and not top_permissions_ok(lines):
         bad.append(f"{name}:{start}: top-level permissions is not exactly `contents: read`")
     for n, line in enumerate(lines):
         if not CHECKOUT.match(line):
             continue
+        checkouts += 1
         # The step starts at the nearest `- ` at or above the uses: line.
         first = next(k for k in range(n, -1, -1) if STEP.match(lines[k]))
         dash = len(STEP.match(lines[first]).group(1))
@@ -84,6 +89,10 @@ def problems(name, start, lines):
             step.append(bare(l))
         if "persist-credentials: false" not in step:
             bad.append(f"{name}:{start + n}: checkout without persist-credentials: false")
+    if checkouts and not bad:
+        for n, line in enumerate(lines):
+            if GIT_REMOTE.search(bare(line)):
+                bad.append(f"{name}:{start + n}: git remote command without persisted credentials")
     return bad
 
 
@@ -103,6 +112,11 @@ class TestLeastPrivilege(unittest.TestCase):
         self.assertTrue(items)
         bad = [hit for item in items for hit in problems(*item)]
         self.assertFalse(bad, "least-privilege violations:\n" + "\n".join(bad))
+
+    def test_each_skill_has_a_scanned_workflow(self):
+        for path in SKILLS:
+            full = [lines for _, lines in yaml_blocks(path) if "jobs:" in lines]
+            self.assertTrue(full, f"{path}: no full workflow block is scanned")
 
     def test_checker_flags_bad_block(self):
         md = [
@@ -127,6 +141,17 @@ class TestLeastPrivilege(unittest.TestCase):
             "        with:",
             "          persist-credentials: false",
             "```",
+            "```yaml",
+            "permissions:",
+            "  contents: read",
+            "jobs:",
+            "  a:",
+            "    steps:",
+            "      - uses: actions/checkout@x",
+            "        with:",
+            "          persist-credentials: false",
+            "      - run: git push origin HEAD",
+            "```",
         ]
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
             fh.write("\n".join(md) + "\n")
@@ -134,7 +159,7 @@ class TestLeastPrivilege(unittest.TestCase):
             blocks = list(yaml_blocks(fh.name))
         finally:
             os.unlink(fh.name)
-        self.assertEqual(len(blocks), 1, "the Before block is skipped, the other is scanned")
+        self.assertEqual(len(blocks), 2, "the Before block is skipped, the others are scanned")
         self.assertEqual(
             problems("t", *blocks[0]),
             [
@@ -142,6 +167,7 @@ class TestLeastPrivilege(unittest.TestCase):
                 "t:14: checkout without persist-credentials: false",
             ],
         )
+        self.assertEqual(problems("t", *blocks[1]), ["t:31: git remote command without persisted credentials"])
 
 
 if __name__ == "__main__":

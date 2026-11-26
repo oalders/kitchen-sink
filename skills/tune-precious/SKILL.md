@@ -435,7 +435,7 @@ The step lints **incrementally on pull requests** (`--git-diff-from` the PR base
 **Idempotency:** if `.github/workflows/lint.yml` already exists, parse it and classify the lint step:
 
 - **Already the gated form** (an `event_name == "pull_request"` branch running `--git-diff-from`, with an `--all` else arm, and no `git fetch` in the incremental arm): leave it alone — no-op.
-- **The gated form whose incremental arm still runs `git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"`** (what earlier versions of this skill emitted): drift. Remove that line in place and commit; `fetch-depth: 0` already provides `origin/$BASE_REF`, and the fetch fails on a private repo once T8 stops checkout persisting credentials.
+- **The gated form whose incremental arm still runs `git fetch origin "$BASE_REF:refs/remotes/origin/$BASE_REF"`** (what earlier versions of this skill emitted): drift. Remove that line in place and commit. If that job's checkout doesn't already set `fetch-depth: 0`, add it in the same edit: without the fetch, only a full-history checkout provides `origin/$BASE_REF` for the diff. The fetch fails on a private repo once T8 stops checkout persisting credentials.
 - **Plain unconditional `precious lint --all`** (the shape earlier versions of this skill emitted): this is now **drift, not canonical.** Upgrade it in place to the gated `github.event_name` pattern above, preserving the rest of the workflow, and commit. If you cannot edit it safely without disturbing surrounding customisation, surface the drift line (`T5: lint step runs unconditional 'precious lint --all'; upgrade to the event_name-gated incremental pattern`) and skip rather than guess.
 - **A ref-gated incremental pattern** (`if [ "${{ github.ref }}" = … ]` choosing between `--all` and `--git-diff-from`): flag as drift — this is the merge-queue-breaking shape (`base_ref` is empty outside `pull_request`). Upgrade it to gate on `github.event_name`, or surface the drift line and skip if it's entangled with other customisation.
 - **Any other shape** (e.g. installs precious from source, per-tool steps): surface the drift and skip — do not overwrite a hand-rolled workflow.
@@ -594,7 +594,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs a least-privilege token and checkout, and a separate commit keeps that revertable.
 
-**Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`.
+**Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`. If the skill reports `lint.yml` (drift, unclear job needs, the push exception), T8 is DRIFT in the Algorithm: write nothing and carry the report into the drift list.
 
 ## Algorithm
 
@@ -678,7 +678,7 @@ select = .stopwords
 
 ### After
 
-Seven commits land (T8 makes none; see item 8):
+Seven commits land; T8 is a no-op (item 8):
 
 1. `precious: add canonical config` — new `precious.toml` at repo root with four canonical blocks (no `perlcritic` block, since the tidyall config didn't have `[PerlCritic]`; no `typos` block, since the repo has no typos config). Because this is a dzil repo and the `[@Author::OALDERS]` bundle owns `[Git::GatherDir]`, the same commit also keeps `precious.toml` out of the dist by appending `filename = precious.toml` to a `[PruneFiles]` block — `exclude_filename` isn't reachable from `dist.ini` when the bundle owns the gather step (see `working-with-dist-zilla` §7). Its commit message ends with a blank line then the trailer from `docs/attribution.md`:
 
