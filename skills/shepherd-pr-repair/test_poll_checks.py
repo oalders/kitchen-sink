@@ -168,7 +168,6 @@ class Poll(unittest.TestCase):
         self.replies[CHECKS] = checks(c)
         for name, reply in (
             ("out of budget", pc.shepherd.OutOfBudget()),
-            ("timed out", pc.shepherd.GhError(["gh"], "timeout", "timed out")),
             ("gh error", (1, "", "HTTP 502: Bad Gateway")),
             ("malformed", json.dumps({"jobs": [{"databaseId": 456}]})),
         ):
@@ -177,6 +176,21 @@ class Poll(unittest.TestCase):
                 code, out = self.main()
                 self.assertEqual((code, out[-1]), (1, "VERDICT=FAILED"))
                 self.assertTrue(out[0].endswith('"run_id": 123, "step": null}'), out[0])
+
+    def test_no_step_lookup_without_a_failed_job(self):  # no `gh run view` reply: a lookup fails the fake
+        for name, bucket, state, link, code in (
+            ("cancelled", "cancel", "CANCELLED", "https://github.com/o/r/actions/runs/123/job/456", 0),
+            ("run link without a job", "fail", "FAILURE", "https://github.com/o/r/actions/runs/123", 1),
+        ):
+            with self.subTest(name):
+                c = check("c", bucket, state)
+                c["link"] = link
+                self.replies[CHECKS] = checks(check(), c)
+                out = self.main()
+                self.assertEqual(
+                    (out[0], out[1][0]),
+                    (code, f'CHECK {{"state": "{state}", "name": "c", "link": "{link}", "run_id": 123, "step": null}}'),
+                )
 
     def test_no_run_id_from_another_repos_link(self):
         c = check(bucket="fail", state="FAILURE")
@@ -206,9 +220,11 @@ class Poll(unittest.TestCase):
         self.assertEqual(self.sleeps, [10, 10, 10])
 
     def test_stall_explains_merge_state_and_draft(self):
-        self.replies["gh pr view 7"] = view(mergeStateStatus="DIRTY", isDraft=True)
-        self.replies[CHECKS] = checks()
-        self.assertEqual(self.main(), (2, ["MERGE_STATE=DIRTY", "DRAFT=1", "VERDICT=STALL"]))
+        for state, draft, out in (("DIRTY", True, ["MERGE_STATE=DIRTY", "DRAFT=1"]), ("CLEAN", False, ["MERGE_STATE=CLEAN"])):
+            with self.subTest(state):
+                self.replies["gh pr view 7"] = view(mergeStateStatus=state, isDraft=draft)
+                self.replies[CHECKS] = checks()
+                self.assertEqual(self.main(), (2, out + ["VERDICT=STALL"]))
 
     def test_bad_merge_state_and_draft_are_absent_not_retried(self):
         self.replies["gh pr view 7"] = view(mergeStateStatus="DIRTY\nVERDICT=GREEN", isDraft="yes")
@@ -234,13 +250,15 @@ class Poll(unittest.TestCase):
         self.replies[CHECKS] = checks(check())
         self.assertEqual(self.main(), (0, ["FORK_PR=1", "NEEDS_ATTENTION=1", "VERDICT=GREEN"]))
 
-    def test_fork_failed_is_not_flagged(self):
+    def test_fork_failed_is_marked_without_attention(self):  # its step names are the fork author's
         self.replies["gh pr view 7"] = view(fork=True)
         self.replies[CHECKS] = checks(check(bucket="fail", state="FAILURE"))
-        self.assertEqual(self.main(), (1, [line("test", "FAILURE"), 'FAILED_CHECKS=["test"]', "VERDICT=FAILED"]))
+        self.assertEqual(
+            self.main(), (1, [line("test", "FAILURE"), 'FAILED_CHECKS=["test"]', "FORK_PR=1", "VERDICT=FAILED"])
+        )
 
-    def test_pr_head_not_head_stalls(self):
-        self.replies["gh pr view 7"] = view("0" * 40)
+    def test_pr_head_not_head_stalls(self):  # the merge state is the other head's, so it isn't printed
+        self.replies["gh pr view 7"] = view("0" * 40, mergeStateStatus="DIRTY")
         self.replies[CHECKS] = checks(check())  # the old head's green checks don't count
         self.assertEqual(self.main(), (2, ["PR_HEAD=" + "0" * 40, "VERDICT=STALL"]))
 

@@ -6,8 +6,8 @@ Usage: poll_checks.py PR HEAD_SHA
 Prints one `CHECK <json>` line per failing or cancelled check, with keys state, name, link, run_id (the
 Actions run id from a link to this PR's repo, else null) and step (a failed check's first failed step, read through
 its job link, else null); then JSON arrays of names in `FAILED_CHECKS=` (on FAILED) and
-`CANCELLED_CHECKS=` (when any were cancelled); `FORK_PR=1` on GREEN for a PR from a fork, whose author controls
-its workflows and check names; `NEEDS_ATTENTION=1` on GREEN with a cancelled check or from a fork, or on
+`CANCELLED_CHECKS=` (when any were cancelled); `FORK_PR=1` on GREEN or FAILED for a PR from a fork, whose author
+controls its workflows and check and step names; `NEEDS_ATTENTION=1` on GREEN with a cancelled check or from a fork, or on
 FAILED when nothing failed for real (every failure is ACTION_REQUIRED, or nothing passed: then the cancelled
 and skipped checks are the failing ones); `PR_HEAD=` (on STALL, when the PR's head isn't HEAD_SHA; else
 `MERGE_STATE=`, the PR's mergeStateStatus, and `DRAFT=1` for a draft) and
@@ -144,10 +144,9 @@ def poll(pr, head, interval, timeout, stall_after, require):
                     print("FAILED_CHECKS=" + json.dumps([c["name"] for c in failing]))
                 if cancelled:
                     print("CANCELLED_CHECKS=" + json.dumps([c["name"] for c in cancelled]))
-                fork = fork and result == "GREEN"  # a fork's author controls its workflows and check names
-                if fork:
+                if fork:  # a fork's author controls its workflows and check and step names
                     print("FORK_PR=1")
-                if needs_attention or fork:
+                if needs_attention or (fork and result == "GREEN"):  # a fork's FAILED is already not a pass
                     print("NEEDS_ATTENTION=1")
                 return result
             if not checks and elapsed >= stall_after:
