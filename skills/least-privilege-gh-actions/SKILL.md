@@ -8,7 +8,7 @@ version: 1.0.0
 
 ## Overview
 
-Give the workflow token read-only scope by default and keep it out of `.git/config`:
+Give the workflow token read-only scope by default and stop `actions/checkout` persisting it for later steps:
 
 ```yaml
 permissions:
@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
 ```
 
-**Why:** without a `permissions:` block the token gets the repo or org default, which may be write-all, and `actions/checkout` writes the token into `.git/config`, where every later step can read it. A compromised step or action then holds a token with more scope than the job needs.
+**Why:** without a `permissions:` block the token gets the repo or org default, which may be write-all, and `actions/checkout` persists the token where every later step in the job can use it. A compromised step or action then holds a token with more scope than the job needs.
 
 ## Algorithm
 
@@ -37,6 +37,6 @@ Used standalone, a reported item leaves only its own block or checkout unchanged
 ## Verify
 
 - `python3 -c 'import yaml, sys; yaml.safe_load(open(sys.argv[1]))' <file>` exits 0.
-- The top-level `permissions` is `contents: read`, or narrower and including `contents: read` when any job inheriting it runs `actions/checkout`, or the file is a reported drift item.
-- Every `actions/checkout` step not reported sets `persist-credentials: false`.
-- Every job that runs `actions/checkout` resolves to a `contents:` scope of `read` or `write`, from its own block or the top-level block.
+- The top-level `permissions` is `contents: read`, or narrower and including `contents: read` when any job inheriting it runs `actions/checkout`, or the file is reported.
+- Every `actions/checkout` step sets `persist-credentials: false`, unless the step or its file is reported.
+- Every job that runs `actions/checkout` resolves to a `contents:` scope of `read` or `write`, from its own block or the top-level block, unless its file is reported.

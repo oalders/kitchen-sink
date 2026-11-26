@@ -585,7 +585,7 @@ After **each** transform's edit, before committing:
 | 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm` step with `version: compat`; no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
 | 8 | the `kitchen-sink:pin-gh-actions` Verify checks pass for every in-scope workflow and `.github/dependabot.yml` |
-| 9 | the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for every in-scope workflow |
+| 9 | the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for every in-scope workflow the skill did not report |
 | timeouts | see `tune-gh-actions-timeouts` Verification |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.
