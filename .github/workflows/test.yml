@@ -24,3 +24,4 @@ jobs:
       - run: python3 skills/shepherd-pr-repair/test_poll_checks.py
       - run: python3 skills/shepherd-pr-repair/test_review_scope.py
       - run: python3 skills/pin-gh-actions/test_uses_pinned.py
+      - run: python3 skills/least-privilege-gh-actions/test_least_privilege.py
