@@ -37,7 +37,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | **/code-review-intense-flow** | Heavyweight fan-out that dispatches every applicable specialist reviewer (security, frontend, seo, geo, playwright, design-handoff, agent-instructions, test-value, embedded-script) in parallel and aggregates the findings |
 | **/design-handoff-review** | Reviews a design-handoff implementation for character-level text drift and orphaned input bindings against the design source |
 | **/embedded-script-review** | Flags shell and other logic embedded in CI/tool config (GitHub Actions `run:` blocks, `package.json` scripts, TOML command strings) that belongs in a standalone, testable script |
-| **/frontend-review** | Frontend expert review catching accessibility gaps, responsive design issues, and CSS anti-patterns |
+| **/frontend-review** | Frontend expert review catching accessibility gaps, responsive design issues, CSS anti-patterns, and client-side security risks |
 | **/geo-review** | Generative Engine Optimization review—two modes: per-PR extraction checks (diff) and cross-page entity consistency (site) for LLM-citation visibility |
 | **/playwright-review** | Playwright test review enforcing ARIA labels, detecting UI layout issues, and optimizing performance |
 | **/request-review** | Get code review feedback without permission prompts stalling the workflow |
