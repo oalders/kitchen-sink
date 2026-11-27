@@ -594,7 +594,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs a least-privilege token and checkout, and a separate commit keeps that revertable.
 
-**Outcome:** T8 is NO-OP when the skill makes no edit, APPLY when it makes any edit, and DRIFT only when the skill skips `lint.yml` whole. Under any outcome, every item the skill reports, and the reason for a whole-file skip, goes in the drift list and counts once in D.
+**Outcome:** T8 is DRIFT when the skill skips `lint.yml` whole; otherwise APPLY when the skill makes any edit, else NO-OP. Under any outcome, each item the skill reports, and a whole-file skip reason, is one drift item and adds 1 to D.
 
 **Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`, unless the skill skipped it.
 

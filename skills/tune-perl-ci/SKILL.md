@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. A file counts in N/M/K only if transform 9 changes it. List every item the skill reports in the final report, even for a file with no diff. List a file the skill skips whole as skipped with the reason.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. A file counts in N/M/K only if transform 9 changes it. Record its reported items and whole-file skips per Algorithm step 2b.
 
 **Why:** see `kitchen-sink:least-privilege-gh-actions`.
 
@@ -332,7 +332,7 @@ test_macos:
    Exit early with "no Perl workflows found" if the set is empty.
 2. For each transform in order [1..9]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. For transform 9 only, first record every item the least-privilege skill reports for every in-scope file, conformant or not, and skip whole only the files that skill skips whole, recording each with its reason. Then skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
+     b. For transform 9 only, first record every item the least-privilege skill reports for every in-scope file, even when 2a's diff is empty, and skip each file that skill skips whole, recording its reason. Then, for every transform, skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear

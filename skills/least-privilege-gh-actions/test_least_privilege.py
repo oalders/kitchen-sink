@@ -8,8 +8,10 @@ tune-dependabot-config and pin-gh-actions verbatim, so a template without
 these settings spreads to every repo they touch.
 Scans fenced ```yaml blocks in those skills and least-privilege-gh-actions
 (skipping "Before" examples) plus every .github/workflows/*.yml and *.yaml
-file. A full workflow (one with a column-0 `jobs:`) must have exactly `permissions:` / `contents: read`
-at top level, and every actions/checkout step must set
+file; pin-gh-actions need only show a checkout step, not a full workflow.
+A full workflow (one with a column-0 `jobs:`) must have exactly
+`permissions:` / `contents: read` at top level, and every
+actions/checkout step must set
 `persist-credentials: false`; a block whose checkouts all do must not run
 `git fetch`, `git push` or `git pull`, which need the persisted token.
 Requiring exactly `contents: read` is deliberately stricter than the skill,
