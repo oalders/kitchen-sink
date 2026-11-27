@@ -128,6 +128,7 @@ Task(general-purpose):
     - XSS: Output encoding? CSP (see Response Path)?
     - Path Traversal: File paths sanitized? No `..` allowed?
     - LDAP/NoSQL: Queries properly escaped?
+    - `postMessage`: Listeners check `event.origin`? Senders name a target origin, not `*`? `event.data` validated before it reaches a sink?
 
     **Input Validation:**
     - Whitelist approach for validation?
@@ -139,6 +140,7 @@ Task(general-purpose):
 
     **Data Protection:**
     - Secrets in code: No hardcoded passwords/API keys?
+    - Public env vars: When the diff adds a reference to a `NEXT_PUBLIC_*`/`VITE_*`/`PUBLIC_*` var (e.g. `import.meta.env.VITE_*`, `process.env.NEXT_PUBLIC_*`) or touches `.env*` or build config: does any carry anything secret? They ship in the client bundle.
     - Logging: Sensitive data excluded (passwords, tokens, PII)?
     - Error messages: No stack traces/internal details to users?
     - API responses: No unnecessary data leakage?
@@ -155,6 +157,8 @@ Task(general-purpose):
 
     - Default credentials: Changed from defaults?
     - Debug mode: Disabled in production?
+    - Source maps: When the diff touches build config: production source maps enabled (Vite `build.sourcemap`, Next `productionBrowserSourceMaps`, webpack `devtool` in production config)?
+    - External links: `target="_blank"` to third parties without `rel="noopener"`? Report it once per diff as Minor.
     - Security headers: see Response Path
     - Error handling: Generic errors to users, detailed logs server-side?
     - HTTPS: Enforced everywhere?
@@ -211,13 +215,13 @@ Task(general-purpose):
     ### Vulnerabilities
 
     #### Critical (Immediate Fix Required)
-    [Remote code execution, authentication bypass, data breach, privilege escalation]
+    [Remote code execution, authentication bypass, data breach, privilege escalation; a secret in a public-prefixed env var or otherwise shipped in the client bundle; `postMessage` data reaching an HTML, script or navigation sink without an origin check (XSS)]
 
     #### Important (Fix Before Production)
-    [Missing input validation, weak crypto, authorization gaps, sensitive data exposure; missing CSP on a surface that renders user-influenced content or holds a session token; open redirect on a sign-in or auth flow (phishing primitive); an added or changed external `uses:` ref not pinned to a commit SHA]
+    [Missing input validation, weak crypto, authorization gaps, sensitive data exposure; missing CSP on a surface that renders user-influenced content or holds a session token; open redirect on a sign-in or auth flow (phishing primitive); an added or changed external `uses:` ref not pinned to a commit SHA; a `postMessage` sender targeting `*` or a listener with no origin check]
 
     #### Minor (Harden When Possible)
-    [Other missing hardening headers, verbose errors, outdated dependencies]
+    [Other missing hardening headers, verbose errors, outdated dependencies, missing `rel="noopener"`]
 
     Critical/Important/Minor hold only what the diff introduces or touches. A surface the diff adds, or changes so it newly renders user-influenced content or handles a session token, that lacks a header counts as introduced, even when header config is untouched; a missing header on a surface the diff otherwise only edits is a pre-existing gap. A gap in header config the diff edits, or in a security-relevant renamed file, counts as touched. When unsure whether a finding is in this diff, put it in Critical/Important/Minor, not Pre-existing gaps.
 
