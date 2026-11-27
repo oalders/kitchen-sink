@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. A file counts in N/M/K only if transform 9 changes it. Record its reported items and whole-file skips per Algorithm step 2b.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. A file counts in N/M/K only if transform 9 changes it. Record the skill's reported items and whole-file skips per Algorithm step 2b.
 
 **Why:** see `kitchen-sink:least-privilege-gh-actions`.
 

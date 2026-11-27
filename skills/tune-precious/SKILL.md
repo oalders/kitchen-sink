@@ -603,7 +603,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 ```
 1. Detect mode (migrate / greenfield / tune / typos-only). Exit clean if no Perl files AND no typos config.
 2. For each transform T1..T8 in order, classify into one of:
-   - NO-OP:   change set is empty; skip silently.
+   - NO-OP:   change set is empty; skip silently, except T8's reported items.
    - APPLY:   change set is non-empty AND it is safe to write
               (the transform's per-step rules don't say "report drift").
               Apply, verify, stage, commit.

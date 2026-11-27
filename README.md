@@ -511,7 +511,7 @@ Flag-only reviewer that applies the living standards in `STANDARDS.md` to change
 
 #### least-privilege-gh-actions
 
-`least-privilege-gh-actions` sets a top-level `permissions: contents: read`, grants any wider scope per job, and sets `persist-credentials: false` on `actions/checkout`, and reports workflows that check out untrusted PR code.
+`least-privilege-gh-actions` sets a top-level `permissions: contents: read`, grants any wider scope per job, sets `persist-credentials: false` on `actions/checkout`, and reports workflows that check out untrusted PR code.
 
 #### pin-gh-actions
 

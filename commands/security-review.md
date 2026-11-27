@@ -160,7 +160,7 @@ Task(general-purpose):
     - HTTPS: Enforced everywhere?
     - GitHub Actions: Every added or changed external `uses:` ref pinned to a 40-hex commit SHA with a `# <tag>` comment, not a tag or branch? (Fix: `kitchen-sink:pin-gh-actions`.)
     - GitHub Actions: Every added or changed workflow passes the `kitchen-sink:least-privilege-gh-actions` Verify checks (top-level token `contents: read` or narrower, wider scope only per job, `persist-credentials: false` on every checkout)? Each item that skill would report is a finding, not an exemption. (Fix: `kitchen-sink:least-privilege-gh-actions`.)
-    - GitHub Actions: No added or changed workflow matches any `kitchen-sink:least-privilege-gh-actions` step 4 pattern (a `pull_request_target`, `workflow_run` or `issue_comment` workflow that checks out PR code)?
+    - GitHub Actions: Every added or changed workflow is clear of every `kitchen-sink:least-privilege-gh-actions` step 4 pattern (e.g. a `pull_request_target`, `workflow_run` or `issue_comment` workflow that checks out PR code)?
 
     ### Broken Access Control
 
