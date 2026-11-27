@@ -7,8 +7,8 @@ Agents copy the YAML templates in tune-precious, tune-perl-ci,
 tune-dependabot-config and pin-gh-actions verbatim, so a template without
 these settings spreads to every repo they touch.
 Scans fenced ```yaml blocks in those skills and least-privilege-gh-actions
-(skipping "Before" examples) plus every .github/workflows/*.yml and *.yaml file. A full workflow (one
-with a column-0 `jobs:`) must have exactly `permissions:` / `contents: read`
+(skipping "Before" examples) plus every .github/workflows/*.yml and *.yaml
+file. A full workflow (one with a column-0 `jobs:`) must have exactly `permissions:` / `contents: read`
 at top level, and every actions/checkout step must set
 `persist-credentials: false`; a block whose checkouts all do must not run
 `git fetch`, `git push` or `git pull`, which need the persisted token.
@@ -25,6 +25,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SKILLS = [os.path.join(ROOT, "skills", s, "SKILL.md") for s in ("least-privilege-gh-actions", "tune-precious", "tune-perl-ci", "tune-dependabot-config", "pin-gh-actions")]
+# Skills whose templates show only a step, not a full workflow.
+CHECKOUT_ONLY = {"pin-gh-actions"}
 FENCE = re.compile(r"^\s*```")
 LABEL = re.compile(r"^(?:#{1,6}\s|\*\*)")
 # "**Before:**", "### Before", "### Before (x)" -- not "**Before emitting the file**".
@@ -118,8 +120,13 @@ class TestLeastPrivilege(unittest.TestCase):
 
     def test_each_skill_has_a_scanned_workflow_or_checkout(self):
         for path in SKILLS:
-            hits = [b for _, b in yaml_blocks(path) if "jobs:" in b or any(CHECKOUT.match(l) for l in b)]
-            self.assertTrue(hits, f"{path}: no scanned block has a workflow or checkout")
+            skill = os.path.basename(os.path.dirname(path))
+            if skill in CHECKOUT_ONLY:
+                hits = [b for _, b in yaml_blocks(path) if any(CHECKOUT.match(l) for l in b)]
+                self.assertTrue(hits, f"{path}: no scanned block has a checkout")
+            else:
+                hits = [b for _, b in yaml_blocks(path) if "jobs:" in b]
+                self.assertTrue(hits, f"{path}: no scanned block has a full workflow")
 
     def test_checker_flags_bad_block(self):
         md = [
@@ -155,6 +162,11 @@ class TestLeastPrivilege(unittest.TestCase):
             "          persist-credentials: false",
             "      - run: git push origin HEAD",
             "```",
+            "```yaml",
+            "- uses: actions/checkout@x",
+            "  with:",
+            "    fetch-depth: 0",
+            "```",
         ]
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
             fh.write("\n".join(md) + "\n")
@@ -162,7 +174,7 @@ class TestLeastPrivilege(unittest.TestCase):
             blocks = list(yaml_blocks(fh.name))
         finally:
             os.unlink(fh.name)
-        self.assertEqual(len(blocks), 2, "the Before block is skipped, the others are scanned")
+        self.assertEqual(len(blocks), 3, "the Before block is skipped, the others are scanned")
         self.assertEqual(
             problems("t", *blocks[0]),
             [
@@ -171,6 +183,7 @@ class TestLeastPrivilege(unittest.TestCase):
             ],
         )
         self.assertEqual(problems("t", *blocks[1]), ["t:31: git remote command without persisted credentials"])
+        self.assertEqual(problems("t", *blocks[2]), ["t:34: checkout without persist-credentials: false"])
 
 
 if __name__ == "__main__":

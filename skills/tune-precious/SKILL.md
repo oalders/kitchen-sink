@@ -1,7 +1,7 @@
 ---
 name: tune-precious
 description: Use when adding, migrating to, or auditing `precious.toml` in a Perl repo (or any repo with a `typos.toml`), or when a repo still lints with Code::TidyAll (`.tidyallrc`, `tidyall.ini`, or `Test::TidyAll`, a tidyall prereqs block, or `[PerlCritic]` in `dist.ini`).
-version: 1.9.0
+version: 1.10.0
 ---
 
 # Tune Precious
@@ -594,7 +594,9 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs a least-privilege token and checkout, and a separate commit keeps that revertable.
 
-**Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`. T8 applies and commits the skill's edits. Each item the skill reports goes in the drift list and counts in D, even when `lint.yml` otherwise needs no edit. T8 is DRIFT in the Algorithm only when the skill writes nothing because it skips `lint.yml` whole or reports every item.
+**Outcome:** T8 is NO-OP when the skill makes no edit, APPLY when it makes any edit, and DRIFT only when the skill skips `lint.yml` whole. Under any outcome, every item the skill reports, and the reason for a whole-file skip, goes in the drift list and counts once in D.
+
+**Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`, unless the skill skipped it.
 
 ## Algorithm
 
@@ -610,13 +612,12 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
               block exists but differs from canonical; T5 when an
               existing lint.yml uses a different shape). Record the
               per-key diff for the final report; do NOT write or commit.
-   T8's reported items join the drift list under any outcome (see T8).
    On verification failure during APPLY: STOP, leave files unstaged,
    surface the error.
 3. Report: "Applied N transforms across M files in K commits; surfaced D drift items."
 ```
 
-Each transform produces at most one commit. NO-OP and DRIFT outcomes produce no commit; DRIFT outcomes are accumulated and printed at the end of the report.
+Each transform produces at most one commit. NO-OP and DRIFT outcomes produce no commit; DRIFT outcomes are accumulated and printed at the end of the report. T8 classifies and records its items by its own Outcome rule.
 
 Suggested commit subjects:
 

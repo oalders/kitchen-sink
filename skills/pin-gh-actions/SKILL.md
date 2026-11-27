@@ -1,7 +1,7 @@
 ---
 name: pin-gh-actions
 description: Use when adding, bumping, or editing any `uses:` line in `.github/workflows/*` or an `action.yml`.
-version: 1.0.0
+version: 1.0.1
 ---
 
 # Pin GitHub Actions

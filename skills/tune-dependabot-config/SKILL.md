@@ -1,7 +1,7 @@
 ---
 name: tune-dependabot-config
 description: Use when adding, auditing, or editing `.github/dependabot.yml`, when that file has no `groups:` or no `cooldown:` block, when dependabot PRs are cluttering a repo's PR queue, or when the user wants dependabot PRs to auto-merge.
-version: 1.2.0
+version: 1.2.1
 ---
 
 # Tune Dependabot Config

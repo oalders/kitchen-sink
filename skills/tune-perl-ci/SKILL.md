@@ -1,7 +1,7 @@
 ---
 name: tune-perl-ci
 description: Use when modernizing, tuning, or hardening a Perl project's GitHub Actions CI, when a workflow uses `perldocker/perl-tester`, `shogo82148/actions-setup-perl`, or `perl-actions/install-with-cpm`/`install-with-cpanm` and looks stale, or when a Dist::Zilla starter template's CI workflow is a few years old.
-version: 1.7.0
+version: 1.8.0
 ---
 
 # Tune Perl CI
@@ -30,12 +30,12 @@ When this skill is invoked, dispatch the work to a `general-purpose` subagent vi
 
 Why:
 - Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across nine transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
-- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the nine transforms' commits; the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the nine transforms' commits; transform 9's reported items and the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
 
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
 - Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
-- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms or files with reason, and the timeouts step's report and SHA.
+- Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms or files with reason, transform 9's reported items, and the timeouts step's report and SHA.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
 If the user explicitly asks to run inline (e.g. "do it here so I can watch"), honour that — the subagent dispatch is the default, not a hard requirement.
@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. A file with reported items still gets the skill's other edits and counts in N/M/K; list every item the skill reports in the final report, even for a file with no diff. List a file the skill skips whole as skipped with the reason, and don't count it in N/M/K.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. A file counts in N/M/K only if transform 9 changes it. List every item the skill reports in the final report, even for a file with no diff. List a file the skill skips whole as skipped with the reason.
 
 **Why:** see `kitchen-sink:least-privilege-gh-actions`.
 
@@ -332,7 +332,7 @@ test_macos:
    Exit early with "no Perl workflows found" if the set is empty.
 2. For each transform in order [1..9]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. Skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`; for transform 9, also skip any file the least-privilege skill skips whole, and record that file and every item the skill reports for the report.
+     b. For transform 9 only, first record every item the least-privilege skill reports for every in-scope file, conformant or not, and skip whole only the files that skill skips whole, recording each with its reason. Then skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear
