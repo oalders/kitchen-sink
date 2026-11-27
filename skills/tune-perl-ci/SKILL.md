@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. Leave a file the skill reports unchanged, list it in the final report as skipped with the reason, and don't count it in N/M/K.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. A file conforms when that skill's Verify checks already pass. A file with reported items still gets the skill's other edits and counts in N/M/K; list every item the skill reports in the final report, even for a file with no diff. List a file the skill skips whole as skipped with the reason, and don't count it in N/M/K.
 
 **Why:** see `kitchen-sink:least-privilege-gh-actions`.
 
@@ -332,7 +332,7 @@ test_macos:
    Exit early with "no Perl workflows found" if the set is empty.
 2. For each transform in order [1..9]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. Skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`; for transform 9, also skip any file the least-privilege skill reports, recording it for the report.
+     b. Skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`; for transform 9, also skip any file the least-privilege skill skips whole, and record that file and every item the skill reports for the report.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear
@@ -342,7 +342,8 @@ test_macos:
    verification and single commit).
 4. Report summary: "Applied N transforms across M files in K commits"
    (K counts the nine transforms' commits only), then any skipped
-   files with reason, then the timeouts step's report and SHA on
+   files with reason, then transform 9's reported items, then the
+   timeouts step's report and SHA on
    their own lines.
 ```
 
@@ -585,7 +586,7 @@ After **each** transform's edit, before committing:
 | 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm` step with `version: compat`; no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
 | 8 | the `kitchen-sink:pin-gh-actions` Verify checks pass for every in-scope workflow and `.github/dependabot.yml` |
-| 9 | the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for every in-scope workflow the skill did not report |
+| 9 | the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for every in-scope workflow the skill did not skip |
 | timeouts | see `tune-gh-actions-timeouts` Verification |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.

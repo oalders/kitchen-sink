@@ -124,6 +124,9 @@ name: Dependabot auto-merge
 
 on: pull_request
 
+permissions:
+  contents: read
+
 jobs:
   automerge:
     if: github.event.pull_request.user.login == 'dependabot[bot]'

@@ -3,9 +3,10 @@
 
 Run: python3 skills/least-privilege-gh-actions/test_least_privilege.py
 
-Agents copy the YAML templates in tune-precious and tune-perl-ci verbatim,
-so a template without these settings spreads to every repo they touch.
-Scans fenced ```yaml blocks in those two skills and least-privilege-gh-actions
+Agents copy the YAML templates in tune-precious, tune-perl-ci,
+tune-dependabot-config and pin-gh-actions verbatim, so a template without
+these settings spreads to every repo they touch.
+Scans fenced ```yaml blocks in those skills and least-privilege-gh-actions
 (skipping "Before" examples) plus every .github/workflows/*.yml and *.yaml file. A full workflow (one
 with a column-0 `jobs:`) must have exactly `permissions:` / `contents: read`
 at top level, and every actions/checkout step must set
@@ -23,7 +24,7 @@ import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SKILLS = [os.path.join(ROOT, "skills", s, "SKILL.md") for s in ("least-privilege-gh-actions", "tune-precious", "tune-perl-ci")]
+SKILLS = [os.path.join(ROOT, "skills", s, "SKILL.md") for s in ("least-privilege-gh-actions", "tune-precious", "tune-perl-ci", "tune-dependabot-config", "pin-gh-actions")]
 FENCE = re.compile(r"^\s*```")
 LABEL = re.compile(r"^(?:#{1,6}\s|\*\*)")
 # "**Before:**", "### Before", "### Before (x)" -- not "**Before emitting the file**".
@@ -115,10 +116,10 @@ class TestLeastPrivilege(unittest.TestCase):
         bad = [hit for item in items for hit in problems(*item)]
         self.assertFalse(bad, "least-privilege violations:\n" + "\n".join(bad))
 
-    def test_each_skill_has_a_scanned_workflow(self):
+    def test_each_skill_has_a_scanned_workflow_or_checkout(self):
         for path in SKILLS:
-            full = [lines for _, lines in yaml_blocks(path) if "jobs:" in lines]
-            self.assertTrue(full, f"{path}: no full workflow block is scanned")
+            hits = [b for _, b in yaml_blocks(path) if "jobs:" in b or any(CHECKOUT.match(l) for l in b)]
+            self.assertTrue(hits, f"{path}: no scanned block has a workflow or checkout")
 
     def test_checker_flags_bad_block(self):
         md = [

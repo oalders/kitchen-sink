@@ -594,7 +594,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs a least-privilege token and checkout, and a separate commit keeps that revertable.
 
-**Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`. If the skill reports `lint.yml`, T8 is DRIFT in the Algorithm: write nothing and carry the report into the drift list.
+**Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`. T8 applies and commits the skill's edits. Each item the skill reports goes in the drift list and counts in D, even when `lint.yml` otherwise needs no edit. T8 is DRIFT in the Algorithm only when the skill writes nothing because it skips `lint.yml` whole or reports every item.
 
 ## Algorithm
 
@@ -610,6 +610,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
               block exists but differs from canonical; T5 when an
               existing lint.yml uses a different shape). Record the
               per-key diff for the final report; do NOT write or commit.
+   T8's reported items join the drift list under any outcome (see T8).
    On verification failure during APPLY: STOP, leave files unstaged,
    surface the error.
 3. Report: "Applied N transforms across M files in K commits; surfaced D drift items."
@@ -739,7 +740,7 @@ After **each** transform, before committing:
 | 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds `EVENT_NAME`/`BASE_REF` via `env:` (no `${{ … }}` in `run:`), has a `--git-diff-from origin/$BASE_REF` PR arm with no `git fetch` and an `--all` else arm, and `checkout` uses `fetch-depth: 0`; if T5 wrote the file fresh, the `precious` job sets `timeout-minutes` |
 | 6 | `sh -n .githooks/pre-commit` exits 0; `[ -x .githooks/pre-commit ]`; `grep -q 'precious lint' .githooks/pre-commit`; if a `make init` target was added, it runs `git config core.hooksPath .githooks`; if `dist.ini` exists, `dzil build --no-tgz` exits 0 and `find <DistName>-*/ -path '*/.githooks/pre-commit'` returns nothing |
 | 7 | the `kitchen-sink:pin-gh-actions` Verify checks pass for `lint.yml` and `.github/dependabot.yml` |
-| 8 | the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml` |
+| 8 | the `kitchen-sink:least-privilege-gh-actions` Verify checks pass for `lint.yml`, unless the skill skipped it |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
 

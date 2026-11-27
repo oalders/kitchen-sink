@@ -159,6 +159,7 @@ Task(general-purpose):
     - Error handling: Generic errors to users, detailed logs server-side?
     - HTTPS: Enforced everywhere?
     - GitHub Actions: Every added or changed external `uses:` ref pinned to a 40-hex commit SHA with a `# <tag>` comment, not a tag or branch? (Fix: `kitchen-sink:pin-gh-actions`.)
+    - GitHub Actions: Every added or changed workflow passes the `kitchen-sink:least-privilege-gh-actions` Verify checks (top-level token `contents: read` or narrower, wider scope only per job, `persist-credentials: false` on every checkout), except items that skill reports? (Fix: `kitchen-sink:least-privilege-gh-actions`.)
 
     ### Broken Access Control
 
