@@ -20,13 +20,13 @@ not `info`, plus the last run's violations. `drift` is that count for the run
 that prints it, so the last run's `drift` is the caller's number.
 
 --apply writes the edits as text, keeping comments and layout, then fills
-`violations` from the edited file. It writes nothing when the file is a
-symlink, when there are edits and the file uses YAML aliases, when the result
-doesn't parse, when a second pass finds more to edit, when the edits would
-change the reports, or when they would raise any scope beyond the intended
-`contents:` grant. That grant is never added on a privileged trigger
-(`privileged-push`), after a persist-credentials: false checkout
-(`push-own-credentials`) or to a one-value permissions: block
+`violations` from the edited file. When there are edits it writes nothing if
+the file is a symlink, is hard-linked or lies outside the working directory,
+if the file uses YAML aliases, if the result doesn't parse, if a second pass
+finds more to edit, if the edits would change the reports, or if they would
+raise any scope beyond the intended `contents:` grant. That grant is never
+added on a privileged trigger (`privileged-push`), after a persist-credentials:
+false checkout (`push-own-credentials`) or to a one-value permissions: block
 (`scalar-permissions-push`); the report names it instead. --verify fills
 `violations` without editing.
 
@@ -40,6 +40,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import unicodedata
 from dataclasses import dataclass
 
@@ -50,12 +51,20 @@ PRIVILEGED = {"pull_request_target", "workflow_run", "issue_comment"}
 # These push with the checkout's persisted token unless given their own token input.
 PUSH_ACTIONS = ("stefanzweifel/git-auto-commit-action@", "peter-evans/create-pull-request@", "endbug/add-and-commit@")
 TOKEN_INPUTS = {"token", "github_token", "github-token"}
-# `git`, then any global options (-C dir, -c k=v, --opt[=val]), then the subcommand.
-GIT = r"""\bgit(?:\s+(?:-[Cc]\s*(?:[^\s"']|"[^"]*"|'[^']*')+|--[\w-]+(?:=\S+)?))*\s+"""
+# `git`, then any global options (-C dir, -c k=v, -p, --opt[=val], --opt val), then the subcommand.
+GIT = (
+    r"""\bgit(?:\s+(?:-[Cc]\s*(?:[^\s"']|"[^"]*"|'[^']*')+|-[pP]\b"""
+    r"""|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env)\s+\S+|--[\w-]+(?:=\S+)?))*\s+"""
+)
 GIT_PUSH = re.compile(GIT + r"push\b")
 GIT_READ = re.compile(GIT + r"(?:fetch|pull)\b")
-GIT_GET = re.compile(GIT + r"(?:checkout|fetch|switch|clone)\b")
-GH_PR_CHECKOUT = re.compile(r"\bgh\s+pr\s+checkout\b")
+# apply and am take PR content when fed it.
+GIT_GET = re.compile(GIT + r"(?:checkout|fetch|switch|clone|apply|am)\b")
+# Commands that fetch the PR's content by number.
+GH_PR_CHECKOUT = re.compile(r"\bgh\s+pr\s+(?:checkout|diff)\b")
+# A run: line writing NAME=... to $GITHUB_ENV or $GITHUB_OUTPUT.
+GITHUB_FILE = re.compile(r""">>\s*["']?\$\{?GITHUB_(ENV|OUTPUT)\b""")
+ASSIGNED = re.compile(r"\b([A-Za-z_][A-Za-z0-9_-]*)=")
 GH_RUN_DOWNLOAD = re.compile(r"\bgh\s+run\s+download\b")
 # A workflow_run job fetching the triggering run's artifacts through the REST API.
 ARTIFACTS_API = re.compile(r"/actions/artifacts/|/actions/runs/[^\n]*/artifacts")
@@ -71,6 +80,7 @@ PR_EXPR = re.compile(
 PULL_REF = re.compile(r"\bpull/[^/\n]+/(?:head|merge)\b", re.I)
 # github['event']["head_ref"] is the same expression as github.event.head_ref.
 INDEX = re.compile(r"""\[\s*['"]([^'"\]]+)['"]\s*\]""")
+# The broad word match is fail-safe on purpose: `name: Scan for secrets` and `secrets: inherit` escalate.
 SECRETS = re.compile(r"\bsecrets\b")
 DEFAULT_TOKEN = re.compile(r"^\$\{\{\s*(?:secrets\.GITHUB_TOKEN|github\.token)\s*\}\}$")
 CONTINUATION = re.compile(r"\\\r?\n")
@@ -188,7 +198,8 @@ def drift(top):
 
 def strip_comments(script):
     """script without shell comments: a # at a line start or after whitespace, outside
-    quotes, up to the end of its line. A quoted string may span lines."""
+    quotes, up to the end of its line. A quoted string may span lines. Heredoc bodies are
+    not modelled, so an apostrophe in one can only over-detect."""
     out, quote, prev, i = [], None, "\n", 0
     while i < len(script):
         c = script[i]
@@ -252,15 +263,22 @@ def pr_content(text):
     return bool(PR_EXPR.search(text) or PULL_REF.search(text))
 
 
-def pr_env(*envs):
-    """The keys of these env: mappings whose value is PR content."""
-    return {
-        k.value
+def pr_env(envs, names=frozenset()):
+    """names plus the keys of these env: mappings whose value is PR content or reads one
+    of the names, to a fixed point so chains (A: PR, B: ${{ env.A }}) are followed."""
+    names = set(names)
+    pairs = [
+        (k.value, list(scalars(v)))
         for env in envs
         if isinstance(env, yaml.MappingNode)
         for k, v in env.value
-        if isinstance(k, yaml.ScalarNode) and any(pr_content(s) for s in scalars(v))
-    }
+        if isinstance(k, yaml.ScalarNode)
+    ]
+    while True:
+        new = {k for k, vals in pairs if k not in names and any(pr_content(s) or names_env(s, names) for s in vals)}
+        if not new:
+            return names
+        names |= new
 
 
 def names_env(text, names):
@@ -270,16 +288,20 @@ def names_env(text, names):
 
 
 def flag_step(steps, triggers, env=frozenset()):
-    """The first step fetching PR content; env holds the workflow and job env keys bound to it."""
+    """The first step fetching PR content; env holds the workflow and job env keys bound to it.
+    Steps are walked in order, so a $GITHUB_ENV or $GITHUB_OUTPUT write of PR content
+    taints that name for the steps after it."""
     if not triggers & PRIVILEGED:
         return None
+    env, outputs = set(env), set()
     for i, step in enumerate(steps):
         used, run = uses(step), "\n".join(shell_lines(step))
         w = item(step, "with")[1]
-        names = env | pr_env(item(step, "env")[1])
+        names = pr_env((item(step, "env")[1],), env)
 
         def pr(text):
-            return pr_content(text) or names_env(text, names)
+            norm = INDEX.sub(r".\1", text)
+            return pr_content(text) or names_env(text, names) or any(re.search(rf"\b{re.escape(o)}\b", norm) for o in outputs)
 
         if used.startswith(CHECKOUT) and (pr(get(w, "ref")) or pr(get(w, "repository"))):
             return i
@@ -292,6 +314,14 @@ def flag_step(steps, triggers, env=frozenset()):
             or (used.startswith(GITHUB_SCRIPT) and "downloadArtifact" in get(w, "script"))
         ):
             return i
+        for line in run.splitlines():
+            target = GITHUB_FILE.search(line)
+            if target and pr(line):
+                written = ASSIGNED.findall(line[: target.start()])
+                if target.group(1) == "ENV":
+                    env |= set(written)
+                elif get(step, "id"):
+                    outputs |= {f"steps.{get(step, 'id')}.outputs.{n}" for n in written}
     return None
 
 
@@ -332,7 +362,7 @@ def analyse(text, untrusted=()):
         pushing = [i for i in kept if later[i] - {None}]
         writing = [i for i in kept if "push" in later[i]]
         own = [i for i in checkouts if i not in kept and "push" in later[i]]
-        flag = flag_step(steps, trig, pr_env(item(root, "env")[1], item(node, "env")[1]))
+        flag = flag_step(steps, trig, pr_env((item(root, "env")[1], item(node, "env")[1])))
         perm = item(node, "permissions")[1]
         jobs.append(Job(key, node, perm, steps, checkouts, pushing, writing, own, flag, flag is not None or key in untrusted, privileged))
     return root, item(root, "permissions")[1], jobs
@@ -544,10 +574,25 @@ def render(path, entry):
     return dict(entry, text=f"{where}: {entry['code']} ({entry['severity']}): {NOTES[entry['code']]}")
 
 
+def write(path, text):
+    """Replace path with text, refusing a write that would land on another file or outside the cwd."""
+    real, root = os.path.realpath(path), os.path.realpath(os.getcwd())
+    if os.path.islink(path) or os.stat(path).st_nlink > 1 or os.path.commonpath([real, root]) != root:
+        raise Unsupported("the file is a link or outside the working directory; not edited")
+    mode = os.stat(path).st_mode & 0o7777
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(real), prefix=".check_workflow-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:  # keep CRLF line endings
+            fh.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, real)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
 def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
     """The verdict dict for path, applying edits first when asked."""
-    if apply and os.path.islink(path):  # a write would land on the link target
-        raise Unsupported("the file is a symlink; not edited")
     with open(path, encoding="utf-8", newline="") as fh:  # keep CRLF line endings
         text = fh.read()
     nl = "\r\n" if "\r\n" in text else "\n"
@@ -571,8 +616,7 @@ def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
         # The edits must not change the reports, so a later --verify run reports alike.
         if reports(after, cannot_tell) != found:
             raise Unsupported("edits would change the reports; file not written")
-        with open(path, "w", encoding="utf-8", newline="") as fh:
-            fh.write(text)
+        write(path, text)
         analysis = after
         found += [item_dict("contents-write-granted", e["job"], severity="info") for e in edits if e["edit"] == "job-contents-write"]
     action = "skip" if cannot_tell else "edit" if edits else "unchanged"

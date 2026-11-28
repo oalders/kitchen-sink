@@ -545,7 +545,7 @@ Nine idempotent transforms applied to Dist::Zilla-style Perl GitHub Actions work
 - Replaces each `install-with-cpm`/`install-with-cpanm` step with `setup-cpm` + an explicit `cpm install` run step (`version: compat` pins cpm for Perls ≤ 5.22)
 - Drops pre-5.24 macOS/Windows matrix cells
 - SHA-pins every `uses:` ref via `pin-gh-actions`
-- Sets least-privilege token permissions and `persist-credentials: false` via `least-privilege-gh-actions`
+- Gives workflow tokens and checkouts least privilege via `least-privilege-gh-actions`
 - Finishes by setting `timeout-minutes` on every job via `tune-gh-actions-timeouts`
 - Each transform lands as its own commit; re-running is a no-op apart from tightening marked timeout defaults
 
@@ -559,7 +559,7 @@ Lands [`precious`](https://github.com/houseabsolute/precious) as the canonical t
 - Adds a `.github/workflows/lint.yml` job running `precious lint` — incrementally (`--git-diff-from` the PR base) on pull requests, `--all` on every other event, with a default `timeout-minutes`
 - Adds a checked-in `.githooks/pre-commit` hook that runs `precious lint --staged`
 - SHA-pins every `uses:` ref in `lint.yml` via `pin-gh-actions`
-- Sets least-privilege token permissions and `persist-credentials: false` on `lint.yml` via `least-privilege-gh-actions`
+- Gives `lint.yml`'s token and checkout least privilege via `least-privilege-gh-actions`
 
 Handles three modes: migrate (tidyall present), greenfield (no precious yet), tune (precious already configured). Each transform commits separately; re-running on a tuned repo is a no-op.
 

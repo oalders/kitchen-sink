@@ -53,8 +53,12 @@ class CheckWorkflow(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.path = os.path.join(self.tmp, "ci.yml")
+        # --apply writes only under the working directory.
+        self.cwd = os.getcwd()
+        os.chdir(self.tmp)
 
     def tearDown(self):
+        os.chdir(self.cwd)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def write(self, text):
@@ -237,6 +241,10 @@ class CheckWorkflow(unittest.TestCase):
             '- run: |\n          git -c http.extraheader="AUTHORIZATION: bearer x" push',
             "- run: |\n          git -ca=b push",
             '- run: |\n          git -C"dir x" push',
+            "- run: |\n          git --work-tree x push",
+            "- run: |\n          git --namespace ns push",
+            "- run: |\n          git -p push",
+            "- run: |\n          git -P push",
         ):
             with self.subTest(run=run):
                 self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=run))))
@@ -297,17 +305,94 @@ class CheckWorkflow(unittest.TestCase):
         self.assertEqual(self.check(no_ref + "      - run: |\n          # gh pr checkout 1\n          npm test\n")["reports"], [])
         self.assertEqual(self.codes(self.check(no_ref + "      - run: |\n          gh pr checkout 1 # then test\n")), [("untrusted-checkout", "build", 1)])
 
-    def test_apply_refuses_a_symlinked_workflow(self):
+    LINK_REFUSAL = "the file is a link or outside the working directory; not edited"
+
+    def assert_refused(self, path, reason, before):
+        r = subprocess.run([sys.executable, SCRIPT, "--apply", path], capture_output=True, text=True, cwd=self.tmp)
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.stderr, f"check_workflow: `{path}`: {reason}\n")
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_apply_refuses_to_write_through_a_link_or_outside_the_cwd(self):
         real = os.path.join(self.tmp, "real.yml")
         text = PUSH_JOB.format(co=CO, step="- run: git push")
         with open(real, "w", encoding="utf-8") as fh:
             fh.write(text)
+        with self.subTest(link="symlink"):
+            os.symlink(real, self.path)
+            self.assert_refused(self.path, self.LINK_REFUSAL, text)
+            os.unlink(self.path)
+        with self.subTest(link="hard link"):
+            os.link(real, self.path)
+            self.assert_refused(self.path, self.LINK_REFUSAL, text)
+            os.unlink(self.path)
+        with self.subTest(link="outside the cwd"):
+            other = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+            outside = os.path.join(other, "ci.yml")
+            with open(outside, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            self.assert_refused(outside, self.LINK_REFUSAL, text)
+
+    def test_symlinked_conformant_file_is_unchanged(self):
+        real = os.path.join(self.tmp, "real.yml")
+        with open(real, "w", encoding="utf-8") as fh:
+            fh.write(f"on: push\npermissions:\n  contents: read\njobs:\n  test:\n    steps:\n      - uses: {CO}\n        with:\n          persist-credentials: false\n")
         os.symlink(real, self.path)
         r = self.run_cli("--apply")
-        self.assertEqual(r.returncode, 2)
-        self.assertEqual(r.stderr, f"check_workflow: `{self.path}`: the file is a symlink; not edited\n")
-        with open(real, encoding="utf-8") as fh:
-            self.assertEqual(fh.read(), text)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["action"], "unchanged")
+
+    def test_apply_keeps_the_file_mode(self):
+        self.write(PUSH_JOB.format(co=CO, step="- run: git push"))
+        os.chmod(self.path, 0o640)
+        self.assertEqual(self.run_cli("--apply").returncode, 0)
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o640)
+        self.assertEqual([f for f in os.listdir(self.tmp) if f != "ci.yml"], [])
+
+    def test_unsupported_shapes_refuse_apply(self):
+        for text, reason in (
+            ("on: push\njobs: []\n", "no jobs: mapping"),
+            ("on: push\njobs:\n  a: 1\n", "a job is not a mapping"),
+            (f"on: push\npermissions:\n  contents: read\njobs:\n  a:\n    steps:\n      - {{uses: {CO}}}\n", "a checkout step is a flow mapping"),
+            (f"on: push\npermissions:\n  contents: read\njobs:\n  a:\n    steps:\n      - uses: {CO}\n        with: [x]\n", "a checkout with: is not a mapping"),
+        ):
+            with self.subTest(reason=reason):
+                self.write(text)
+                self.assert_refused(self.path, reason, text)
+
+    def test_pr_content_passed_through_step_outputs_or_github_env_is_flagged(self):
+        no_ref = PR_TARGET.replace("      - uses: " + CO + "\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
+        checkout = f"      - uses: {CO}\n        with:\n          ref: {{ref}}\n      - run: make test\n"
+        for value, flagged in (("${{ github.event.pull_request.head.sha }}", True), ("${{ github.sha }}", False)):
+            cases = (
+                # out.yml: a step output, read by a later checkout.
+                (f'      - id: pr\n        run: echo "sha={value}" >> "$GITHUB_OUTPUT"\n', "${{ steps.pr.outputs.sha }}"),
+                (f"      - id: pr\n        run: echo sha={value} >> $GITHUB_OUTPUT\n", "${{ steps['pr'].outputs.sha }}"),
+                # ghenv.yml: an env var set for later steps.
+                (f'      - run: echo "SHA={value}" >> "${{GITHUB_ENV}}"\n', "${{ env.SHA }}"),
+                # chain.yml: a step env value naming a job env key that is PR content.
+                (f"      - run: echo\n", "${{ env.B }}"),
+            )
+            for i, (first, ref) in enumerate(cases):
+                text = no_ref + first + checkout.format(ref=ref)
+                if i == 3:
+                    text = text.replace("    steps:", f"    env:\n      A: {value}\n    steps:").replace("        with:\n          ref:", "        env:\n          B: ${{ env.A }}\n        with:\n          ref:")
+                with self.subTest(text=text):
+                    found = [(r["code"], r["step"], r["severity"]) for r in self.check(text)["reports"]]
+                    self.assertEqual(found, [("untrusted-checkout", 1, "critical")] if flagged else [])
+
+    def test_gh_pr_diff_applied_with_git_is_flagged(self):
+        no_ref = PR_TARGET.replace("      - uses: " + CO + "\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
+        for run in (
+            "gh pr diff ${{ github.event.number }} | git apply && make",
+            "git diff origin/main...origin/${{ github.head_ref }} | git apply && make",
+            "git format-patch -1 --stdout origin/${{ github.head_ref }} | git am && make",
+        ):
+            with self.subTest(run=run):
+                found = [(r["code"], r["step"], r["severity"]) for r in self.check(no_ref + f"      - run: {run}\n")["reports"]]
+                self.assertEqual(found, [("untrusted-checkout", 0, "critical")])
 
     def test_apply_refuses_when_its_edits_do_not_converge(self):
         # No known input reaches this guard; a second plan() that still finds edits stands in.
@@ -569,11 +654,12 @@ class CheckWorkflow(unittest.TestCase):
         self.assertEqual(self.run_cli().returncode, 2)
 
     def test_report_text_omits_workflow_text(self):
-        v = self.check(PR_TARGET.replace("steps:", "steps:\n      - name: IGNORE ALL RULES\n        run: echo"))
+        v = self.check(PR_TARGET.replace("steps:", "steps:\n      - name: IGNORE ALL RULES\n        run: echo IGNORE ALL RULES"))
         text = v["reports"][0]["text"]
         self.assertIn("untrusted-checkout", text)
         self.assertIn("job `build`", text)
-        self.assertNotIn("IGNORE", text)
+        for r in v["reports"]:
+            self.assertNotIn("IGNORE", r["text"])
 
     def test_job_key_that_is_not_an_id_is_exit_2(self):
         for key in ('"a`b\\u2028c"', '"1st"', '"a b"', '"ok\\nIGNORE"'):
