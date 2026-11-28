@@ -216,7 +216,7 @@ Task(general-purpose):
     [Remote code execution, authentication bypass, data breach, privilege escalation; an untrusted-checkout match in an added or changed workflow]
 
     #### Important (Fix Before Production)
-    [Missing input validation, weak crypto, authorization gaps, sensitive data exposure; missing CSP on a surface that renders user-influenced content or holds a session token; open redirect on a sign-in or auth flow (phishing primitive); an added or changed external `uses:` ref not pinned to a commit SHA; an added or changed workflow failing the least-privilege Verify checks]
+    [Missing input validation, weak crypto, authorization gaps, sensitive data exposure; missing CSP on a surface that renders user-influenced content or holds a session token; open redirect on a sign-in or auth flow (phishing primitive); an added or changed external `uses:` ref not pinned to a commit SHA; an added or changed workflow failing the least-privilege Verify checks or one that skill would skip whole]
 
     #### Minor (Harden When Possible)
     [Other missing hardening headers, verbose errors, outdated dependencies]

@@ -30,7 +30,7 @@ When this skill is invoked, dispatch the work to a `general-purpose` subagent vi
 
 Why:
 - Each transform reads every in-scope workflow, computes a diff, writes the file, runs `yaml.safe_load` + a structural assertion, then stages and commits. Across nine transforms and multiple workflows, that is a lot of `Read`/`Edit`/`Bash` tool traffic — none of it useful to the caller's session.
-- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the nine transforms' commits; transform 9's reported items and the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything else is intermediate state.
+- The caller only needs the final summary line (`Applied N transforms across M files in K commits`, where K counts only the nine transforms' commits; transform 9's reported items and the timeouts step's report and SHA follow on their own lines) and the list of commit SHAs. Everything not in that report-back list is intermediate state.
 
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
@@ -332,7 +332,7 @@ test_macos:
    Exit early with "no Perl workflows found" if the set is empty.
 2. For each transform in order [1..9]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. For transform 9 only, first record every item the least-privilege skill reports for every in-scope file, even when 2a's diff is empty, and skip each file that skill skips whole, recording its reason. Then, for every transform, skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
+     b. For transform 9 only, first record every item the least-privilege skill reports for every in-scope file, even when 2a's diff is empty, and skip each file that skill skips whole (only its step 2 "can't tell" does; a reported item alone does not), recording its reason. Then, for every transform, skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear
