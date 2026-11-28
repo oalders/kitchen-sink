@@ -74,10 +74,10 @@ A direct marker `reviewed/<sha>` holds one line, split on whitespace:
   unreadable file): not complete.
 
 Patch markers (`reviewed/patch/<branch>/<pid>`) keep their current content
-and are written only for complete reviews. The hook and `review_scope.py`
-each carry this parser (the hook's hyphenated filename blocks import, as with
-`patch_id()`); a test pins the two to the same answers, malformed markers
-included.
+and are written only for complete reviews. The hook owns this parser;
+`review_scope.py` loads the hook file with `importlib.util` (path relative to
+the script) and calls the same `complete()`, so there is one copy. A hook test
+covers it, malformed markers included.
 
 ### `review_scope.py --since R` (new mode of the existing script)
 
@@ -167,14 +167,14 @@ expected.
 - `skills/shepherd-pr-repair/test_review_scope.py`: incremental with a
   hook-recorded full marker for R; a chain (R itself incremental-complete);
   one test per fallback; rebase-delta with a partial `old_head` falls back to
-  full; parser agreement with the hook.
+  full; a linked worktree.
 - `hooks/test_require_review_before_pr.py`, real git repos: complete
   incremental passes the gate; partial denies (since unreviewed, since
   partial, not an ancestor, stale `head`); a non-canonical or unreadable
   scope path records partial; a `rebase-delta` scope records full; a
   malformed marker denies; no downgrade of a complete marker; a clean rebase
   after a complete chain passes via the patch marker; existing two-token
-  markers pass.
+  markers pass; `complete()` on a table of well-formed and malformed markers.
 
 ### Docs and version
 
@@ -186,5 +186,4 @@ chain. Minor bump.
 
 - Argument parsing details (`--since` vs the rebase flags; how the hook
   splits `args`).
-- Which test file holds the parser-agreement test.
 - Exact deny-reason wording.

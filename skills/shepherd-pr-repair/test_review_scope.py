@@ -7,7 +7,6 @@ Each test builds a real git repo in $TMPDIR, rebases a reviewed fix-123 branch
 onto a moved main, and runs the script as a subprocess.
 """
 
-import importlib.util
 import json
 import os
 import shutil
@@ -52,23 +51,23 @@ class RepoCase(unittest.TestCase):
         lines[5] = line5
         self.change(name, lines, msg)
 
-    def review(self, args=None):
+    def review(self, args=None, cwd=None):
         """Record a review of HEAD the way the hook does; return HEAD."""
         tool_input = {"skill": "code-review-intense-flow"}
         if args is not None:
             tool_input["args"] = args
         subprocess.run([sys.executable, HOOK], check=True, text=True, input=json.dumps({
             "hook_event_name": "PostToolUse", "tool_name": "Skill",
-            "tool_input": tool_input, "cwd": self.repo,
+            "tool_input": tool_input, "cwd": cwd or self.repo,
         }))
-        return self.git("rev-parse", "HEAD")
+        return self.git("-C", cwd or self.repo, "rev-parse", "HEAD")
 
     def marker(self, sha):
         return os.path.join(self.repo, ".git", "kitchen-sink", "reviewed", sha)
 
-    def since(self, rev):
+    def since(self, rev, cwd=None):
         """Run --since rev; return (scope.json path, its data)."""
-        out = subprocess.run([sys.executable, SCRIPT, "--since", rev], cwd=self.repo, check=True,
+        out = subprocess.run([sys.executable, SCRIPT, "--since", rev], cwd=cwd or self.repo, check=True,
                              capture_output=True, text=True).stdout.strip()
         with open(out, encoding="utf-8") as fh:
             return out, json.load(fh)
@@ -278,40 +277,26 @@ class Since(RepoCase):
         proc = subprocess.run([sys.executable, SCRIPT, "--since", self.r, "--base", "main"],
                               cwd=self.repo, capture_output=True, text=True)
         self.assertEqual(proc.returncode, 2)
+        self.assertIn("--since excludes --old-head, --rebased and --base", proc.stderr)
 
+    def test_partial_rebase_flags_rejected(self):
+        proc = subprocess.run([sys.executable, SCRIPT, "--old-head", self.r],
+                              cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("give --since, or all of --old-head, --rebased and --base", proc.stderr)
 
-class MarkerParser(unittest.TestCase):
-    """The hook and review_scope.py carry the same marker parser; pin them together."""
-
-    def load(self, path, name):
-        spec = importlib.util.spec_from_file_location(name, path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def test_hook_and_script_agree(self):
-        hook, script = self.load(HOOK, "hook"), self.load(SCRIPT, "review_scope")
-        sha = "a" * 40
-        cases = {
-            "t skill\n": True,
-            f"t skill incremental {sha} complete\n": True,
-            f"t skill incremental {sha} partial\n": False,
-            f"t skill incremental {sha}\n": False,
-            f"t skill other {sha} complete\n": False,
-            f"t skill incremental {sha} complete extra\n": False,
-            "t skill partial\n": False,
-            "t\n": False,
-            "": False,
-            b"t \xff\n": False,
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "marker")
-            for text, want in cases.items():
-                with open(path, "wb") as fh:
-                    fh.write(text if isinstance(text, bytes) else text.encode())
-                self.assertEqual((hook.complete(path), script.complete(path)), (want, want), text)
-            missing = os.path.join(tmp, "missing")
-            self.assertEqual((hook.complete(missing), script.complete(missing)), (False, False))
+    def test_linked_worktree(self):
+        wt = os.path.join(self.tmp, "wt")
+        self.git("worktree", "add", "-q", "-b", "fix-456", wt)
+        self.git("-C", wt, "commit", "-q", "--allow-empty", "-m", "review fix")
+        path, data = self.since(self.r, cwd=wt)
+        self.assertEqual(data["mode"], "incremental")
+        git_dir = self.git("-C", wt, "rev-parse", "--absolute-git-dir")
+        self.assertEqual(os.path.realpath(path),
+                         os.path.realpath(os.path.join(git_dir, "kitchen-sink", "scope", "scope.json")))
+        head = self.review(f"scope={path}", cwd=wt)
+        # The marker lands in the common dir, shared with the main worktree.
+        self.assertEqual(self.read(self.marker(head)).split()[2:], ["incremental", self.r, "complete"])
 
 
 if __name__ == "__main__":

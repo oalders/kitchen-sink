@@ -236,8 +236,7 @@ def branch_patch_id(cwd):
     return None
 
 
-# Copy of complete() in skills/shepherd-pr-repair/review_scope.py (hyphenated
-# filename blocks import); test_review_scope.py pins them to the same answers.
+# skills/shepherd-pr-repair/review_scope.py loads this module for complete().
 def complete(path):
     """True if the direct marker at path records a full review or a complete chain."""
     try:
@@ -256,7 +255,8 @@ def scope_suffix(cwd, sha, mdir, args):
     gdir = git(cwd, "rev-parse", "--git-dir")
     if not gdir:
         return " partial", False
-    canonical = os.path.realpath(os.path.join(cwd, gdir, "kitchen-sink", "scope", "scope.json"))
+    # Resolve only the directory: a scope.json symlinked elsewhere must not pass as the canonical file.
+    canonical = os.path.join(os.path.realpath(os.path.join(cwd, gdir, "kitchen-sink", "scope")), "scope.json")
     if os.path.realpath(os.path.join(cwd, m.group(1))) != canonical:
         return " partial", False
     try:

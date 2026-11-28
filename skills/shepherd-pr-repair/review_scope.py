@@ -18,6 +18,7 @@ on each run) and prints the path of its scope.json, which carries a `reason`.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -67,16 +68,16 @@ def patch_id(sha):
     return out[0] if out else None
 
 
-# Copy of complete() in hooks/require-review-before-pr.py (hyphenated filename
-# blocks import); test_review_scope.py pins them to the same answers.
-def complete(path):
-    """True if the direct marker at path records a full review or a complete chain."""
-    try:
-        with open(path, encoding="utf-8") as fh:
-            tokens = fh.read().split()
-    except (OSError, UnicodeError):
-        return False
-    return len(tokens) == 2 or (len(tokens) == 5 and tokens[2] == "incremental" and tokens[4] == "complete")
+def load_hook():
+    """The require-review-before-pr hook as a module, so its marker parser has one source."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "require-review-before-pr.py")
+    spec = importlib.util.spec_from_file_location("require_review_before_pr", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+complete = load_hook().complete
 
 
 def reviewed(mdir, sha):

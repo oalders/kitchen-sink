@@ -8,6 +8,7 @@ with a JSON payload on stdin, and asserts on markers written or on whether a
 `deny` decision was emitted.
 """
 
+import importlib.util
 import json
 import os
 import shutil
@@ -389,9 +390,21 @@ class Incremental(RepoCase):
             self.assertEqual(self.tokens()[2:], ["partial"], args)
             self.assertTrue(is_deny(self.bash("gh pr create --draft")), args)
 
+    def test_symlinked_canonical_scope_denies(self):
+        good = self.scope(mode="incremental", since=self.r, head=self.head())
+        elsewhere = os.path.join(self.tmp, "scope.json")
+        shutil.move(good, elsewhere)
+        os.symlink(elsewhere, good)
+        self.skill("code-review-intense-flow", args=f"scope={good}")
+        self.assertEqual(self.tokens()[2:], ["partial"])
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
     def test_unreadable_scope_denies(self):
         path = self.scope(mode="incremental", since=self.r, head=self.head())
-        for text in ("not json{", "[]", '{"mode": "bogus"}', '{"mode": "incremental", "since": "../x"}'):
+        head = self.head()
+        for text in ("not json{", "[]", '{"mode": "bogus"}', '{"mode": "incremental", "since": "../x"}',
+                     json.dumps({"mode": "incremental", "since": self.r[:7], "head": head}),
+                     json.dumps({"mode": "incremental", "since": self.r.upper(), "head": head})):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
             self.skill("code-review-intense-flow", args=f"scope={path}")
@@ -409,11 +422,6 @@ class Incremental(RepoCase):
             fh.write("garbage\n")
         self.assertTrue(is_deny(self.bash("gh pr create --draft")))
 
-    def test_two_token_marker_allows(self):
-        with open(self.marker(), "w", encoding="utf-8") as fh:
-            fh.write("2026-01-01T00:00:00+00:00 skill\n")
-        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
-
     def test_partial_never_downgrades_complete(self):
         self.skill("code-review-intense-flow")
         before = self.tokens()
@@ -428,6 +436,35 @@ class Incremental(RepoCase):
         self.git("checkout", "-q", "fix-123")
         self.git("rebase", "-q", "main")
         self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+
+class MarkerGrammar(unittest.TestCase):
+    """complete(), which review_scope.py also loads, on well-formed and malformed markers."""
+
+    def test_complete(self):
+        spec = importlib.util.spec_from_file_location("require_review_before_pr", HOOK)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        sha = "a" * 40
+        cases = {
+            b"t skill\n": True,
+            f"t skill incremental {sha} complete\n".encode(): True,
+            f"t skill incremental {sha} partial\n".encode(): False,
+            f"t skill incremental {sha}\n".encode(): False,
+            f"t skill other {sha} complete\n".encode(): False,
+            f"t skill incremental {sha} complete extra\n".encode(): False,
+            b"t skill partial\n": False,
+            b"t\n": False,
+            b"": False,
+            b"t \xff\n": False,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "marker")
+            for raw, want in cases.items():
+                with open(path, "wb") as fh:
+                    fh.write(raw)
+                self.assertEqual(hook.complete(path), want, raw)
+            self.assertFalse(hook.complete(os.path.join(tmp, "missing")))
 
 
 class FailOpen(unittest.TestCase):
