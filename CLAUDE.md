@@ -22,6 +22,12 @@ When bumping, update BOTH files:
 
 All three version strings must match. If they drift, Claude Code's plugin cache serves stale versions.
 
+## Logic goes in code, not prose
+
+Put new deterministic logic in a tested Python script next to the skill or command, never in prose. That covers rules with precedence or exceptions, counts and outcome bookkeeping, escaping, path or pattern matching, and verify checks. The prose says when to run the script and what to do with its output, and it keeps only the judgement calls, passed to the script as inputs. Prose rules that interact get re-read a new way in every review round; code and its tests settle them once. Add each new test file to `.github/workflows/test.yml`. `skills/least-privilege-gh-actions/check_workflow.py` is the model.
+
+A flowchart may hold the order of agent steps (asking, dispatching, judging, looping) when branching is hard to follow in prose; it is then the only statement of that order, and the steps text describes each node without restating the edges. A decision inside a node whose inputs are mechanical goes in code.
+
 ## Review loop
 
 Docs here are agent instructions, so reviewers check every sentence against the code. These rules keep `/fix-gh-issue` review rounds converging:
