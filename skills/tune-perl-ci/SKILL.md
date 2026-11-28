@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. Per file, the `action` of that skill's `--apply` run maps `unchanged` to conformant and `skip` to a skipped file; the file counts in N/M/K only if transform 9 changes it, and its `reports` are recorded per Algorithm step 2b. For these files that one `--apply` run takes the place of steps 2a and 2c: the script writes the file itself, the action and `reports` come from that run, and step 2d verifies after it.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. For these files that skill's one `--apply` run takes the place of steps 2a and 2c: the script writes the file itself, and step 2d verifies after it. Per file, that run's `action` maps `unchanged` to conformant and `skip` to a skipped file; the file counts in N/M/K only if transform 9 changes it. Transform 9's reported items are each file's non-`info` `reports` and final `violations` entries, the ones its `drift` field counts; `info` reports are relayed as notes, not reported items.
 
 **Why:** see `kitchen-sink:least-privilege-gh-actions`.
 
@@ -332,7 +332,7 @@ test_macos:
    Exit early with "no Perl workflows found" if the set is empty.
 2. For each transform in order [1..9]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. For transform 9 only, first record every in-scope file's `reports`, even when 2a's diff is empty; transform 9 defines its conformant and skipped files. Then, for every transform, skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
+     b. For transform 9, record each in-scope file's `reports` from its `--apply` run. For every other transform, skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear

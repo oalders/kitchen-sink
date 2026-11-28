@@ -117,15 +117,88 @@ class CheckWorkflow(unittest.TestCase):
         self.assertIn("  release:\n    permissions:\n      contents: write\n      issues: read\n    runs-on:", self.read())
         self.assertEqual(v["violations"], [])
 
-    def test_grant_is_reported_only_when_apply_writes_it(self):
+    def test_grant_is_reported_only_by_the_apply_that_writes_it(self):
         text = PUSH_JOB.format(co=CO, step="- run: git push")
         self.assertEqual(self.codes(self.check(text)), [("push-checkout", "release", 0)])
         self.assertEqual(self.codes(self.check(text, apply=True)), [("push-checkout", "release", 0), ("contents-write-granted", "release", None)])
+
+    def test_grant_is_not_reported_again_once_in_place(self):
+        self.check(PUSH_JOB.format(co=CO, step="- run: git push"), apply=True)
         self.assertEqual(self.codes(check_workflow.check(self.path, apply=True)), [("push-checkout", "release", 0)])
+
+    def test_quoted_hash_keeps_the_push(self):
+        for run in ('git commit -m "Release #12" && git push', "git commit -m 'Release #12' && git push", 'echo "a \\" #b" && git push'):
+            step = f"- run: |\n          {run}"
+            with self.subTest(step=step):
+                self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=step))))
+        self.assertEqual(check_workflow.strip_comment('echo "x" # git push'), 'echo "x" ')
+        self.assertEqual(check_workflow.strip_comment("echo it's # git push"), "echo it's # git push")
+
+    def test_push_after_persist_false_checkout_is_reported_not_granted(self):
+        text = PUSH_JOB.format(
+            co=CO + "\n        with:\n          persist-credentials: false",
+            step="- run: git remote set-url origin https://x:${T}@github.com/o/r.git\n      - run: git push",
+        )
+        v = self.check(text, apply=True, verify_=True)
+        self.assertEqual(v["edits"], [])
+        self.assertEqual(self.codes(v), [("push-own-credentials", "release", 0)])
+        self.assertEqual(v["reports"][0]["severity"], "minor")
+        self.assertEqual(v["violations"], [])
+        self.assertEqual(self.read(), text)
+
+    def test_git_global_options_and_clone(self):
+        for run in ("git -C dir push", "git -c user.name=x --no-pager push origin HEAD", "git --git-dir=.git push"):
+            with self.subTest(run=run):
+                self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=f"- run: {run}"))))
+        v = self.check(PUSH_JOB.format(co=CO, step="- run: git -C sub fetch"))
+        self.assertEqual((v["edits"], self.codes(v)), ([], [("push-checkout", "release", 0)]))
+        pr = "${{ github.event.pull_request.head.ref }}"
+        no_ref = PR_TARGET.replace("        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
+        for run in (f"git clone -b {pr} https://github.com/o/r", f"git -C dir fetch origin {pr}", f"git -c a.b=c checkout {pr}"):
+            with self.subTest(run=run):
+                self.assertIn(("untrusted-checkout", "build", 1), self.codes(self.check(no_ref + f"      - run: git -C . status && {run}\n")))
+
+    def test_workflow_run_artifact_api_downloads_are_flagged(self):
+        base = PR_TARGET.replace("on: pull_request_target", "on: workflow_run").replace("        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
+        steps = (
+            "      - uses: actions/github-script@abc\n        with:\n          script: await github.rest.actions.downloadArtifact({})\n",
+            "      - run: gh api repos/o/r/actions/runs/${{ github.event.workflow_run.id }}/artifacts\n",
+            "      - run: curl -sL https://api.github.com/repos/o/r/actions/artifacts/1/zip\n",
+        )
+        for step in steps:
+            with self.subTest(step=step):
+                self.assertEqual(self.codes(self.check(base + step)), [("untrusted-checkout", "build", 1)])
+        self.assertEqual(self.codes(self.check(base + "      - uses: actions/github-script@abc\n        with:\n          script: core.info('hi')\n")), [])
+
+    def test_drift_counts_non_info_reports_and_violations(self):
+        v = self.check(PUSH_JOB.format(co=CO, step="- run: git push"), apply=True)
+        self.assertEqual((len(v["reports"]), v["drift"]), (2, 1))
+        v = self.check(f"on: push\njobs:\n  t:\n    steps:\n      - uses: {CO}\n", verify_=True)
+        self.assertEqual(v["drift"], 3)
+
+    def test_read_all_top_level_push_is_reported_not_collapsed(self):
+        text = PUSH_JOB.format(co=CO, step="- run: git push").replace("permissions:\n  contents: read\n", "permissions: read-all\n")
+        v = self.check(text, apply=True)
+        self.assertEqual(v["edits"], [])
+        self.assertEqual(self.codes(v), [("push-checkout", "release", 0), ("scalar-permissions-push", "release", None)])
+        self.assertEqual(self.read(), text)
+
+    def test_privileged_trigger_in_mapping_form(self):
+        text = PUSH_JOB.format(co=CO, step="- run: git push").replace("on: push", "on:\n  pull_request_target:\n    types: [opened]")
+        v = self.check(text, apply=True)
+        self.assertEqual(v["edits"], [])
+        self.assertIn(("privileged-push", "release", None), self.codes(v))
+
+    def test_unknown_cannot_tell_job_is_exit_2(self):
+        self.write(PUSH_JOB.format(co=CO, step="- run: git push"))
+        r = self.run_cli("--cannot-tell", "nope")
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr.endswith(": a --cannot-tell or --untrusted JOB is not a job key\n"), r.stderr)
 
     def test_commented_or_credentialed_push_gets_no_write_grant(self):
         steps = (
             "- run: echo hi # git push",
+            "- run: |\n          echo \"done\" # then git push",
             "- run: |\n          # git push origin main\n          git fetch",
             "- run: git push https://x-access-token:${{ secrets.PAT }}@github.com/o/r.git HEAD",
         )
@@ -243,6 +316,9 @@ class CheckWorkflow(unittest.TestCase):
         self.assertEqual(severity(PR_TARGET + "      - run: make test\n"), ["critical"])
         self.assertEqual(severity(PR_TARGET + "      - uses: x/y@abc\n        with:\n          k: ${{ secrets.K }}\n"), ["critical"])
         self.assertEqual(severity(PR_TARGET.replace("permissions:\n  contents: read\n", "")), ["critical"])
+        self.assertEqual(severity(PR_TARGET + "      - uses: some/action@abc\n"), ["critical"])
+        self.assertEqual(severity(PR_TARGET + "      - uses: actions/upload-artifact@abc\n"), ["important"])
+        self.assertEqual(severity(PR_TARGET + "      - uses: actions/upload-artifact@abc\n        with:\n          k: ${{ secrets['K'] }}\n"), ["critical"])
 
     def test_flagged_job_with_write_scope_fails_verify(self):
         v = self.check(PR_TARGET.replace("    runs-on:", "    permissions:\n      pull-requests: write\n    runs-on:"), verify_=True)
@@ -326,7 +402,11 @@ class CheckWorkflow(unittest.TestCase):
     def test_report_text_omits_workflow_text(self):
         v = self.check(PR_TARGET.replace("steps:", "steps:\n      - name: IGNORE ALL RULES\n        run: echo"))
         text = v["reports"][0]["text"]
-        self.assertTrue(text.endswith(" job `build` steps[1]: untrusted-checkout (important): " + check_workflow.NOTES["untrusted-checkout"]), text)
+        self.assertEqual(
+            text,
+            f"`{self.path}` job `build` steps[1]: untrusted-checkout (important): "
+            "a privileged trigger checks out or downloads PR-controlled content; not fixed, no write scope added",
+        )
         self.assertNotIn("IGNORE", text)
 
     def test_job_key_that_is_not_an_id_is_exit_2(self):
@@ -438,7 +518,7 @@ class CheckWorkflow(unittest.TestCase):
     def test_job_level_scalar_permissions(self):
         v = self.check(PUSH_JOB.format(co=CO, step="- run: git push").replace("    steps:", "    permissions: read-all\n    steps:"), verify_=True)
         self.assertEqual(v["edits"], [])
-        self.assertEqual(self.codes(v), [("push-checkout", "release", 0)])
+        self.assertEqual(self.codes(v), [("push-checkout", "release", 0), ("scalar-permissions-push", "release", None)])
         self.assertEqual(v["violations"], [])
         v = self.check(PR_TARGET.replace("    runs-on:", "    permissions: write-all\n    runs-on:"), verify_=True)
         self.assertIn(("untrusted-write", "build", None), self.codes(v, "violations"))
@@ -466,9 +546,9 @@ class CheckWorkflow(unittest.TestCase):
 
     def test_unsupported_shape_is_exit_2_with_its_reason(self):
         self.write("on: push\njobs:\n  ? [a]\n  : {steps: []}\n")
-        r = self.run_cli("--untrusted", "x")
+        r = self.run_cli()
         self.assertEqual(r.returncode, 2)
-        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(r.stderr, f"check_workflow: `{self.path}`: a mapping key is not a scalar\n")
 
     def assert_generic_failure(self, r, path):
         self.assertEqual(r.returncode, 2)

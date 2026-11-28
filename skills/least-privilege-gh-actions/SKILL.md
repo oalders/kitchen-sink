@@ -31,7 +31,7 @@ jobs:
 For each workflow file `<file>`:
 
 1. Read `<file>` and decide the two judgment inputs, each repeatable:
-   - `--cannot-tell JOB`: a later step runs a script or tool whose token needs you can't read or confirm, such as `dzil release` with `[Git::Push]` or `git submodule update` for private submodules. The whole file is then skipped.
+   - `--cannot-tell JOB`: a later step runs a script or tool whose token needs you can't read or confirm, such as `dzil release` with `[Git::Push]` or `git submodule update` for private submodules. It also covers a job whose needed scope you can't determine. The whole file is then skipped.
    - `--untrusted JOB`: on a `pull_request_target`, `workflow_run` or `issue_comment` trigger, the job checks out, fetches or downloads PR-controlled content the script's patterns miss, e.g. a PR head ref looked up through `gh api` or `gh pr view` and passed via a step output or `env:`.
 2. Run `python3 "$CW" --apply [--cannot-tell JOB]... [--untrusted JOB]... <file>` once. Its `reports` describe the file as given, plus each `contents: write` it added, and its `violations` the edited file. Exit 1 is not a failure: it means `violations` is non-empty, and step 5 relays them. On exit 2 it wrote nothing: make no edit and relay its one stderr line.
 3. Add any other scope a job needs to its job-level `permissions:` block, never a broader top-level one, e.g. `pull-requests: write` for PR comments or labels, `pages: write` for Pages deploys, `id-token: write` for OIDC. A job-level block replaces the top-level block, so a new one also lists `contents: read` when the job checks out code. Add none to a job with an `untrusted-checkout` report, or in a file whose `action` is `skip`.

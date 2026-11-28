@@ -167,7 +167,7 @@ class TestLeastPrivilege(unittest.TestCase):
                 "t:14: persist-credentials",
             ],
         )
-        self.assertEqual(problems("t", *blocks[1]), ["t:28: push-checkout"])
+        self.assertEqual(problems("t", *blocks[1]), ["t:28: push-own-credentials"])
         self.assertEqual(problems("t", *blocks[2]), ["t:34: persist-credentials"])
 
 
