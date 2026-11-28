@@ -594,7 +594,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs a least-privilege token and checkout, and a separate commit keeps that revertable.
 
-**Outcome:** from that skill's `--apply` run: DRIFT when its `action` is `skip`, else APPLY when the skill changes `lint.yml`, else NO-OP. Add the `drift` field of that skill's last run (its step 4 `--verify` if that ran, else the `--apply` run) to D, even when the outcome is APPLY; each counted entry is one drift item.
+**Outcome:** from that skill's `--apply` run: DRIFT when its `action` is `skip`, else APPLY when the skill changes `lint.yml`, else NO-OP. Add the `drift` field of that skill's last run (its step 4 `--verify` if that ran, else the `--apply` run) to D, per the drift rule in the `check_workflow.py` docstring, even when the outcome is APPLY; each counted entry is one drift item.
 
 **Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify passes for `lint.yml`.
 
@@ -603,7 +603,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 ```
 1. Detect mode (migrate / greenfield / tune / typos-only). Exit clean if no Perl files AND no typos config.
 2. For each transform T1..T8 in order, classify into one of:
-   - NO-OP:   change set is empty; skip silently, except T8's reported items.
+   - NO-OP:   change set is empty; skip silently, though T8's `drift` still adds to D.
    - APPLY:   change set is non-empty AND it is safe to write
               (the transform's per-step rules don't say "report drift").
               Apply, verify, stage, commit.

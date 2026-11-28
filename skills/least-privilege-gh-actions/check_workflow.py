@@ -9,17 +9,21 @@ Prints a JSON verdict {file, action, edits, reports, violations, drift}.
 job and step are null for a file-level item, step is a 0-based index into the
 job's `steps:`, and `text` is the line to relay, built only from the file path,
 job keys, step indices and fixed wording, never from other workflow content.
-Severity is `critical`, `important`, `minor` or `info`. `drift` counts the
-reports that are not `info` plus the violations. Reports describe the file as
-given, before any edit, except `contents-write-granted` (`info`), which --apply
-adds for each job it gave job-level `contents: write`. NOTES below lists every
-code.
+Severity is `critical`, `important`, `minor` or `info`. NOTES below lists
+every code. Reports are the same before and after --apply's edits, so --apply
+and a later --verify agree on them; the one addition is `contents-write-granted`
+(`info`), which only the --apply run that adds a job-level `contents: write`
+reports.
+
+Drift rule, for callers that count drift: the --apply run's reports that are
+not `info`, plus the last run's violations. `drift` is that count for the run
+that prints it, so the last run's `drift` is the caller's number.
 
 --apply writes the edits as text, keeping comments and layout, then fills
 `violations` from the edited file. It writes nothing when there are edits and
 the file uses YAML aliases, when the result doesn't parse, when a second pass
-finds more to edit, or when the edits would raise any scope beyond the
-intended `contents:` grant. That grant is never added on a privileged trigger
+finds more to edit, when the edits would change the reports, or when they would
+raise any scope beyond the intended `contents:` grant. That grant is never added on a privileged trigger
 (`privileged-push`), after a persist-credentials: false checkout
 (`push-own-credentials`) or to a one-value permissions: block
 (`scalar-permissions-push`); the report names it instead. --verify fills
@@ -45,7 +49,7 @@ PRIVILEGED = {"pull_request_target", "workflow_run", "issue_comment"}
 PUSH_ACTIONS = ("stefanzweifel/git-auto-commit-action@", "peter-evans/create-pull-request@", "endbug/add-and-commit@")
 TOKEN_INPUTS = {"token", "github_token", "github-token"}
 # `git`, then any global options (-C dir, -c k=v, --opt[=val]), then the subcommand.
-GIT = r"\bgit(?:\s+(?:-[Cc]\s+\S+|--[\w-]+(?:=\S+)?))*\s+"
+GIT = r"""\bgit(?:\s+(?:-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|--[\w-]+(?:=\S+)?))*\s+"""
 GIT_PUSH = re.compile(GIT + r"push\b")
 GIT_READ = re.compile(GIT + r"(?:fetch|pull)\b")
 GIT_GET = re.compile(GIT + r"(?:checkout|fetch|switch|clone)\b")
@@ -67,6 +71,7 @@ PULL_REF = re.compile(r"\bpull/[^/\n]+/(?:head|merge)\b", re.I)
 INDEX = re.compile(r"""\[\s*['"]([^'"\]]+)['"]\s*\]""")
 DEFAULT_TOKEN = re.compile(r"^\$\{\{\s*(?:secrets\.GITHUB_TOKEN|github\.token)\s*\}\}$")
 # A push to such a URL uses the token in it, not the persisted one.
+CONTINUATION = re.compile(r"\\\r?\n")
 CRED_URL = re.compile(r"https?://[^/\n]*@")
 JOB_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 ARTIFACT_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
@@ -178,33 +183,54 @@ def drift(top):
     return any(not isinstance(v, yaml.ScalarNode) or v.value not in ("read", "none") for _, v in top.value)
 
 
-def strip_comment(line):
-    """line without its shell comment: a # at the start or after whitespace, outside quotes."""
-    quote, prev, i = None, " ", 0
-    while i < len(line):
-        c = line[i]
+def strip_comments(script):
+    """script without shell comments: a # at a line start or after whitespace, outside
+    quotes, up to the end of its line. A quoted string may span lines."""
+    out, quote, prev, i = [], None, "\n", 0
+    while i < len(script):
+        c = script[i]
+        if quote is None and c == "#" and prev.isspace():
+            end = script.find("\n", i)
+            i = len(script) if end < 0 else end
+            prev = "#"
+            continue
         if quote == "'":
             quote = None if c == "'" else quote
-        elif c == "\\":
+        elif c == "\\" and i + 1 < len(script):
+            out.append(c)
             i += 1  # the escaped character is literal
+            c = script[i]
         elif quote == '"':
             quote = None if c == '"' else quote
         elif c in "'\"":
             quote = c
-        elif c == "#" and prev.isspace():
-            return line[:i]
-        prev = line[i] if i < len(line) else ""
+        out.append(c)
+        prev = c
         i += 1
-    return line
+    return "".join(out)
+
+
+def shell_lines(step):
+    """The step's run: script as logical lines: comments dropped, \\-continuations joined."""
+    return CONTINUATION.sub(" ", strip_comments(get(step, "run"))).splitlines()
+
+
+def own_value(token):
+    """True for a token input that is not the workflow's default token."""
+    token = token.strip()
+    return bool(token) and not DEFAULT_TOKEN.match(token)
 
 
 def remote_use(step):
     """'push' for a step pushing with persisted credentials, 'read' for fetch/pull, else None."""
     if uses(step).startswith(PUSH_ACTIONS):
         w = item(step, "with")[1]
-        own = isinstance(w, yaml.MappingNode) and any(isinstance(k, yaml.ScalarNode) and k.value in TOKEN_INPUTS for k, _ in w.value)
+        own = isinstance(w, yaml.MappingNode) and any(
+            isinstance(k, yaml.ScalarNode) and k.value in TOKEN_INPUTS and isinstance(v, yaml.ScalarNode) and own_value(v.value)
+            for k, v in w.value
+        )
         return None if own else "push"
-    lines = [strip_comment(line) for line in get(step, "run").splitlines()]
+    lines = shell_lines(step)
     if any(GIT_PUSH.search(line) and not CRED_URL.search(line) for line in lines):
         return "push"
     return "read" if any(GIT_READ.search(line) for line in lines) else None
@@ -215,7 +241,7 @@ def persists(checkout):
 
 
 def own_token(checkout):
-    token = get(item(checkout, "with")[1], "token").strip()
+    return own_value(get(item(checkout, "with")[1], "token"))
     return bool(token) and not DEFAULT_TOKEN.match(token)
 
 
@@ -228,7 +254,7 @@ def flag_step(steps, triggers):
     if not triggers & PRIVILEGED:
         return None
     for i, step in enumerate(steps):
-        used, run = uses(step), get(step, "run")
+        used, run = uses(step), CONTINUATION.sub(" ", get(step, "run"))
         w = item(step, "with")[1]
         if used.startswith(CHECKOUT) and (pr_content(get(w, "ref")) or pr_content(get(w, "repository"))):
             return i
@@ -429,25 +455,30 @@ def runs_code(step):
 
 
 def reports(analysis, cannot_tell):
-    _, top, jobs = analysis
+    root, top, jobs = analysis
     out = [item_dict("top-level-drift")] if drift(top) else []
     for j in jobs:
         if j.key in cannot_tell:
             out.append(item_dict("cannot-tell", j.key))
+        if j.flagged:
+            # untrusted-checkout covers the whole job, its pushes and fetches included.
+            later = j.steps if j.flag_step is None else j.steps[j.flag_step + 1 :]
+            # A flagging run: step runs code itself; a flagging uses: step only fetches.
+            flagged_run = j.flag_step is not None and item(j.steps[j.flag_step], "run")[1] is not None
+            critical = (
+                flagged_run
+                or any(runs_code(s) for s in later)
+                or any("secrets." in INDEX.sub(r".\1", s) for node in (j.node, item(root, "env")[1]) for s in scalars(node))
+                or grants_write(j.perm if j.perm is not None else top)
+            )
+            out.append(item_dict("untrusted-checkout", j.key, j.flag_step, "critical" if critical else "important"))
+            continue
         out += [item_dict("push-checkout", j.key, i) for i in j.pushes]
         out += [item_dict("push-own-credentials", j.key, i, "minor") for i in j.own_pushes]
         if needs_grant(j, top) and isinstance(resolved(j, top), yaml.ScalarNode):
             out.append(item_dict("scalar-permissions-push", j.key))
         if j.privileged and default_token_push(j):
             out.append(item_dict("privileged-push", j.key))
-        if j.flagged:
-            later = j.steps if j.flag_step is None else j.steps[j.flag_step + 1 :]
-            critical = (
-                any(runs_code(s) for s in later)
-                or any("secrets." in INDEX.sub(r".\1", s) for s in scalars(j.node))
-                or grants_write(j.perm if j.perm is not None else top)
-            )
-            out.append(item_dict("untrusted-checkout", j.key, j.flag_step, "critical" if critical else "important"))
     return out
 
 
@@ -510,6 +541,9 @@ def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
             raise Unsupported("edits did not converge; file not written")
         if widened(analysis, after):
             raise Unsupported("edits would widen a scope; file not written")
+        # The edits must not change the reports, so a later --verify run reports alike.
+        if reports(after, cannot_tell) != found:
+            raise Unsupported("edits would change the reports; file not written")
         with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
         analysis = after

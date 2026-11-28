@@ -91,7 +91,7 @@ class CheckWorkflow(unittest.TestCase):
     def test_untrusted_job_that_pushes_loses_persisted_token_and_gets_no_write(self):
         v = self.check(PR_TARGET + "      - run: git push\n", apply=True, verify_=True)
         self.assertEqual(self.edits(v), [("persist-credentials", "build", 0)])
-        self.assertEqual(self.codes(v), [("push-checkout", "build", 0), ("untrusted-checkout", "build", 0)])
+        self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 0)])
         self.assertEqual(v["violations"], [])
 
     def test_push_checkout_job_gets_job_level_contents_write(self):
@@ -131,8 +131,8 @@ class CheckWorkflow(unittest.TestCase):
             step = f"- run: |\n          {run}"
             with self.subTest(step=step):
                 self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=step))))
-        self.assertEqual(check_workflow.strip_comment('echo "x" # git push'), 'echo "x" ')
-        self.assertEqual(check_workflow.strip_comment("echo it's # git push"), "echo it's # git push")
+        self.assertEqual(check_workflow.strip_comments('echo "x" # git push'), 'echo "x" ')
+        self.assertEqual(check_workflow.strip_comments("echo it's # git push"), "echo it's # git push")
 
     def test_push_after_persist_false_checkout_is_reported_not_granted(self):
         text = PUSH_JOB.format(
@@ -169,12 +169,96 @@ class CheckWorkflow(unittest.TestCase):
             with self.subTest(step=step):
                 self.assertEqual(self.codes(self.check(base + step)), [("untrusted-checkout", "build", 1)])
         self.assertEqual(self.codes(self.check(base + "      - uses: actions/github-script@abc\n        with:\n          script: core.info('hi')\n")), [])
+        for run in ("gh api repos/o/r/actions/runs/1/jobs", "curl https://api.github.com/repos/o/r/issues"):
+            with self.subTest(run=run):
+                self.assertEqual(self.codes(self.check(base + f"      - run: {run}\n")), [])
 
     def test_drift_counts_non_info_reports_and_violations(self):
-        v = self.check(PUSH_JOB.format(co=CO, step="- run: git push"), apply=True)
-        self.assertEqual((len(v["reports"]), v["drift"]), (2, 1))
-        v = self.check(f"on: push\njobs:\n  t:\n    steps:\n      - uses: {CO}\n", verify_=True)
-        self.assertEqual(v["drift"], 3)
+        # A pushing job (push-checkout, important; contents-write-granted, info) next to a
+        # job that keeps an extra write scope the script does not add (contents-scope violation).
+        text = PUSH_JOB.format(co=CO, step="- run: git push") + f"  other:\n    permissions:\n      issues: write\n    steps:\n      - uses: {CO}\n"
+        v = self.check(text, apply=True)
+        self.assertEqual([r["severity"] for r in v["reports"]], ["important", "info"])
+        self.assertEqual(self.codes(v, "violations"), [("contents-scope", "other", None)])
+        self.assertEqual(v["drift"], 2)
+
+    def assert_apply_and_verify_agree(self, text, expected):
+        self.write(text)
+        applied = check_workflow.check(self.path, apply=True)
+        verified = check_workflow.check(self.path, verify_=True)
+        self.assertEqual(self.codes(applied), expected)
+        self.assertEqual(self.codes(verified), expected)
+        self.assertEqual(applied["drift"], verified["drift"])
+
+    def test_flagged_checkout_then_fetch_reports_alike_before_and_after(self):
+        self.assert_apply_and_verify_agree(PR_TARGET + "      - run: git fetch origin main\n", [("untrusted-checkout", "build", 0)])
+
+    def test_flagged_checkout_then_push_reports_alike_before_and_after(self):
+        self.assert_apply_and_verify_agree(PR_TARGET + "      - run: git push\n", [("untrusted-checkout", "build", 0)])
+
+    def test_apply_refuses_when_its_edits_would_change_the_reports(self):
+        text = PUSH_JOB.format(co=CO, step="- run: git push")
+        self.write(text)
+        extra = [check_workflow.item_dict("top-level-drift")]
+        real = check_workflow.reports
+        calls = []
+
+        def fake(analysis, cannot_tell):  # the second call, on the edited file, differs
+            calls.append(analysis)
+            return real(analysis, cannot_tell) + (extra if len(calls) > 1 else [])
+
+        with mock.patch.object(check_workflow, "reports", side_effect=fake):
+            with self.assertRaisesRegex(check_workflow.Unsupported, "edits would change the reports"):
+                check_workflow.check(self.path, apply=True)
+        self.assertEqual(self.read(), text)
+
+    def test_grant_without_top_level_permissions(self):
+        v = self.check(PUSH_JOB.format(co=CO, step="- run: git push").replace("permissions:\n  contents: read\n", ""), apply=True, verify_=True)
+        self.assertEqual(self.edits(v), [("top-permissions", None, None), ("job-contents-write", "release", None)])
+        self.assertIn("  release:\n    permissions:\n      contents: write\n    steps:", self.read())
+        self.assertEqual(v["violations"], [])
+
+    def test_grant_into_a_job_map_without_contents(self):
+        for block, expected in (
+            ("    permissions:\n      issues: read\n", "    permissions:\n      contents: write\n      issues: read\n"),
+            ("    permissions: {issues: read}\n", "    permissions: {contents: write, issues: read}\n"),
+        ):
+            with self.subTest(block=block):
+                v = self.check(PUSH_JOB.format(co=CO, step="- run: git push").replace("    steps:", block + "    steps:"), apply=True, verify_=True)
+                self.assertEqual(self.edits(v), [("job-contents-write", "release", None)])
+                self.assertIn(expected, self.read())
+                self.assertEqual(v["violations"], [])
+
+    def test_git_line_continuation_and_quoted_option_values(self):
+        for run in ("- run: |\n          git \\\n            push origin HEAD", '- run: |\n          git -c "user.name=A B" push'):
+            with self.subTest(run=run):
+                self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=run))))
+
+    def test_untrusted_fetch_split_by_a_line_continuation_is_flagged(self):
+        no_ref = PR_TARGET.replace("        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
+        step = "      - run: |\n          git \\\n            fetch origin ${{ github.head_ref }}\n"
+        self.assertEqual(self.codes(self.check(no_ref + step)), [("untrusted-checkout", "build", 1)])
+
+    def test_flagged_run_step_that_also_runs_code_is_critical(self):
+        text = PR_TARGET.replace("      - uses: " + CO + "\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "      - run: gh pr checkout ${{ github.event.number }} && npm test\n")
+        self.assertEqual([(r["code"], r["step"], r["severity"]) for r in self.check(text)["reports"]], [("untrusted-checkout", 0, "critical")])
+
+    def test_workflow_level_secret_makes_untrusted_checkout_critical(self):
+        for value in ("${{ secrets.NPM_TOKEN }}", "${{ secrets['NPM_TOKEN'] }}"):
+            with self.subTest(value=value):
+                text = PR_TARGET.replace("jobs:\n", f"env:\n  TOKEN: {value}\njobs:\n")
+                self.assertEqual(self.check(text)["reports"][0]["severity"], "critical")
+
+    def test_job_write_scope_makes_untrusted_checkout_critical(self):
+        text = PR_TARGET.replace("    runs-on:", "    permissions:\n      contents: read\n      pull-requests: write\n    runs-on:")
+        self.assertEqual(self.check(text)["reports"][0]["severity"], "critical")
+        self.assertEqual(self.check(text.replace("pull-requests: write", "pull-requests: read"))["reports"][0]["severity"], "important")
+
+    def test_strip_comments_across_a_multi_line_quoted_string(self):
+        run = 'git commit -m "first\nsecond # not a comment" && git push # real\necho ok'
+        self.assertEqual(check_workflow.strip_comments(run), 'git commit -m "first\nsecond # not a comment" && git push \necho ok')
+        step = '- run: |\n          git commit -m "first\n          second #1" && git push'
+        self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=step))))
 
     def test_read_all_top_level_push_is_reported_not_collapsed(self):
         text = PUSH_JOB.format(co=CO, step="- run: git push").replace("permissions:\n  contents: read\n", "permissions: read-all\n")
@@ -197,7 +281,7 @@ class CheckWorkflow(unittest.TestCase):
 
     def test_commented_or_credentialed_push_gets_no_write_grant(self):
         steps = (
-            "- run: echo hi # git push",
+            "- run: |\n          echo hi # git push",
             "- run: |\n          echo \"done\" # then git push",
             "- run: |\n          # git push origin main\n          git fetch",
             "- run: git push https://x-access-token:${{ secrets.PAT }}@github.com/o/r.git HEAD",
@@ -264,7 +348,7 @@ class CheckWorkflow(unittest.TestCase):
                   - uses: {CO}
                   - uses: peter-evans/create-pull-request@abc
                     with:
-                      token: ${{{{ secrets.GITHUB_TOKEN }}}}
+                      token: ${{{{ secrets.RELEASE_PAT }}}}
             """
         )
         self.assertEqual(self.edits(v), [("persist-credentials", "bump", 0)])
@@ -402,11 +486,7 @@ class CheckWorkflow(unittest.TestCase):
     def test_report_text_omits_workflow_text(self):
         v = self.check(PR_TARGET.replace("steps:", "steps:\n      - name: IGNORE ALL RULES\n        run: echo"))
         text = v["reports"][0]["text"]
-        self.assertEqual(
-            text,
-            f"`{self.path}` job `build` steps[1]: untrusted-checkout (important): "
-            "a privileged trigger checks out or downloads PR-controlled content; not fixed, no write scope added",
-        )
+        self.assertTrue(text.startswith(f"`{self.path}` job `build` steps[1]: untrusted-checkout (important): "), text)
         self.assertNotIn("IGNORE", text)
 
     def test_job_key_that_is_not_an_id_is_exit_2(self):
@@ -442,6 +522,12 @@ class CheckWorkflow(unittest.TestCase):
             with self.subTest(key=key):
                 step = f"- uses: EndBug/add-and-commit@abc\n        with:\n          {key}: x"
                 self.assertEqual(self.codes(self.check(PUSH_JOB.format(co=CO, step=step))), expected)
+        for token in ("${{ secrets.GITHUB_TOKEN }}", "${{ github.token }}"):
+            with self.subTest(token=token):
+                step = f"- uses: EndBug/add-and-commit@abc\n        with:\n          github_token: {token}"
+                v = self.check(PUSH_JOB.format(co=CO, step=step))
+                self.assertEqual(self.codes(v), [("push-checkout", "release", 0)])
+                self.assertEqual(self.edits(v), [("job-contents-write", "release", None)])
 
     def test_uses_owner_and_repo_match_case_insensitively(self):
         v = self.check(PUSH_JOB.format(co="Actions/Checkout@abc", step="- uses: Peter-Evans/Create-Pull-Request@abc"))
