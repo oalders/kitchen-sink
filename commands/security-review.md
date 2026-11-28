@@ -159,7 +159,7 @@ Task(general-purpose):
     - Error handling: Generic errors to users, detailed logs server-side?
     - HTTPS: Enforced everywhere?
     - GitHub Actions: Every added or changed external `uses:` ref pinned to a 40-hex commit SHA with a `# <tag>` comment, not a tag or branch? (Fix: `kitchen-sink:pin-gh-actions`.)
-    - GitHub Actions: For every added or changed workflow, run `python3 <skill base dir>/check_workflow.py --verify [--cannot-tell JOB]... [--untrusted JOB]... <file>`, with `<skill base dir>` from loading `kitchen-sink:least-privilege-gh-actions` once with the Skill tool (it prints `Base directory for this skill: <dir>`) and each JOB chosen by that skill's Algorithm step 1. Each `reports` and `violations` entry is a finding at its `severity` (`--verify` emits no `info` entries); quote its `text` verbatim. Exit 1 only means `violations` is non-empty; exit 2 is an Important finding, quoting its one stderr line. (Fix: `kitchen-sink:least-privilege-gh-actions`.)
+    - GitHub Actions: For every added or changed workflow, run `python3 <skill base dir>/check_workflow.py --verify [--cannot-tell JOB]... [--trusted JOB]... [--untrusted JOB]... <file>`, with `<skill base dir>` from loading `kitchen-sink:least-privilege-gh-actions` once with the Skill tool (it prints `Base directory for this skill: <dir>`) and each JOB chosen by that skill's Algorithm step 1. Each `reports` and `violations` entry is a finding at its `severity`; quote its `text` verbatim; exit 2 is an Important finding. The `check_workflow.py` docstring covers the rest. (Fix: `kitchen-sink:least-privilege-gh-actions`.)
 
     ### Broken Access Control
 

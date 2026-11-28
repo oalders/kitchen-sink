@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Decide, apply and verify the least-privilege-gh-actions edits for one workflow.
 
-  check_workflow.py [--apply] [--verify] [--cannot-tell JOB]... [--untrusted JOB]... FILE
+  check_workflow.py [--apply] [--verify] [--cannot-tell JOB]... [--trusted JOB]... [--untrusted JOB]... FILE
 
 Prints a JSON verdict {file, action, edits, reports, violations, drift}.
 `action` is `skip` (a --cannot-tell job: no edits anywhere in the file), `edit`
@@ -19,13 +19,13 @@ Drift rule, for callers that count drift: the --apply run's reports that are
 not `info`, plus the last run's violations. `drift` is that count for the run
 that prints it, so the last run's `drift` is the caller's number.
 
-On a `pull_request_target`, `workflow_run` or `issue_comment` trigger a job is
-reported `untrusted-checkout` when it checks out, fetches or downloads PR
-content, or when it names PR content (in any letter case) in its `env:`, its
-`outputs:`, a step's `run:`, `with:` or `env:`, the workflow `env:`, or the
-outputs of a job that does so, and a step from that point on runs code. Its
-`step` is then the first such step, or null when the PR content is named at job
-or workflow level.
+On a `pull_request_target`, `workflow_run` or `issue_comment` trigger, every job
+that runs code (a reusable-workflow call, a `container:` or `services:` job, or
+a step other than a checkout or an artifact upload or download) is reported
+`untrusted-checkout` unless it is passed with --trusted. A job passed with
+--untrusted, or one with a step that checks out or fetches PR content it names,
+is reported `pr-checkout` instead, with that step as `step`, and --trusted does
+not clear it.
 
 --apply writes the edits as text, keeping comments and layout, then fills
 `violations` from the edited file. When there are edits it writes nothing if
@@ -38,9 +38,10 @@ false checkout (`push-own-credentials`) or to a one-value permissions: block
 (`scalar-permissions-push`); the report names it instead. --verify fills
 `violations` without editing.
 
-Exit 0 when done; 1 when `violations` is non-empty; 2, with one fixed line on
-stderr, when the file can't be read, parsed or edited safely, a job key is not a
-valid job id, or a JOB is not a key under `jobs:`.
+Exit 0 when done; 1 when `violations` is non-empty; 2, with one of the fixed
+lines on stderr, when the file can't be read, parsed or edited safely, a job key
+is not a valid job id, a JOB is not a key under `jobs:`, or a JOB is passed as
+both --trusted and --untrusted.
 """
 
 import argparse
@@ -70,24 +71,14 @@ GIT_READ = re.compile(GIT + r"(?:fetch|pull)\b")
 GIT_GET = re.compile(GIT + r"(?:checkout|fetch|switch|clone|apply|am)\b")
 # Commands that fetch the PR's content by number.
 GH_PR_CHECKOUT = re.compile(r"\bgh\s+pr\s+(?:checkout|diff)\b")
-# A run: line writing NAME=... to $GITHUB_ENV or $GITHUB_OUTPUT.
-GITHUB_FILE = re.compile(r""">>\s*["']?\$\{?GITHUB_(ENV|OUTPUT)\b""")
-ASSIGNED = re.compile(r"\b([A-Za-z_][A-Za-z0-9_-]*)=")
-GH_RUN_DOWNLOAD = re.compile(r"\bgh\s+run\s+download\b")
-# A workflow_run job fetching the triggering run's artifacts through the REST API.
-ARTIFACTS_API = re.compile(r"/actions/artifacts/|/actions/runs/[^\n]*/artifacts")
-API_CLIENT = re.compile(r"\bgh\s+api\b|\bcurl\b")
-GITHUB_SCRIPT = "actions/github-script@"
-ARTIFACT_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
-# Steps that run none of the checked-out code, for the untrusted-checkout severity.
-NON_EXECUTING = ("actions/upload-artifact@", CHECKOUT, *ARTIFACT_ACTIONS)
+# Steps that run no code.
+NON_EXECUTING = ("actions/upload-artifact@", CHECKOUT, "actions/download-artifact@", "dawidd6/action-download-artifact@")
 PR_EXPR = re.compile(
-    r"github\.event\.pull_request\.head\.|github\.event\.pull_request\.merge_commit_sha|github\.head_ref|GITHUB_HEAD_REF"
+    r"github\.event\.pull_request\.head\b|github\.event\.pull_request\.merge_commit_sha|github\.head_ref|GITHUB_HEAD_REF"
     r"|github\.event\.(?:issue\.)?pull_request\.(?:diff|patch)_url"
-    r"|github\.event\.workflow_run\.(?:head_|pull_requests\[[^\]]*\]\.head\.)",
+    r"|github\.event\.workflow_run\.(?:head_|pull_requests\[[^\]]*\]\.head\b)",
     re.I,
 )
-NEEDS_OUTPUTS = re.compile(r"\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\b", re.I)
 PULL_REF = re.compile(r"\bpull/[^/\n]+/(?:head|merge)\b", re.I)
 # github['event']["head_ref"] is the same expression as github.event.head_ref.
 INDEX = re.compile(r"""\[\s*['"]([^'"\]]+)['"]\s*\]""")
@@ -106,11 +97,14 @@ NOTES = {
     "push-checkout": "a later step pushes, fetches or pulls with the persisted token; checkout left as is",
     "cannot-tell": "a step runs a tool whose token needs can't be read; file skipped whole. "
     "Set persist-credentials: false and pass the token via env: only to the step that needs it",
-    "untrusted-checkout": "a privileged trigger checks out, downloads or names PR-controlled content; not fixed, no write scope added",
+    "untrusted-checkout": "job runs code on a privileged trigger; confirm it never runs PR-controlled content and pass "
+    "--trusted <job>, or remove the trigger; no write scope added",
+    "pr-checkout": "job checks out or fetches PR-controlled content on a privileged trigger, or was passed as --untrusted; "
+    "--trusted does not clear this; not fixed, no write scope added",
     "top-level-permissions": "top-level permissions missing, or lacking the contents: read an inheriting checkout job needs",
     "persist-credentials": "checkout does not set persist-credentials: false",
     "contents-scope": "job runs actions/checkout but resolves no contents: read or write",
-    "untrusted-write": "job with an untrusted checkout resolves a write scope",
+    "untrusted-write": "job with an untrusted-checkout or pr-checkout report resolves a write scope",
     "privileged-push": "job on a privileged trigger pushes with the default token; contents: write not added",
     "contents-write-granted": "job-level contents: write added for a later step's push",
     "push-own-credentials": "a later step pushes after a checkout with persist-credentials: false; no contents: write added",
@@ -132,8 +126,8 @@ class Job:
     pushes: list  # checkout step indices a later step pushes, fetches or pulls from
     writes: list  # the subset a later step pushes from
     own_pushes: list  # persist-credentials: false checkouts a later step still pushes after
-    flag_step: int | None  # the step the untrusted-checkout report names
-    flagged: bool
+    flag_step: int | None  # the step the pr-checkout report names
+    flag: str | None  # the job's untrusted-checkout or pr-checkout report code
     privileged: bool  # the workflow has a pull_request_target, workflow_run or issue_comment trigger
 
 
@@ -273,91 +267,20 @@ def pr_content(text):
     return bool(PR_EXPR.search(text) or PULL_REF.search(text))
 
 
-def pr_env(envs, names=frozenset()):
-    """names plus the keys of these env: mappings whose value is PR content or reads one
-    of the names, to a fixed point so chains (A: PR, B: ${{ env.A }}) are followed."""
-    names = set(names)
-    pairs = [
-        (k.value, list(scalars(v)))
-        for env in envs
-        if isinstance(env, yaml.MappingNode)
-        for k, v in env.value
-        if isinstance(k, yaml.ScalarNode)
-    ]
-    while True:
-        new = {k for k, vals in pairs if k not in names and any(pr_content(s) or names_env(s, names) for s in vals)}
-        if not new:
-            return names
-        names |= new
-
-
-def names_env(text, names):
-    """True when text reads one of these env keys: ${{ env.X }} (any index form), $X or ${X}."""
-    text = INDEX.sub(r".\1", text)
-    return any(re.search(rf"\benv\.{re.escape(n)}\b|\$\{{?{re.escape(n)}\b", text) for n in names)
-
-
-def flag_step(steps, triggers, env=frozenset()):
-    """The first step fetching PR content; env holds the workflow and job env keys bound to it.
-    Steps are walked in order, so a $GITHUB_ENV or $GITHUB_OUTPUT write of PR content
-    taints that name for the steps after it."""
-    if not triggers & PRIVILEGED:
-        return None
-    env, outputs = set(env), set()
+def pr_step(steps):
+    """The first step that checks out or fetches PR content it names, else None."""
     for i, step in enumerate(steps):
-        used, run = uses(step), "\n".join(shell_lines(step))
-        w = item(step, "with")[1]
-        names = pr_env((item(step, "env")[1],), env)
-
-        def pr(text):
-            norm = INDEX.sub(r".\1", text)
-            return pr_content(text) or names_env(text, names) or any(re.search(rf"\b{re.escape(o)}\b", norm) for o in outputs)
-
-        if used.startswith(CHECKOUT) and (pr(get(w, "ref")) or pr(get(w, "repository"))):
+        w, run = item(step, "with")[1], "\n".join(shell_lines(step))
+        if uses(step).startswith(CHECKOUT) and (pr_content(get(w, "ref")) or pr_content(get(w, "repository"))):
             return i
-        if GH_PR_CHECKOUT.search(run) or (GIT_GET.search(run) and pr(run)):
+        if GH_PR_CHECKOUT.search(run) or (GIT_GET.search(run) and pr_content(run)):
             return i
-        if "workflow_run" in triggers and (
-            used.startswith(ARTIFACT_ACTIONS)
-            or GH_RUN_DOWNLOAD.search(run)
-            or (API_CLIENT.search(run) and ARTIFACTS_API.search(run))
-            or (used.startswith(GITHUB_SCRIPT) and "downloadArtifact" in get(w, "script"))
-        ):
-            return i
-        for line in run.splitlines():
-            target = GITHUB_FILE.search(line)
-            if target and pr(line):
-                written = ASSIGNED.findall(line[: target.start()])
-                if target.group(1) == "ENV":
-                    env |= set(written)
-                elif get(step, "id"):
-                    outputs |= {f"steps.{get(step, 'id')}.outputs.{n}" for n in written}
     return None
 
 
-def pr_texts(root, job, steps):
-    """(step index or None, scalar) for every place a job can name PR content: the workflow
-    and job env: and the job outputs: (index None), then each step's run:, with: and env:."""
-    for node in (item(root, "env")[1], item(job, "env")[1], item(job, "outputs")[1]):
-        yield from ((None, s) for s in scalars(node))
-    for i, step in enumerate(steps):
-        for key in ("run", "with", "env"):
-            yield from ((i, s) for s in scalars(item(step, key)[1]))
-
-
-def names_pr(text, tainted):
-    """True when text names PR content or reads the outputs of a job in tainted (lower-cased keys)."""
-    text = INDEX.sub(r".\1", text)
-    return pr_content(text) or any(j.lower() in tainted for j in NEEDS_OUTPUTS.findall(text))
-
-
-def fail_safe(texts, steps, tainted):
-    """(flagged, step): flagged when a text names PR content and a step from there on runs
-    code; step is the first such text's index."""
-    for i, text in texts:
-        if names_pr(text, tainted):
-            return any(runs_code(s) for s in steps[i or 0 :]), i
-    return False, None
+def job_runs_code(node, steps):
+    """A reusable-workflow call, a container or services job, or a job with a step that runs code."""
+    return any(item(node, k)[1] is not None for k in ("uses", "container", "services")) or any(map(runs_code, steps))
 
 
 def triggers(root):
@@ -371,7 +294,7 @@ def triggers(root):
     return set()
 
 
-def analyse(text, untrusted=()):
+def analyse(text, untrusted=(), trusted=()):
     try:
         root = yaml.compose(text)
     except yaml.YAMLError as exc:
@@ -397,18 +320,14 @@ def analyse(text, untrusted=()):
         pushing = [i for i in kept if later[i] - {None}]
         writing = [i for i in kept if "push" in later[i]]
         own = [i for i in checkouts if i not in kept and "push" in later[i]]
-        flag = flag_step(steps, trig, pr_env((item(root, "env")[1], item(node, "env")[1])))
-        perm = item(node, "permissions")[1]
-        jobs.append(Job(key, node, perm, steps, checkouts, pushing, writing, own, flag, flag is not None or key in untrusted, privileged))
-    if privileged:
-        texts = {j.key: list(pr_texts(root, j.node, j.steps)) for j in jobs}
-        # Jobs naming PR content or reading a tainted job's outputs, to a fixed point.
-        tainted = {j.key.lower() for j in jobs if j.flagged}
-        while new := {k.lower() for k, t in texts.items() if k.lower() not in tainted and any(names_pr(s, tainted) for _, s in t)}:
-            tainted |= new
-        for j in jobs:
-            if not j.flagged and j.key.lower() in tainted:
-                j.flagged, j.flag_step = fail_safe(texts[j.key], j.steps, tainted)
+        step = pr_step(steps) if privileged else None
+        if step is not None or key in untrusted:
+            flag = "pr-checkout"  # --trusted does not clear it
+        elif privileged and key not in trusted and job_runs_code(node, steps):
+            flag = "untrusted-checkout"
+        else:
+            flag = None
+        jobs.append(Job(key, node, item(node, "permissions")[1], steps, checkouts, pushing, writing, own, step, flag, privileged))
     return root, item(root, "permissions")[1], jobs
 
 
@@ -468,7 +387,7 @@ def new_job_block(text, job, top):
 
 def default_token_push(job):
     """A later step pushes with the checkout's default token, in a job not flagged untrusted."""
-    return bool(job.writes) and not job.flagged and not any(own_token(job.steps[i]) for i in job.writes)
+    return bool(job.writes) and not job.flag and not any(own_token(job.steps[i]) for i in job.writes)
 
 
 def granted(job):
@@ -506,7 +425,7 @@ def plan(text, analysis, cannot_tell):
     for j in jobs:
         for i in j.checkouts:
             # An untrusted checkout loses its persisted token even when a later step pushes.
-            if i not in j.pushes or j.flagged:
+            if i not in j.pushes or j.flag:
                 edit("persist-credentials", persist_false(text, j.steps[i]), j.key, i)
         if needs_grant(j, top):
             if j.perm is None and not isinstance(top, yaml.ScalarNode):
@@ -559,14 +478,14 @@ def reports(analysis, cannot_tell):
     for j in jobs:
         if j.key in cannot_tell:
             out.append(item_dict("cannot-tell", j.key))
-        if j.flagged:
-            # untrusted-checkout covers the whole job, its pushes and fetches included.
+        if j.flag:
+            # The report covers the whole job, its pushes and fetches included.
             critical = (
-                any(runs_code(s) for s in j.steps[j.flag_step or 0 :])
+                job_runs_code(j.node, j.steps[j.flag_step or 0 :])
                 or any(SECRETS.search(INDEX.sub(r".\1", s)) for node in (j.node, item(root, "env")[1]) for s in scalars(node))
                 or grants_write(j.perm if j.perm is not None else top)
             )
-            out.append(item_dict("untrusted-checkout", j.key, j.flag_step, "critical" if critical else "important"))
+            out.append(item_dict(j.flag, j.key, j.flag_step, "critical" if critical else "important"))
             continue
         out += [item_dict("push-checkout", j.key, i) for i in j.pushes]
         out += [item_dict("push-own-credentials", j.key, i, "minor") for i in j.own_pushes]
@@ -587,12 +506,12 @@ def verify(analysis, cannot_tell):
     for j in jobs:
         for i in j.checkouts:
             persisted = persists(j.steps[i])
-            if persisted and (i not in j.pushes or j.flagged):
+            if persisted and (i not in j.pushes or j.flag):
                 bad.append(item_dict("persist-credentials", j.key, i))
         perm = j.perm if j.perm is not None else top
         if j.checkouts and not (j.perm is None and drift(top)) and level(perm, "contents") not in ("read", "write"):
             bad.append(item_dict("contents-scope", j.key))
-        if j.flagged and grants_write(perm):
+        if j.flag and grants_write(perm):
             bad.append(item_dict("untrusted-write", j.key))
     return bad
 
@@ -633,15 +552,17 @@ def write(path, text):
         raise
 
 
-def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
+def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=(), trusted=()):
     """The verdict dict for path, applying edits first when asked."""
     with open(path, encoding="utf-8", newline="") as fh:  # keep CRLF line endings
         text = fh.read()
     nl = "\r\n" if "\r\n" in text else "\n"
-    analysis = analyse(text, untrusted)
-    unknown = (set(cannot_tell) | set(untrusted)) - {j.key for j in analysis[2]}
+    analysis = analyse(text, untrusted, trusted)
+    unknown = (set(cannot_tell) | set(untrusted) | set(trusted)) - {j.key for j in analysis[2]}
     if unknown:
-        raise Unsupported("a --cannot-tell or --untrusted JOB is not a job key")
+        raise Unsupported("a --cannot-tell, --trusted or --untrusted JOB is not a job key")
+    if set(trusted) & set(untrusted):
+        raise Unsupported("a JOB is passed as both --trusted and --untrusted")
     edits, ops = plan(text, analysis, cannot_tell)
     found = reports(analysis, cannot_tell)
     if apply and ops:
@@ -650,7 +571,7 @@ def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
             raise Unsupported("file uses YAML aliases; not edited")
         for start, end, new in sorted(ops, key=lambda op: op[0], reverse=True):
             text = text[:start] + new.replace("\n", nl) + text[end:]
-        after = analyse(text, untrusted)
+        after = analyse(text, untrusted, trusted)
         if plan(text, after, cannot_tell)[0]:
             raise Unsupported("edits did not converge; file not written")
         if widened(analysis, after):
@@ -679,11 +600,12 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--cannot-tell", action="append", default=[], metavar="JOB")
+    ap.add_argument("--trusted", action="append", default=[], metavar="JOB")
     ap.add_argument("--untrusted", action="append", default=[], metavar="JOB")
     ap.add_argument("file")
     args = ap.parse_args(argv)
     try:
-        verdict = check(args.file, args.apply, args.verify, args.cannot_tell, args.untrusted)
+        verdict = check(args.file, args.apply, args.verify, args.cannot_tell, args.untrusted, args.trusted)
     except Exception as exc:  # any failure is exit 2 with fixed text, never a traceback
         detail = str(exc) if isinstance(exc, Unsupported) else "can't read, parse or write the file safely"
         print(f"check_workflow: {fence(args.file)}: {detail}", file=sys.stderr)

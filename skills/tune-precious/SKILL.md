@@ -590,11 +590,11 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 ### 8. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to `.github/workflows/lint.yml` as this transform's one commit. Skip when `.github/workflows/lint.yml` does not exist. T8 covers only `lint.yml`; for a lint job T5 adds to another workflow file, run `kitchen-sink:least-privilege-gh-actions` on that file separately. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to `.github/workflows/lint.yml` as this transform's one commit. Skip when `.github/workflows/lint.yml` does not exist. T8 covers only `lint.yml`; for a lint job T5 adds to another workflow file, run `kitchen-sink:least-privilege-gh-actions` on that file separately. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. Pass the judgement inputs from its step 1.
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs a least-privilege token and checkout, and a separate commit keeps that revertable.
 
-**Outcome:** from that skill's `--apply` run: DRIFT when its `action` is `skip`, else APPLY when the skill changes `lint.yml`, else NO-OP. Add the `drift` field of that skill's last run (its step 4 `--verify` if that ran, else the `--apply` run) to D, per the drift rule in the `check_workflow.py` docstring, whatever the outcome; each counted entry is one drift item.
+**Outcome:** from that skill's `--apply` run: DRIFT when its `action` is `skip`, else APPLY when the skill changes `lint.yml`, else NO-OP. Add the `drift` field of that skill's last run (its step 4 `--verify` if that ran, else the `--apply` run) to the drift count D in Algorithm step 3, per the drift rule in the `check_workflow.py` docstring, whatever the outcome; each counted entry is one drift item.
 
 **Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify passes for `lint.yml`.
 

@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. For these files that skill's `--apply` run happens at step 2b and replaces steps 2a and 2c: the script writes the file itself, and step 2d verifies after it. Per file, that run's `action` maps `unchanged` to conformant and `skip` to a skipped file, listed once, under transform 9's reported items, not also under skipped files; the file counts in N/M/K only if transform 9 changes it. Transform 9's reported items are the entries the drift rule in the `check_workflow.py` docstring counts.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. For these files that skill's `--apply` run, with the judgement inputs from its step 1, happens at step 2b and replaces steps 2a and 2c, then that skill's steps 3–5 follow; the script writes the file itself, and step 2d verifies after it. Per file, that run's `action` maps `unchanged` to conformant and `skip` to a skipped file, listed once, under transform 9's reported items, not also under skipped files; the file counts in N/M/K only if transform 9 changes it. Transform 9's reported items are the entries the drift rule in the `check_workflow.py` docstring counts.
 
 **Why:** see `kitchen-sink:least-privilege-gh-actions`.
 
@@ -335,7 +335,8 @@ test_macos:
      b. For transform 9, run the skill's `--apply` on each in-scope file and record that run's `reports` and `violations`; step 2d then verifies the file. For every other transform, skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
-        for transform t (see Verification). On failure, stop with a clear
+        for transform t (see Verification); for transform 9 only exit 2 is a
+        failure. On failure, stop with a clear
         message; leave files unstaged for inspection.
      e. Stage the changed files and commit with `workflow: <transform description>`.
 3. Apply tune-gh-actions-timeouts inline to every in-scope file (its own

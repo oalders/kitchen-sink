@@ -89,13 +89,13 @@ class CheckWorkflow(unittest.TestCase):
         v = self.check(text, apply=True, cannot_tell=["build"])
         self.assertEqual(v["action"], "skip")
         self.assertEqual(v["edits"], [])
-        self.assertEqual(self.codes(v), [("cannot-tell", "build", None), ("untrusted-checkout", "build", 0)])
+        self.assertEqual(self.codes(v), [("cannot-tell", "build", None), ("pr-checkout", "build", 0)])
         self.assertEqual(self.read(), text)
 
     def test_untrusted_job_that_pushes_loses_persisted_token_and_gets_no_write(self):
         v = self.check(PR_TARGET + "      - run: git push\n", apply=True, verify_=True)
         self.assertEqual(self.edits(v), [("persist-credentials", "build", 0)])
-        self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 0)])
+        self.assertEqual(self.codes(v), [("pr-checkout", "build", 0)])
         self.assertEqual(v["violations"], [])
 
     def test_push_checkout_job_gets_job_level_contents_write(self):
@@ -160,22 +160,7 @@ class CheckWorkflow(unittest.TestCase):
         no_ref = PR_TARGET.replace("        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
         for run in (f"git clone -b {pr} https://github.com/o/r", f"git -C dir fetch origin {pr}", f"git -c a.b=c checkout {pr}"):
             with self.subTest(run=run):
-                self.assertIn(("untrusted-checkout", "build", 1), self.codes(self.check(no_ref + f"      - run: git -C . status && {run}\n")))
-
-    def test_workflow_run_artifact_api_downloads_are_flagged(self):
-        base = PR_TARGET.replace("on: pull_request_target", "on: workflow_run").replace("        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
-        steps = (
-            "      - uses: actions/github-script@abc\n        with:\n          script: await github.rest.actions.downloadArtifact({})\n",
-            "      - run: gh api repos/o/r/actions/runs/${{ github.event.workflow_run.id }}/artifacts\n",
-            "      - run: curl -sL https://api.github.com/repos/o/r/actions/artifacts/1/zip\n",
-        )
-        for step in steps:
-            with self.subTest(step=step):
-                self.assertEqual(self.codes(self.check(base + step)), [("untrusted-checkout", "build", 1)])
-        self.assertEqual(self.codes(self.check(base + "      - uses: actions/github-script@abc\n        with:\n          script: core.info('hi')\n")), [])
-        for run in ("gh api repos/o/r/actions/runs/1/jobs", "curl https://api.github.com/repos/o/r/issues"):
-            with self.subTest(run=run):
-                self.assertEqual(self.codes(self.check(base + f"      - run: {run}\n")), [])
+                self.assertIn(("pr-checkout", "build", 1), self.codes(self.check(no_ref + f"      - run: git -C . status && {run}\n")))
 
     def test_drift_counts_non_info_reports_and_violations(self):
         # A pushing job (push-checkout, important; contents-write-granted, info) next to a
@@ -195,10 +180,10 @@ class CheckWorkflow(unittest.TestCase):
         self.assertEqual(applied["drift"], verified["drift"])
 
     def test_flagged_checkout_then_fetch_reports_alike_before_and_after(self):
-        self.assert_apply_and_verify_agree(PR_TARGET + "      - run: git fetch origin main\n", [("untrusted-checkout", "build", 0)])
+        self.assert_apply_and_verify_agree(PR_TARGET + "      - run: git fetch origin main\n", [("pr-checkout", "build", 0)])
 
     def test_flagged_checkout_then_push_reports_alike_before_and_after(self):
-        self.assert_apply_and_verify_agree(PR_TARGET + "      - run: git push\n", [("untrusted-checkout", "build", 0)])
+        self.assert_apply_and_verify_agree(PR_TARGET + "      - run: git push\n", [("pr-checkout", "build", 0)])
 
     def test_apply_refuses_when_its_edits_would_change_the_reports(self):
         text = PUSH_JOB.format(co=CO, step="- run: git push")
@@ -252,11 +237,11 @@ class CheckWorkflow(unittest.TestCase):
     def test_untrusted_fetch_split_by_a_line_continuation_is_flagged(self):
         no_ref = PR_TARGET.replace("        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
         step = "      - run: |\n          git \\\n            fetch origin ${{ github.head_ref }}\n"
-        self.assertEqual(self.codes(self.check(no_ref + step)), [("untrusted-checkout", "build", 1)])
+        self.assertEqual(self.codes(self.check(no_ref + step)), [("pr-checkout", "build", 1)])
 
     def test_flagged_run_step_that_also_runs_code_is_critical(self):
         text = PR_TARGET.replace("      - uses: " + CO + "\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "      - run: gh pr checkout ${{ github.event.number }} && npm test\n")
-        self.assertEqual([(r["code"], r["step"], r["severity"]) for r in self.check(text)["reports"]], [("untrusted-checkout", 0, "critical")])
+        self.assertEqual([(r["code"], r["step"], r["severity"]) for r in self.check(text)["reports"]], [("pr-checkout", 0, "critical")])
 
     def test_workflow_level_secret_makes_untrusted_checkout_critical(self):
         for value in ("${{ secrets.NPM_TOKEN }}", "${{ secrets['NPM_TOKEN'] }}", "${{ toJSON(secrets) }}"):
@@ -275,35 +260,10 @@ class CheckWorkflow(unittest.TestCase):
         step = '- run: |\n          git commit -m "first\n          second #1" && git push'
         self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=step))))
 
-    def test_pr_content_bound_through_env_is_flagged(self):
-        head = "${{ github.event.pull_request.head.sha }}"
-        ref = "          ref: " + head + "\n"
-        no_ref = PR_TARGET.replace("        with:\n" + ref, "")
-        fetch = '        run: |\n          git fetch origin "{0}"\n          git checkout "{0}"\n'
-        for value, flagged in ((head, True), ("${{ github.sha }}", False)):
-            cases = (
-                # Job-level env read by the checkout's ref: (fixture A).
-                (PR_TARGET.replace("    steps:", f"    env:\n      HEAD: {value}\n    steps:").replace(ref, "          ref: ${{ env.HEAD }}\n") + "      - run: npm test\n", 0),
-                # Workflow-level env, index form.
-                (PR_TARGET.replace("jobs:\n", f"env:\n  HEAD: {value}\njobs:\n").replace(ref, "          ref: ${{ env['HEAD'] }}\n") + "      - run: npm test\n", 0),
-                # Step-level env on the checkout itself.
-                (PR_TARGET.replace("        with:\n" + ref, f"        env:\n          HEAD: {value}\n        with:\n          repository: ${{{{ env.HEAD }}}}\n") + "      - run: npm test\n", 0),
-                # Step-level env read by git in run: (fixture B).
-                (no_ref + f"      - env:\n          SHA: {value}\n" + fetch.format("$SHA") + "      - run: make\n", 1),
-                # Job-level env, ${X} form.
-                (no_ref.replace("    steps:", f"    env:\n      SHA: {value}\n    steps:") + "      - name: get\n" + fetch.format("${SHA}") + "      - run: make\n", 1),
-            )
-            for text, step in cases:
-                with self.subTest(text=text):
-                    found = [(r["code"], r["step"], r["severity"]) for r in self.check(text)["reports"]]
-                    # Unflagged, a fetch keeps the persisted token: push-checkout, as on any trigger.
-                    plain = [("push-checkout", 0, "important")] if step else []
-                    self.assertEqual(found, [("untrusted-checkout", step, "critical")] if flagged else plain)
-
     def test_commented_out_gh_pr_checkout_is_not_flagged(self):
         no_ref = PR_TARGET.replace("        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
-        self.assertEqual(self.check(no_ref + "      - run: |\n          # gh pr checkout 1\n          npm test\n")["reports"], [])
-        self.assertEqual(self.codes(self.check(no_ref + "      - run: |\n          gh pr checkout 1 # then test\n")), [("untrusted-checkout", "build", 1)])
+        self.assertEqual(self.check(no_ref + "      - run: |\n          # gh pr checkout 1\n          npm test\n", trusted=["build"])["reports"], [])
+        self.assertEqual(self.codes(self.check(no_ref + "      - run: |\n          gh pr checkout 1 # then test\n", trusted=["build"])), [("pr-checkout", "build", 1)])
 
     LINK_REFUSAL = "the file is a link; not edited"
     OUTSIDE_REFUSAL = "the file is outside the working directory; run from the repository root; not edited"
@@ -363,72 +323,74 @@ class CheckWorkflow(unittest.TestCase):
                 self.write(text)
                 self.assert_refused(self.path, reason, text)
 
-    def test_pr_content_passed_through_step_outputs_or_github_env_is_flagged(self):
-        no_ref = PR_TARGET.replace("      - uses: " + CO + "\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
-        checkout = f"      - uses: {CO}\n        with:\n          ref: {{ref}}\n      - run: make test\n"
-        for value, flagged in (("${{ github.event.pull_request.head.sha }}", True), ("${{ github.sha }}", False)):
-            cases = (
-                # out.yml: a step output, read by a later checkout.
-                (f'      - id: pr\n        run: echo "sha={value}" >> "$GITHUB_OUTPUT"\n', "${{ steps.pr.outputs.sha }}"),
-                (f"      - id: pr\n        run: echo sha={value} >> $GITHUB_OUTPUT\n", "${{ steps['pr'].outputs.sha }}"),
-                # ghenv.yml: an env var set for later steps.
-                (f'      - run: echo "SHA={value}" >> "${{GITHUB_ENV}}"\n', "${{ env.SHA }}"),
-                # chain.yml: a step env value naming a job env key that is PR content.
-                (f"      - run: echo\n", "${{ env.B }}"),
-            )
-            for i, (first, ref) in enumerate(cases):
-                text = no_ref + first + checkout.format(ref=ref)
-                if i == 3:
-                    text = text.replace("    steps:", f"    env:\n      A: {value}\n    steps:").replace("        with:\n          ref:", "        env:\n          B: ${{ env.A }}\n        with:\n          ref:")
-                with self.subTest(text=text):
-                    found = [(r["code"], r["step"], r["severity"]) for r in self.check(text)["reports"]]
-                    self.assertEqual(found, [("untrusted-checkout", 1, "critical")] if flagged else [])
-
     def test_gh_pr_diff_applied_with_git_is_flagged(self):
         no_ref = PR_TARGET.replace("      - uses: " + CO + "\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
         for run in (
             "gh pr diff ${{ github.event.number }} | git apply && make",
             "git diff origin/main...origin/${{ github.head_ref }} | git apply && make",
             "git format-patch -1 --stdout origin/${{ github.head_ref }} | git am && make",
+            'curl -sL "${{ github.event.pull_request.patch_url }}" | git am && make',
+            "curl -sL ${{ github.event.pull_request.diff_url }} | git apply && make",
         ):
             with self.subTest(run=run):
-                found = [(r["code"], r["step"], r["severity"]) for r in self.check(no_ref + f"      - run: {run}\n")["reports"]]
-                self.assertEqual(found, [("untrusted-checkout", 0, "critical")])
+                found = [(r["code"], r["step"], r["severity"]) for r in self.check(no_ref + f"      - run: {run}\n", trusted=["build"])["reports"]]
+                self.assertEqual(found, [("pr-checkout", 0, "critical")])
 
-    def test_fail_safe_flags_any_route_from_pr_content_to_code(self):
-        head, sha = "${{ github.event.pull_request.head.ref }}", "${{ github.event.pull_request.head.sha }}"
-        job = "on: {on}\npermissions:\n  contents: read\njobs:\n{pre}  build:\n{env}    steps:\n{steps}"
-        checkout = f"      - uses: {CO}\n        with:\n          ref: {{}}\n      - run: make\n"
-        cases = (
-            # A PR patch or diff URL applied with git.
-            ("pull_request_target", "", "", f'      - run: curl -sL "${{{{ github.event.pull_request.patch_url }}}}" | git am && make\n', 0),
-            ("pull_request_target", "", "", "      - run: curl -sL ${{ github.event.pull_request.diff_url }} | git apply\n      - run: make\n", 0),
-            ("issue_comment", "", "", "      - run: curl -sL ${{ github.event.issue.pull_request.patch_url }} | git am\n      - run: make\n", 0),
-            # Another job's outputs.
-            ("pull_request_target", f"  setup:\n    outputs:\n      sha: {sha}\n    steps: []\n", "    needs: setup\n", checkout.format("${{ needs.setup.outputs.sha }}"), 0),
-            # A step output passed through a later step's env:.
-            ("pull_request_target", "", "", f'      - id: s\n        run: echo "ref={head}" >> "$GITHUB_OUTPUT"\n      - env:\n          R: ${{{{ steps.s.outputs.ref }}}}\n        run: git checkout "$R"\n', 0),
-            # tee, a grouped command and a heredoc writing $GITHUB_OUTPUT or $GITHUB_ENV.
-            ("pull_request_target", "", "", f'      - id: p\n        run: echo "sha={sha}" | tee -a "$GITHUB_OUTPUT"\n' + checkout.format("${{ steps.p.outputs.sha }}"), 0),
-            ("pull_request_target", "", "", f'      - id: p\n        run: |\n          {{ echo "sha={sha}"\n            echo "x=1"; }} >> "$GITHUB_OUTPUT"\n' + checkout.format("${{ steps.p.outputs.sha }}"), 0),
-            ("pull_request_target", "", "", f'      - run: |\n          cat >> "$GITHUB_ENV" <<EOF\n          REF={head}\n          EOF\n      - run: git checkout "$REF"\n', 0),
-            # Names differing in case from the binding.
-            ("pull_request_target", "", f"    env:\n      REF: {sha}\n", checkout.format("${{ env.ref }}"), None),
-            ("pull_request_target", "", "", f'      - id: p\n        run: echo "sha={sha}" >> "$GITHUB_OUTPUT"\n' + checkout.format("${{ steps.P.outputs.SHA }}"), 0),
-        )
-        for on, pre, env, steps, step in cases:
-            text = job.format(on=on, pre=pre, env=env, steps=steps)
-            with self.subTest(text=text):
-                found = [(r["code"], r["job"], r["step"], r["severity"]) for r in self.check(text)["reports"]]
-                self.assertEqual(found, [("untrusted-checkout", "build", step, "critical")])
-        controls = (
-            # No PR content, and PR content named only after the last step that runs code.
-            checkout.format("${{ github.sha }}"),
-            f"      - run: make\n      - uses: actions/upload-artifact@abc\n        with:\n          name: {head}\n",
-        )
-        for steps in controls:
-            with self.subTest(steps=steps):
-                self.assertEqual(self.check(job.format(on="pull_request_target", pre="", env="", steps=steps))["reports"], [])
+    # Default-deny on privileged triggers.
+
+    HEAD = "${{ github.event.pull_request.head.sha }}"
+    # Jobs that run code; each case's key is the one job expected flagged.
+    RUNS_CODE = {
+        "deploy": "  deploy:\n    steps:\n      - uses: actions/download-artifact@abc\n      - run: ./deploy.sh\n",
+        "call": f"  call:\n    uses: o/r/.github/workflows/build.yml@abc\n    with:\n      ref: {HEAD}\n    secrets: inherit\n",
+        "event": '  event:\n    steps:\n      - run: git checkout "$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")" && make\n',
+        "script": "  script:\n    steps:\n      - uses: actions/github-script@abc\n        with:\n          script: await exec.exec('make', [context.payload.pull_request.head.sha])\n",
+        "json": "  json:\n    steps:\n      - env:\n          HEAD: ${{ toJSON(github.event.pull_request.head) }}\n        run: make\n",
+        "matrix": f"  matrix:\n    strategy:\n      matrix:\n        ref: ['{HEAD}']\n    steps:\n      - uses: {CO}\n        with:\n          ref: ${{{{ matrix.ref }}}}\n      - run: make\n",
+        "build": f"  setup:\n    outputs:\n      sha: {HEAD}\n    steps: []\n  build:\n    needs: setup\n    steps:\n      - uses: {CO}\n        with:\n          ref: ${{{{ needs.setup.outputs.sha }}}}\n      - run: make\n",
+        "box": f"  box:\n    container: node:20\n    steps:\n      - uses: {CO}\n",
+        "svc": f"  svc:\n    services:\n      db:\n        image: postgres:16\n    steps:\n      - uses: {CO}\n",
+        "label": "  label:\n    permissions:\n      pull-requests: write\n    steps:\n      - uses: actions/labeler@abc\n",
+        "comment": "  comment:\n    permissions:\n      pull-requests: write\n    steps:\n"
+        '      - run: gh pr comment ${{ github.event.number }} --body "${{ github.head_ref }} ${{ github.event.pull_request.diff_url }}"\n',
+    }
+
+    def workflow(self, on, jobs):
+        return f"on: {on}\npermissions:\n  contents: read\njobs:\n{jobs}"
+
+    def test_privileged_job_that_runs_code_is_flagged_by_default(self):
+        for job, jobs in self.RUNS_CODE.items():
+            for on in sorted(check_workflow.PRIVILEGED):
+                with self.subTest(job=job, on=on):
+                    self.assertEqual(self.codes(self.check(self.workflow(on, jobs))), [("untrusted-checkout", job, None)])
+            for on in ("pull_request", "push"):
+                with self.subTest(job=job, on=on):
+                    self.assertEqual(self.check(self.workflow(on, jobs))["reports"], [])
+
+    def test_trusted_clears_a_labeler_or_comment_bot(self):
+        for job in ("label", "comment"):
+            with self.subTest(job=job):
+                text = self.workflow("pull_request_target", self.RUNS_CODE[job])
+                v = self.check(text, verify_=True)
+                self.assertEqual(self.codes(v, "violations"), [("untrusted-write", job, None)])
+                v = self.check(text, verify_=True, trusted=[job])
+                self.assertEqual((v["reports"], v["violations"]), ([], []))
+
+    def test_trusted_does_not_clear_a_direct_pr_checkout(self):
+        text = PR_TARGET.replace("    runs-on:", "    permissions:\n      contents: read\n      pull-requests: write\n    runs-on:") + "      - run: make\n"
+        v = self.check(text, verify_=True, trusted=["build"])
+        self.assertEqual([(r["code"], r["step"], r["severity"]) for r in v["reports"]], [("pr-checkout", 0, "critical")])
+        self.assertIn(("untrusted-write", "build", None), self.codes(v, "violations"))
+
+    def test_privileged_job_that_runs_no_code_is_not_flagged(self):
+        steps = f"  build:\n    steps:\n      - uses: {CO}\n      - uses: actions/upload-artifact@abc\n      - uses: actions/download-artifact@abc\n"
+        self.assertEqual(self.check(self.workflow("pull_request_target", steps))["reports"], [])
+
+    def test_trusted_and_untrusted_on_the_same_job_is_exit_2(self):
+        self.write(PR_TARGET)
+        r = self.run_cli("--trusted", "build", "--untrusted", "build")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.stderr, f"check_workflow: `{self.path}`: a JOB is passed as both --trusted and --untrusted\n")
 
     def test_apply_refuses_when_its_edits_do_not_converge(self):
         # No known input reaches this guard; a second plan() that still finds edits stands in.
@@ -475,7 +437,7 @@ class CheckWorkflow(unittest.TestCase):
 
     def test_privileged_trigger_in_mapping_form(self):
         text = PUSH_JOB.format(co=CO, step="- run: git push").replace("on: push", "on:\n  pull_request_target:\n    types: [opened]")
-        v = self.check(text, apply=True)
+        v = self.check(text, apply=True, trusted=["release"])
         self.assertEqual(v["edits"], [])
         self.assertIn(("privileged-push", "release", None), self.codes(v))
 
@@ -483,7 +445,7 @@ class CheckWorkflow(unittest.TestCase):
         self.write(PUSH_JOB.format(co=CO, step="- run: git push"))
         r = self.run_cli("--cannot-tell", "nope")
         self.assertEqual(r.returncode, 2)
-        self.assertTrue(r.stderr.endswith(": a --cannot-tell or --untrusted JOB is not a job key\n"), r.stderr)
+        self.assertTrue(r.stderr.endswith(": a --cannot-tell, --trusted or --untrusted JOB is not a job key\n"), r.stderr)
 
     def test_commented_or_credentialed_push_gets_no_write_grant(self):
         steps = (
@@ -501,7 +463,7 @@ class CheckWorkflow(unittest.TestCase):
         for trigger in ("pull_request_target", "workflow_run", "issue_comment"):
             with self.subTest(trigger=trigger):
                 text = PUSH_JOB.format(co=CO, step="- run: git push").replace("on: push", f"on: {trigger}")
-                v = self.check(text, apply=True)
+                v = self.check(text, apply=True, trusted=["release"])
                 self.assertEqual(v["edits"], [])
                 self.assertEqual(self.codes(v), [("push-checkout", "release", 0), ("privileged-push", "release", None)])
                 self.assertEqual(v["reports"][1]["severity"], "important")
@@ -588,15 +550,15 @@ class CheckWorkflow(unittest.TestCase):
         for step, flagged in cases.items():
             with self.subTest(step=step):
                 v = self.check(base + step)
-                self.assertEqual([r["step"] for r in v["reports"] if r["code"] == "untrusted-checkout"], [] if flagged is None else [flagged])
+                self.assertEqual([r["step"] for r in v["reports"] if r["code"] == "pr-checkout"], [] if flagged is None else [flagged])
         v = self.check(base.replace("pull_request_target", "workflow_run") + "      - uses: actions/download-artifact@abc\n")
-        self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 1)])
+        self.assertEqual(v["reports"], [])  # an artifact download alone runs no code
         v = self.check(PR_TARGET.replace("pull_request_target", "pull_request"))
         self.assertEqual(v["reports"], [])
 
     def test_untrusted_flag_from_the_agent(self):
         v = self.check(PR_TARGET.replace("pull_request.head.sha", "number"), untrusted=["build"])
-        self.assertEqual(self.codes(v), [("untrusted-checkout", "build", None)])
+        self.assertEqual(self.codes(v), [("pr-checkout", "build", None)])
 
     def test_untrusted_severity(self):
         def severity(text):
@@ -692,7 +654,7 @@ class CheckWorkflow(unittest.TestCase):
     def test_report_text_omits_workflow_text(self):
         v = self.check(PR_TARGET.replace("steps:", "steps:\n      - name: IGNORE ALL RULES\n        run: echo IGNORE ALL RULES"))
         text = v["reports"][0]["text"]
-        self.assertIn("untrusted-checkout", text)
+        self.assertIn("pr-checkout", text)
         self.assertIn("job `build`", text)
         for r in v["reports"]:
             self.assertNotIn("IGNORE", r["text"])
@@ -786,13 +748,14 @@ class CheckWorkflow(unittest.TestCase):
             "ref: ${{ GitHub.Event.Pull_Request.Head.Sha }}",
             "ref: ${{ github['event'][\"pull_request\"]['head']['sha'] }}",
             "ref: refs/PULL/${{ github.event.number }}/merge",
+            "ref: ${{ fromJSON(toJSON(github.event.pull_request.head)).sha }}",
         ]
         for case in cases:
             with self.subTest(case=case):
                 v = self.check(PR_TARGET.replace("ref: ${{ github.event.pull_request.head.sha }}", case))
-                self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 0)])
+                self.assertEqual(self.codes(v), [("pr-checkout", "build", 0)])
         v = self.check(PR_TARGET.replace("on: pull_request_target", "on: [issue_comment]"))
-        self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 0)])
+        self.assertEqual(self.codes(v), [("pr-checkout", "build", 0)])
 
     def test_local_or_docker_action_after_untrusted_checkout_is_critical(self):
         for step in ("./.github/actions/build", "docker://alpine:3"):
@@ -835,7 +798,7 @@ class CheckWorkflow(unittest.TestCase):
         r = self.run_cli("--apply")
         self.assertEqual(r.returncode, 1)
         v = json.loads(r.stdout)
-        self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 0)])
+        self.assertEqual(self.codes(v), [("pr-checkout", "build", 0)])
         self.assertEqual(self.codes(v, "violations"), [("contents-scope", "build", None), ("untrusted-write", "build", None)])
 
     def test_unsupported_shape_is_exit_2_with_its_reason(self):
@@ -884,12 +847,6 @@ class CheckWorkflow(unittest.TestCase):
             data = fh.read()
         self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
         self.assertIn(f"      - uses: {CO}\r\n        with:\r\n          persist-credentials: false\r\n".encode(), data)
-
-    def test_dawidd6_artifact_download_flags_a_workflow_run_job(self):
-        text = PR_TARGET.replace("on: pull_request_target", "on: workflow_run").replace(
-            "        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", ""
-        ) + "      - uses: Dawidd6/action-download-artifact@abc\n"
-        self.assertEqual(self.codes(self.check(text)), [("untrusted-checkout", "build", 1)])
 
     def test_fence(self):
         self.assertEqual(check_workflow.fence("a\nb"), "`a b`")
