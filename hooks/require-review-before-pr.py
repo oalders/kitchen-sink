@@ -41,7 +41,7 @@ Rebases: on a ``fix-NNN`` branch, recording also writes
 ``reviewed/patch/<branch>/<patch-id>``, where the
 patch-id is ``git patch-id --stable`` of the branch's cumulative diff against
 its merge-base with the default branch (``origin/HEAD``, then ``origin/main``,
-``origin/master``, ``main``, ``master``). When no marker exists for HEAD, the
+``origin/master``, ``main``, ``master``). When HEAD has no complete marker, the
 gate allows the command if the current diff has a patch-id recorded for the
 same branch, so another branch with an identical diff does not inherit the
 review. A clean
