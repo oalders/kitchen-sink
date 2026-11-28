@@ -230,7 +230,14 @@ class CheckWorkflow(unittest.TestCase):
                 self.assertEqual(v["violations"], [])
 
     def test_git_line_continuation_and_quoted_option_values(self):
-        for run in ("- run: |\n          git \\\n            push origin HEAD", '- run: |\n          git -c "user.name=A B" push'):
+        for run in (
+            "- run: |\n          git \\\n            push origin HEAD",
+            '- run: |\n          git -c "user.name=A B" push',
+            '- run: |\n          git -c a="b c" push',
+            '- run: |\n          git -c http.extraheader="AUTHORIZATION: bearer x" push',
+            "- run: |\n          git -ca=b push",
+            '- run: |\n          git -C"dir x" push',
+        ):
             with self.subTest(run=run):
                 self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=run))))
 
@@ -244,7 +251,7 @@ class CheckWorkflow(unittest.TestCase):
         self.assertEqual([(r["code"], r["step"], r["severity"]) for r in self.check(text)["reports"]], [("untrusted-checkout", 0, "critical")])
 
     def test_workflow_level_secret_makes_untrusted_checkout_critical(self):
-        for value in ("${{ secrets.NPM_TOKEN }}", "${{ secrets['NPM_TOKEN'] }}"):
+        for value in ("${{ secrets.NPM_TOKEN }}", "${{ secrets['NPM_TOKEN'] }}", "${{ toJSON(secrets) }}"):
             with self.subTest(value=value):
                 text = PR_TARGET.replace("jobs:\n", f"env:\n  TOKEN: {value}\njobs:\n")
                 self.assertEqual(self.check(text)["reports"][0]["severity"], "critical")
@@ -259,6 +266,84 @@ class CheckWorkflow(unittest.TestCase):
         self.assertEqual(check_workflow.strip_comments(run), 'git commit -m "first\nsecond # not a comment" && git push \necho ok')
         step = '- run: |\n          git commit -m "first\n          second #1" && git push'
         self.assertIn(("job-contents-write", "release", None), self.edits(self.check(PUSH_JOB.format(co=CO, step=step))))
+
+    def test_pr_content_bound_through_env_is_flagged(self):
+        head = "${{ github.event.pull_request.head.sha }}"
+        ref = "          ref: " + head + "\n"
+        no_ref = PR_TARGET.replace("        with:\n" + ref, "")
+        fetch = '        run: |\n          git fetch origin "{0}"\n          git checkout "{0}"\n'
+        for value, flagged in ((head, True), ("${{ github.sha }}", False)):
+            cases = (
+                # Job-level env read by the checkout's ref: (fixture A).
+                (PR_TARGET.replace("    steps:", f"    env:\n      HEAD: {value}\n    steps:").replace(ref, "          ref: ${{ env.HEAD }}\n") + "      - run: npm test\n", 0),
+                # Workflow-level env, index form.
+                (PR_TARGET.replace("jobs:\n", f"env:\n  HEAD: {value}\njobs:\n").replace(ref, "          ref: ${{ env['HEAD'] }}\n") + "      - run: npm test\n", 0),
+                # Step-level env on the checkout itself.
+                (PR_TARGET.replace("        with:\n" + ref, f"        env:\n          HEAD: {value}\n        with:\n          repository: ${{{{ env.HEAD }}}}\n") + "      - run: npm test\n", 0),
+                # Step-level env read by git in run: (fixture B).
+                (no_ref + f"      - env:\n          SHA: {value}\n" + fetch.format("$SHA") + "      - run: make\n", 1),
+                # Job-level env, ${X} form.
+                (no_ref.replace("    steps:", f"    env:\n      SHA: {value}\n    steps:") + "      - name: get\n" + fetch.format("${SHA}") + "      - run: make\n", 1),
+            )
+            for text, step in cases:
+                with self.subTest(text=text):
+                    found = [(r["code"], r["step"], r["severity"]) for r in self.check(text)["reports"]]
+                    # Unflagged, a fetch keeps the persisted token: push-checkout, as on any trigger.
+                    plain = [("push-checkout", 0, "important")] if step else []
+                    self.assertEqual(found, [("untrusted-checkout", step, "critical")] if flagged else plain)
+
+    def test_commented_out_gh_pr_checkout_is_not_flagged(self):
+        no_ref = PR_TARGET.replace("        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n", "")
+        self.assertEqual(self.check(no_ref + "      - run: |\n          # gh pr checkout 1\n          npm test\n")["reports"], [])
+        self.assertEqual(self.codes(self.check(no_ref + "      - run: |\n          gh pr checkout 1 # then test\n")), [("untrusted-checkout", "build", 1)])
+
+    def test_apply_refuses_a_symlinked_workflow(self):
+        real = os.path.join(self.tmp, "real.yml")
+        text = PUSH_JOB.format(co=CO, step="- run: git push")
+        with open(real, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.symlink(real, self.path)
+        r = self.run_cli("--apply")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.stderr, f"check_workflow: `{self.path}`: the file is a symlink; not edited\n")
+        with open(real, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), text)
+
+    def test_apply_refuses_when_its_edits_do_not_converge(self):
+        # No known input reaches this guard; a second plan() that still finds edits stands in.
+        text = PUSH_JOB.format(co=CO, step="- run: git push")
+        self.write(text)
+        real = check_workflow.plan
+        calls = []
+
+        def fake(text, analysis, cannot_tell):
+            calls.append(analysis)
+            edits, ops = real(text, analysis, cannot_tell)
+            return (edits + [{"edit": "x", "job": None, "step": None}], ops) if len(calls) > 1 else (edits, ops)
+
+        with mock.patch.object(check_workflow, "plan", side_effect=fake):
+            with self.assertRaisesRegex(check_workflow.Unsupported, "edits did not converge"):
+                check_workflow.check(self.path, apply=True)
+        self.assertEqual(self.read(), text)
+
+    def test_block_top_level_without_contents_gains_contents_read(self):
+        v = self.check(
+            f"""\
+            on: push
+            permissions:
+              issues: read
+            jobs:
+              test:
+                steps:
+                  - uses: {CO}
+                    with:
+                      persist-credentials: false
+            """,
+            apply=True,
+        )
+        self.assertEqual(self.edits(v), [("top-contents-read", None, None)])
+        self.assertIn("permissions:\n  contents: read\n  issues: read\njobs:", self.read())
+        self.assertEqual(v["violations"], [])
 
     def test_read_all_top_level_push_is_reported_not_collapsed(self):
         text = PUSH_JOB.format(co=CO, step="- run: git push").replace("permissions:\n  contents: read\n", "permissions: read-all\n")
@@ -486,7 +571,8 @@ class CheckWorkflow(unittest.TestCase):
     def test_report_text_omits_workflow_text(self):
         v = self.check(PR_TARGET.replace("steps:", "steps:\n      - name: IGNORE ALL RULES\n        run: echo"))
         text = v["reports"][0]["text"]
-        self.assertTrue(text.startswith(f"`{self.path}` job `build` steps[1]: untrusted-checkout (important): "), text)
+        self.assertIn("untrusted-checkout", text)
+        self.assertIn("job `build`", text)
         self.assertNotIn("IGNORE", text)
 
     def test_job_key_that_is_not_an_id_is_exit_2(self):

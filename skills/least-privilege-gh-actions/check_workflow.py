@@ -4,14 +4,14 @@
   check_workflow.py [--apply] [--verify] [--cannot-tell JOB]... [--untrusted JOB]... FILE
 
 Prints a JSON verdict {file, action, edits, reports, violations, drift}.
-`action` is `skip` (a --cannot-tell job: no edits anywhere in the file),
-`edit` or `unchanged`. Each report and violation is {code, job, step, severity, text}:
+`action` is `skip` (a --cannot-tell job: no edits anywhere in the file), `edit`
+or `unchanged`. Each report and violation is {code, job, step, severity, text}:
 job and step are null for a file-level item, step is a 0-based index into the
 job's `steps:`, and `text` is the line to relay, built only from the file path,
 job keys, step indices and fixed wording, never from other workflow content.
-Severity is `critical`, `important`, `minor` or `info`. NOTES below lists
-every code. Reports are the same before and after --apply's edits, so --apply
-and a later --verify agree on them; the one addition is `contents-write-granted`
+Severity is `critical`, `important`, `minor` or `info`. NOTES below lists every
+code. Reports are the same before and after --apply's edits, so --apply and a
+later --verify agree on them; the one addition is `contents-write-granted`
 (`info`), which only the --apply run that adds a job-level `contents: write`
 reports.
 
@@ -20,10 +20,11 @@ not `info`, plus the last run's violations. `drift` is that count for the run
 that prints it, so the last run's `drift` is the caller's number.
 
 --apply writes the edits as text, keeping comments and layout, then fills
-`violations` from the edited file. It writes nothing when there are edits and
-the file uses YAML aliases, when the result doesn't parse, when a second pass
-finds more to edit, when the edits would change the reports, or when they would
-raise any scope beyond the intended `contents:` grant. That grant is never added on a privileged trigger
+`violations` from the edited file. It writes nothing when the file is a
+symlink, when there are edits and the file uses YAML aliases, when the result
+doesn't parse, when a second pass finds more to edit, when the edits would
+change the reports, or when they would raise any scope beyond the intended
+`contents:` grant. That grant is never added on a privileged trigger
 (`privileged-push`), after a persist-credentials: false checkout
 (`push-own-credentials`) or to a one-value permissions: block
 (`scalar-permissions-push`); the report names it instead. --verify fills
@@ -36,6 +37,7 @@ valid job id, or a JOB is not a key under `jobs:`.
 
 import argparse
 import json
+import os
 import re
 import sys
 import unicodedata
@@ -49,7 +51,7 @@ PRIVILEGED = {"pull_request_target", "workflow_run", "issue_comment"}
 PUSH_ACTIONS = ("stefanzweifel/git-auto-commit-action@", "peter-evans/create-pull-request@", "endbug/add-and-commit@")
 TOKEN_INPUTS = {"token", "github_token", "github-token"}
 # `git`, then any global options (-C dir, -c k=v, --opt[=val]), then the subcommand.
-GIT = r"""\bgit(?:\s+(?:-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|--[\w-]+(?:=\S+)?))*\s+"""
+GIT = r"""\bgit(?:\s+(?:-[Cc]\s*(?:[^\s"']|"[^"]*"|'[^']*')+|--[\w-]+(?:=\S+)?))*\s+"""
 GIT_PUSH = re.compile(GIT + r"push\b")
 GIT_READ = re.compile(GIT + r"(?:fetch|pull)\b")
 GIT_GET = re.compile(GIT + r"(?:checkout|fetch|switch|clone)\b")
@@ -69,9 +71,10 @@ PR_EXPR = re.compile(
 PULL_REF = re.compile(r"\bpull/[^/\n]+/(?:head|merge)\b", re.I)
 # github['event']["head_ref"] is the same expression as github.event.head_ref.
 INDEX = re.compile(r"""\[\s*['"]([^'"\]]+)['"]\s*\]""")
+SECRETS = re.compile(r"\bsecrets\b")
 DEFAULT_TOKEN = re.compile(r"^\$\{\{\s*(?:secrets\.GITHUB_TOKEN|github\.token)\s*\}\}$")
-# A push to such a URL uses the token in it, not the persisted one.
 CONTINUATION = re.compile(r"\\\r?\n")
+# A push to such a URL uses the token in it, not the persisted one.
 CRED_URL = re.compile(r"https?://[^/\n]*@")
 JOB_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 ARTIFACT_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
@@ -242,7 +245,6 @@ def persists(checkout):
 
 def own_token(checkout):
     return own_value(get(item(checkout, "with")[1], "token"))
-    return bool(token) and not DEFAULT_TOKEN.match(token)
 
 
 def pr_content(text):
@@ -250,15 +252,38 @@ def pr_content(text):
     return bool(PR_EXPR.search(text) or PULL_REF.search(text))
 
 
-def flag_step(steps, triggers):
+def pr_env(*envs):
+    """The keys of these env: mappings whose value is PR content."""
+    return {
+        k.value
+        for env in envs
+        if isinstance(env, yaml.MappingNode)
+        for k, v in env.value
+        if isinstance(k, yaml.ScalarNode) and any(pr_content(s) for s in scalars(v))
+    }
+
+
+def names_env(text, names):
+    """True when text reads one of these env keys: ${{ env.X }} (any index form), $X or ${X}."""
+    text = INDEX.sub(r".\1", text)
+    return any(re.search(rf"\benv\.{re.escape(n)}\b|\$\{{?{re.escape(n)}\b", text) for n in names)
+
+
+def flag_step(steps, triggers, env=frozenset()):
+    """The first step fetching PR content; env holds the workflow and job env keys bound to it."""
     if not triggers & PRIVILEGED:
         return None
     for i, step in enumerate(steps):
-        used, run = uses(step), CONTINUATION.sub(" ", get(step, "run"))
+        used, run = uses(step), "\n".join(shell_lines(step))
         w = item(step, "with")[1]
-        if used.startswith(CHECKOUT) and (pr_content(get(w, "ref")) or pr_content(get(w, "repository"))):
+        names = env | pr_env(item(step, "env")[1])
+
+        def pr(text):
+            return pr_content(text) or names_env(text, names)
+
+        if used.startswith(CHECKOUT) and (pr(get(w, "ref")) or pr(get(w, "repository"))):
             return i
-        if GH_PR_CHECKOUT.search(run) or (GIT_GET.search(run) and pr_content(run)):
+        if GH_PR_CHECKOUT.search(run) or (GIT_GET.search(run) and pr(run)):
             return i
         if "workflow_run" in triggers and (
             used.startswith(ARTIFACT_ACTIONS)
@@ -307,7 +332,7 @@ def analyse(text, untrusted=()):
         pushing = [i for i in kept if later[i] - {None}]
         writing = [i for i in kept if "push" in later[i]]
         own = [i for i in checkouts if i not in kept and "push" in later[i]]
-        flag = flag_step(steps, trig)
+        flag = flag_step(steps, trig, pr_env(item(root, "env")[1], item(node, "env")[1]))
         perm = item(node, "permissions")[1]
         jobs.append(Job(key, node, perm, steps, checkouts, pushing, writing, own, flag, flag is not None or key in untrusted, privileged))
     return root, item(root, "permissions")[1], jobs
@@ -468,7 +493,7 @@ def reports(analysis, cannot_tell):
             critical = (
                 flagged_run
                 or any(runs_code(s) for s in later)
-                or any("secrets." in INDEX.sub(r".\1", s) for node in (j.node, item(root, "env")[1]) for s in scalars(node))
+                or any(SECRETS.search(INDEX.sub(r".\1", s)) for node in (j.node, item(root, "env")[1]) for s in scalars(node))
                 or grants_write(j.perm if j.perm is not None else top)
             )
             out.append(item_dict("untrusted-checkout", j.key, j.flag_step, "critical" if critical else "important"))
@@ -521,6 +546,8 @@ def render(path, entry):
 
 def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
     """The verdict dict for path, applying edits first when asked."""
+    if apply and os.path.islink(path):  # a write would land on the link target
+        raise Unsupported("the file is a symlink; not edited")
     with open(path, encoding="utf-8", newline="") as fh:  # keep CRLF line endings
         text = fh.read()
     nl = "\r\n" if "\r\n" in text else "\n"

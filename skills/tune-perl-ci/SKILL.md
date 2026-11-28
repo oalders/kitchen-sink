@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. For these files that skill's one `--apply` run takes the place of steps 2a and 2c: the script writes the file itself, and step 2d verifies after it. Per file, that run's `action` maps `unchanged` to conformant and `skip` to a skipped file; the file counts in N/M/K only if transform 9 changes it. Transform 9's reported items are the entries the drift rule in the `check_workflow.py` docstring counts; `info` reports are relayed as notes.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. For these files that skill's `--apply` run happens at step 2b and replaces steps 2a and 2c: the script writes the file itself, and step 2d verifies after it. Per file, that run's `action` maps `unchanged` to conformant and `skip` to a skipped file; the file counts in N/M/K only if transform 9 changes it. Transform 9's reported items are the entries the drift rule in the `check_workflow.py` docstring counts.
 
 **Why:** see `kitchen-sink:least-privilege-gh-actions`.
 
