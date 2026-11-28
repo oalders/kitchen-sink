@@ -7,6 +7,7 @@ Each test builds a real git repo in $TMPDIR, rebases a reviewed fix-123 branch
 onto a moved main, and runs the script as a subprocess.
 """
 
+import importlib.util
 import json
 import os
 import shutil
@@ -21,7 +22,7 @@ HOOK = os.path.join(HERE, "..", "..", "hooks", "require-review-before-pr.py")
 LINES = [f"line {i}\n" for i in range(10)]
 
 
-class ReviewScope(unittest.TestCase):
+class RepoCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()  # honours $TMPDIR
         self.repo = self.tmp
@@ -51,13 +52,26 @@ class ReviewScope(unittest.TestCase):
         lines[5] = line5
         self.change(name, lines, msg)
 
-    def review(self):
+    def review(self, args=None):
         """Record a review of HEAD the way the hook does; return HEAD."""
+        tool_input = {"skill": "code-review-intense-flow"}
+        if args is not None:
+            tool_input["args"] = args
         subprocess.run([sys.executable, HOOK], check=True, text=True, input=json.dumps({
             "hook_event_name": "PostToolUse", "tool_name": "Skill",
-            "tool_input": {"skill": "code-review-intense-flow"}, "cwd": self.repo,
+            "tool_input": tool_input, "cwd": self.repo,
         }))
         return self.git("rev-parse", "HEAD")
+
+    def marker(self, sha):
+        return os.path.join(self.repo, ".git", "kitchen-sink", "reviewed", sha)
+
+    def since(self, rev):
+        """Run --since rev; return (scope.json path, its data)."""
+        out = subprocess.run([sys.executable, SCRIPT, "--since", rev], cwd=self.repo, check=True,
+                             capture_output=True, text=True).stdout.strip()
+        with open(out, encoding="utf-8") as fh:
+            return out, json.load(fh)
 
     def conflicting_rebase(self, resolution):
         """Branch and main both edit line 5; rebase, resolve with `resolution`; return (old head, rebased)."""
@@ -97,6 +111,7 @@ class ReviewScope(unittest.TestCase):
         self.assertEqual(data["mode"], "full")
         self.assertIn(reason, data["reason"])
 
+class ReviewScope(RepoCase):
     def test_direct_marker_gives_rebase_delta_with_upstream_commits(self):
         old, rebased = self.conflicting_rebase(self.resolved())
         data = self.scope(old, rebased)
@@ -203,6 +218,100 @@ class ReviewScope(unittest.TestCase):
         self.git("checkout", "-q", "fix-123")
         self.git("rebase", "-q", "main")
         self.assertFull(self.scope(old, self.git("rev-parse", "HEAD")), "no commit changed")
+
+    def test_partial_old_head_falls_back(self):
+        old, rebased = self.conflicting_rebase(self.resolved())
+        shutil.rmtree(os.path.join(self.repo, ".git", "kitchen-sink", "reviewed"))
+        os.makedirs(os.path.dirname(self.marker(old)))
+        with open(self.marker(old), "w", encoding="utf-8") as fh:
+            fh.write("2026-01-01T00:00:00+00:00 skill partial\n")
+        self.assertFull(self.scope(old, rebased), "no review recorded")
+
+
+class Since(RepoCase):
+    """--since: rounds 2+ of /fix-gh-issue review only R..HEAD."""
+
+    def setUp(self):
+        super().setUp()
+        self.edit("branch\n", "feat")
+        self.r = self.review()
+
+    def test_full_marker_gives_incremental(self):
+        self.change("fix.txt", ["fixed\n"], "review fix")
+        _, data = self.since(self.r)
+        self.assertEqual(data["mode"], "incremental")
+        self.assertEqual(data["since"], self.r)
+        self.assertEqual(data["head"], self.git("rev-parse", "HEAD"))
+
+    def test_chain_of_increments(self):
+        self.change("fix.txt", ["fixed\n"], "review fix")
+        path, _ = self.since(self.r)
+        r2 = self.review(f"scope={path}")
+        self.assertEqual(self.read(self.marker(r2)).split()[2:], ["incremental", self.r, "complete"])
+        self.change("fix2.txt", ["fixed again\n"], "second fix")
+        _, data = self.since(r2)
+        self.assertEqual(data["mode"], "incremental")
+        self.assertEqual(data["since"], r2)
+
+    def test_unresolvable_since_falls_back(self):
+        self.assertFull(self.since("no-such-ref")[1], "git rev-parse failed")
+
+    def test_unreviewed_since_falls_back(self):
+        os.remove(self.marker(self.r))
+        self.change("fix.txt", ["fixed\n"], "review fix")
+        self.assertFull(self.since(self.r)[1], "no complete review")
+
+    def test_partial_since_falls_back(self):
+        with open(self.marker(self.r), "w", encoding="utf-8") as fh:
+            fh.write(f"2026-01-01T00:00:00+00:00 skill incremental {self.r} partial\n")
+        self.change("fix.txt", ["fixed\n"], "review fix")
+        self.assertFull(self.since(self.r)[1], "no complete review")
+
+    def test_non_ancestor_since_falls_back(self):
+        self.git("commit", "-q", "--amend", "-m", "reworded")
+        self.assertFull(self.since(self.r)[1], "not an ancestor")
+
+    def test_since_at_head_falls_back(self):
+        self.assertFull(self.since(self.r)[1], "no commits since")
+
+    def test_since_excludes_rebase_flags(self):
+        proc = subprocess.run([sys.executable, SCRIPT, "--since", self.r, "--base", "main"],
+                              cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+
+
+class MarkerParser(unittest.TestCase):
+    """The hook and review_scope.py carry the same marker parser; pin them together."""
+
+    def load(self, path, name):
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_hook_and_script_agree(self):
+        hook, script = self.load(HOOK, "hook"), self.load(SCRIPT, "review_scope")
+        sha = "a" * 40
+        cases = {
+            "t skill\n": True,
+            f"t skill incremental {sha} complete\n": True,
+            f"t skill incremental {sha} partial\n": False,
+            f"t skill incremental {sha}\n": False,
+            f"t skill other {sha} complete\n": False,
+            f"t skill incremental {sha} complete extra\n": False,
+            "t skill partial\n": False,
+            "t\n": False,
+            "": False,
+            b"t \xff\n": False,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "marker")
+            for text, want in cases.items():
+                with open(path, "wb") as fh:
+                    fh.write(text if isinstance(text, bytes) else text.encode())
+                self.assertEqual((hook.complete(path), script.complete(path)), (want, want), text)
+            missing = os.path.join(tmp, "missing")
+            self.assertEqual((hook.complete(missing), script.complete(missing)), (False, False))
 
 
 if __name__ == "__main__":

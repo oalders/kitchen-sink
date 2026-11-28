@@ -78,11 +78,23 @@ class RepoCase(unittest.TestCase):
             self.repo, ".git", "kitchen-sink", "reviewed", sha or self.head()
         )
 
-    def skill(self, name, cwd=None):
+    def write(self, name, text):
+        with open(os.path.join(self.repo, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def change(self, name, text, msg):
+        self.write(name, text)
+        self.git("add", name)
+        self.commit(msg)
+
+    def skill(self, name, cwd=None, args=None):
+        tool_input = {"skill": name}
+        if args is not None:
+            tool_input["args"] = args
         return run_hook({
             "hook_event_name": "PostToolUse",
             "tool_name": "Skill",
-            "tool_input": {"skill": name},
+            "tool_input": tool_input,
             "cwd": cwd or self.repo,
         })
 
@@ -215,15 +227,6 @@ class Gate(RepoCase):
 class Rebase(RepoCase):
     """Patch-id fallback: a clean rebase keeps a reviewed diff reviewed."""
 
-    def write(self, name, text):
-        with open(os.path.join(self.repo, name), "w", encoding="utf-8") as fh:
-            fh.write(text)
-
-    def change(self, name, text, msg):
-        self.write(name, text)
-        self.git("add", name)
-        self.commit(msg)
-
     def setUp(self):
         super().setUp()
         self.git("checkout", "-q", "main")
@@ -308,6 +311,123 @@ class Rebase(RepoCase):
         self.git("branch", "-q", "-m", "main", "trunk")
         self.change("feature.txt", "changed\n", "edit")
         self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+
+class Incremental(RepoCase):
+    """A scope=<path> review of since..HEAD passes only when the chain reaches a full review."""
+
+    def setUp(self):
+        super().setUp()
+        self.change("feature.txt", "feature\n", "feature")
+        self.r = self.head()
+        self.skill("code-review-intense-flow")
+        self.change("fix.txt", "fix\n", "review fix")
+
+    def scope(self, **data):
+        path = os.path.join(self.repo, ".git", "kitchen-sink", "scope", "scope.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        return path
+
+    def incremental(self, since=None, head=None):
+        path = self.scope(mode="incremental", since=since or self.r, head=head or self.head())
+        self.skill("code-review-intense-flow", args=f"scope={path}")
+
+    def tokens(self):
+        with open(self.marker(), encoding="utf-8") as fh:
+            return fh.read().split()
+
+    def test_complete_chain_allows(self):
+        self.incremental()
+        self.assertEqual(self.tokens()[2:], ["incremental", self.r, "complete"])
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+    def test_chain_of_increments_allows(self):
+        self.incremental()
+        r2 = self.head()
+        self.change("fix2.txt", "fix 2\n", "second fix")
+        self.incremental(since=r2)
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+    def test_prompt_with_scope_records_incremental(self):
+        path = self.scope(mode="incremental", since=self.r, head=self.head())
+        self.prompt(f"/code-review-intense-flow scope={path}")
+        self.assertEqual(self.tokens()[2:], ["incremental", self.r, "complete"])
+
+    def test_unreviewed_since_denies(self):
+        os.remove(self.marker(self.r))
+        self.incremental()
+        self.assertEqual(self.tokens()[-1], "partial")
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+    def test_partial_since_denies(self):
+        with open(self.marker(self.r), "w", encoding="utf-8") as fh:
+            fh.write(f"t skill incremental {'0' * 40} partial\n")
+        self.incremental()
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+    def test_non_ancestor_since_denies(self):
+        self.git("checkout", "-q", "-b", "side", "main")
+        self.change("side.txt", "side\n", "side")
+        side = self.head()
+        self.skill("code-review-intense-flow")
+        self.git("checkout", "-q", "fix-123")
+        self.incremental(since=side)
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+    def test_stale_head_denies(self):
+        self.incremental(head=self.r)
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+    def test_non_canonical_scope_path_denies(self):
+        good = self.scope(mode="incremental", since=self.r, head=self.head())
+        copy = os.path.join(self.tmp, "scope.json")
+        shutil.copy(good, copy)
+        for args in (f"scope={copy}", f"scope={self.tmp}/missing.json"):
+            self.skill("code-review-intense-flow", args=args)
+            self.assertEqual(self.tokens()[2:], ["partial"], args)
+            self.assertTrue(is_deny(self.bash("gh pr create --draft")), args)
+
+    def test_unreadable_scope_denies(self):
+        path = self.scope(mode="incremental", since=self.r, head=self.head())
+        for text in ("not json{", "[]", '{"mode": "bogus"}', '{"mode": "incremental", "since": "../x"}'):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            self.skill("code-review-intense-flow", args=f"scope={path}")
+            self.assertEqual(self.tokens()[-1], "partial", text)
+            self.assertTrue(is_deny(self.bash("gh pr create --draft")), text)
+
+    def test_rebase_delta_scope_records_full(self):
+        path = self.scope(mode="rebase-delta", old_head=self.r)
+        self.skill("code-review-intense-flow", args=f"scope={path}")
+        self.assertEqual(len(self.tokens()), 2)
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+    def test_malformed_marker_denies(self):
+        with open(self.marker(), "w", encoding="utf-8") as fh:
+            fh.write("garbage\n")
+        self.assertTrue(is_deny(self.bash("gh pr create --draft")))
+
+    def test_two_token_marker_allows(self):
+        with open(self.marker(), "w", encoding="utf-8") as fh:
+            fh.write("2026-01-01T00:00:00+00:00 skill\n")
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+    def test_partial_never_downgrades_complete(self):
+        self.skill("code-review-intense-flow")
+        before = self.tokens()
+        self.incremental(head=self.r)
+        self.assertEqual(self.tokens(), before)
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
+
+    def test_clean_rebase_after_complete_chain_allows(self):
+        self.incremental()
+        self.git("checkout", "-q", "main")
+        self.change("upstream.txt", "unrelated\n", "upstream")
+        self.git("checkout", "-q", "fix-123")
+        self.git("rebase", "-q", "main")
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
 
 
 class FailOpen(unittest.TestCase):
