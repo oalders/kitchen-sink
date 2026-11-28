@@ -7,6 +7,7 @@ Each test writes a workflow to a temp dir ($TMPDIR honoured) and checks the
 verdict, pinning how the skill's rules take precedence over each other.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "check_workflow.py")
@@ -32,6 +34,17 @@ jobs:
       - uses: {CO}
         with:
           ref: ${{{{ github.event.pull_request.head.sha }}}}
+"""
+# A push-trigger job; format() fills the checkout `uses:` and one later step.
+PUSH_JOB = """\
+on: push
+permissions:
+  contents: read
+jobs:
+  release:
+    steps:
+      - uses: {co}
+      {step}
 """
 
 
@@ -286,6 +299,130 @@ class CheckWorkflow(unittest.TestCase):
         text = v["reports"][0]["text"]
         self.assertTrue(text.endswith(" job ``a`b c`` steps[1]: untrusted-checkout (important): " + check_workflow.NOTES["untrusted-checkout"]), text)
         self.assertNotIn("IGNORE", text)
+
+    def test_fetch_or_pull_keeps_persisted_token_without_write_grant(self):
+        for run in ("git fetch --tags", "git pull"):
+            with self.subTest(run=run):
+                v = self.check(PUSH_JOB.format(co=CO, step=f"- run: {run}"))
+                self.assertEqual(v["edits"], [])
+                self.assertEqual(self.codes(v), [("push-checkout", "release", 0)])
+
+    def test_checkout_default_token_still_gets_write_grant(self):
+        for token in ("${{ secrets.GITHUB_TOKEN }}", "${{ github.token }}"):
+            with self.subTest(token=token):
+                text = PUSH_JOB.format(co=CO, step="- run: git push").replace(
+                    "      - uses: " + CO, f"      - uses: {CO}\n        with:\n          token: {token}"
+                )
+                self.assertEqual(self.edits(self.check(text)), [("job-contents-write", "release", None)])
+
+    def test_push_action_token_inputs(self):
+        cases = {"github_token": [], "github-token": [], "token": [], "not_a_token": [("push-checkout", "release", 0)]}
+        for key, expected in cases.items():
+            with self.subTest(key=key):
+                step = f"- uses: EndBug/add-and-commit@abc\n        with:\n          {key}: x"
+                self.assertEqual(self.codes(self.check(PUSH_JOB.format(co=CO, step=step))), expected)
+
+    def test_uses_owner_and_repo_match_case_insensitively(self):
+        v = self.check(PUSH_JOB.format(co="Actions/Checkout@abc", step="- uses: Peter-Evans/Create-Pull-Request@abc"))
+        self.assertEqual(self.codes(v), [("push-checkout", "release", 0)])
+
+    def test_aliases_refuse_apply(self):
+        text = PUSH_JOB.format(co=CO, step="- run: git push").replace("permissions:\n  contents: read\n", "permissions: &p {contents: read}\n")
+        text = text.replace("    steps:", "    permissions: *p\n    steps:")
+        self.write(text)
+        r = self.run_cli("--apply")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("file uses YAML aliases; not edited", r.stderr)
+        self.assertEqual(self.read(), text)
+        # Without the alias guard, the widening check still refuses the write.
+        with mock.patch.object(check_workflow.yaml, "parse", return_value=[]):
+            with self.assertRaisesRegex(check_workflow.Unsupported, "would widen"):
+                check_workflow.check(self.path, apply=True)
+        self.assertEqual(self.read(), text)
+
+    def test_widened_catches_a_raised_scope(self):
+        def a(top, job=""):
+            return check_workflow.analyse(PUSH_JOB.format(co=CO, step="- run: git push").replace("  contents: read\n", top).replace("    steps:", job + "    steps:"))
+
+        before = a("  contents: read\n  issues: read\n")
+        self.assertTrue(check_workflow.widened(before, a("  contents: write\n  issues: read\n")))
+        self.assertTrue(check_workflow.widened(before, a("  contents: read\n  issues: read\n", "    permissions:\n      contents: write\n      issues: write\n")))
+        self.assertFalse(check_workflow.widened(before, a("  contents: read\n  issues: read\n", "    permissions:\n      contents: write\n      issues: read\n")))
+
+    def test_new_job_block_refuses_a_value_that_is_not_a_plain_level(self):
+        text = PUSH_JOB.format(co=CO, step="- run: git push").replace("  contents: read\n", '  contents: read\n  issues: "read\\n      actions: write"\n')
+        self.write(text)
+        r = self.run_cli("--apply")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("a top-level permissions entry is not a plain scope: level", r.stderr)
+        self.assertEqual(self.read(), text)
+
+    def test_untrusted_expressions(self):
+        cases = [
+            "ref: ${{ github.head_ref }}",
+            "ref: ${{ env.GITHUB_HEAD_REF }}",
+            "ref: ${{ github.event.pull_request.merge_commit_sha }}",
+            "repository: ${{ github.event.pull_request.head.repo.full_name }}",
+            "ref: ${{ github.event.workflow_run.head_sha }}",
+            "ref: ${{ github.event.workflow_run.pull_requests[0].head.ref }}",
+            "ref: ${{ GitHub.Event.Pull_Request.Head.Sha }}",
+            "ref: ${{ github['event'][\"pull_request\"]['head']['sha'] }}",
+            "ref: refs/PULL/${{ github.event.number }}/merge",
+        ]
+        for case in cases:
+            with self.subTest(case=case):
+                v = self.check(PR_TARGET.replace("ref: ${{ github.event.pull_request.head.sha }}", case))
+                self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 0)])
+        v = self.check(PR_TARGET.replace("on: pull_request_target", "on: [issue_comment]"))
+        self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 0)])
+
+    def test_local_or_docker_action_after_untrusted_checkout_is_critical(self):
+        for step in ("./.github/actions/build", "docker://alpine:3"):
+            with self.subTest(step=step):
+                self.assertEqual(self.check(PR_TARGET + f"      - uses: {step}\n")["reports"][0]["severity"], "critical")
+
+    def test_alias_bomb_is_walked_once(self):
+        bomb = "".join(f"  b{i}: &b{i} [{', '.join([f'*b{i - 1}'] * 9)}]\n" for i in range(1, 10))
+        self.write(PR_TARGET.replace("jobs:\n", "x:\n  b0: &b0 x\n" + bomb + "jobs:\n").replace("    steps:", "    env:\n      B: *b9\n    steps:"))
+        r = subprocess.run([sys.executable, SCRIPT, self.path], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_read_all_top_level_is_not_drift(self):
+        v = self.check(f"on: push\npermissions: read-all\njobs:\n  t:\n    steps:\n      - uses: {CO}\n        with:\n          persist-credentials: false\n", verify_=True)
+        self.assertEqual((v["reports"], v["violations"]), ([], []))
+
+    def test_job_level_scalar_permissions(self):
+        v = self.check(PUSH_JOB.format(co=CO, step="- run: git push").replace("    steps:", "    permissions: read-all\n    steps:"))
+        self.assertEqual(v["edits"], [])
+        v = self.check(PR_TARGET.replace("    runs-on:", "    permissions: write-all\n    runs-on:"), verify_=True)
+        self.assertIn(("untrusted-write", "build", None), self.codes(v, "violations"))
+
+    def test_verify_codes(self):
+        no_top = f"on: push\njobs:\n  t:\n    steps:\n      - uses: {CO}\n        with:\n          persist-credentials: false\n"
+        self.assertEqual(self.codes(self.check(no_top, verify_=True), "violations"), [("top-level-permissions", None, None), ("contents-scope", "t", None)])
+        narrow = no_top.replace("on: push\n", "on: push\npermissions:\n  issues: read\n")
+        self.assertEqual(self.codes(self.check(narrow, verify_=True), "violations"), [("top-level-permissions", None, None), ("contents-scope", "t", None)])
+        job_block = narrow.replace("permissions:\n  issues: read\n", "permissions:\n  contents: read\n").replace("    steps:", "    permissions:\n      issues: read\n    steps:")
+        self.assertEqual(self.codes(self.check(job_block, verify_=True), "violations"), [("contents-scope", "t", None)])
+
+    def test_cannot_tell_with_verify_passes(self):
+        self.write(PR_TARGET.replace("permissions:\n  contents: read\n", ""))
+        r = self.run_cli("--verify", "--cannot-tell", "build")
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_one_apply_run_reports_and_verifies(self):
+        self.write(PR_TARGET.replace("    runs-on:", "    permissions:\n      pull-requests: write\n    runs-on:"))
+        r = self.run_cli("--apply")
+        self.assertEqual(r.returncode, 1)
+        v = json.loads(r.stdout)
+        self.assertEqual(self.codes(v), [("untrusted-checkout", "build", 0)])
+        self.assertEqual(self.codes(v, "violations"), [("contents-scope", "build", None), ("untrusted-write", "build", None)])
+
+    def test_unexpected_failure_is_exit_2_without_traceback(self):
+        self.write("on: push\njobs:\n  ? [a]\n  : {steps: []}\n")
+        r = self.run_cli("--untrusted", "x")
+        self.assertEqual(r.returncode, 2)
+        self.assertNotIn("Traceback", r.stderr)
 
     def test_fence(self):
         self.assertEqual(check_workflow.fence("a\nb"), "`a b`")

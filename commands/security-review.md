@@ -159,7 +159,7 @@ Task(general-purpose):
     - Error handling: Generic errors to users, detailed logs server-side?
     - HTTPS: Enforced everywhere?
     - GitHub Actions: Every added or changed external `uses:` ref pinned to a 40-hex commit SHA with a `# <tag>` comment, not a tag or branch? (Fix: `kitchen-sink:pin-gh-actions`.)
-    - GitHub Actions: Run `python3 <base dir>/check_workflow.py --verify <file>` (the `kitchen-sink:least-privilege-gh-actions` skill's base directory) on every added or changed workflow. Each entry in its `reports` and `violations` is a finding at the `severity` it gives, and exit 2 is an Important finding; quote only `text`. (Fix: `kitchen-sink:least-privilege-gh-actions`.)
+    - GitHub Actions: For every added or changed workflow, run `python3 <skill base dir>/check_workflow.py --verify [--untrusted JOB]... <file>`. Get the base directory by loading `kitchen-sink:least-privilege-gh-actions` once with the Skill tool (it prints `Base directory for this skill: <dir>`), and decide each `--untrusted JOB` by that skill's Algorithm step 1 criteria. Each `reports` and `violations` entry is a finding at the `severity` it gives; quote only its `text`. Exit 2 is an Important finding; quote its one fixed stderr line. (Fix: `kitchen-sink:least-privilege-gh-actions`.)
 
     ### Broken Access Control
 

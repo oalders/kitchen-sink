@@ -9,14 +9,17 @@ Prints a JSON verdict {file, action, edits, reports, violations}. `action` is
 job and step are null for a file-level item, step is a 0-based index into the
 job's `steps:`, and `text` is the line to relay, built only from the file path,
 job keys, step indices and fixed wording, never from other workflow content.
-Reports and their severities describe the file as given, before --apply.
+Reports and their severities describe the file as given, before any edit.
 
---apply writes the edits as text, keeping comments and layout, and writes
-nothing unless the result parses and a second pass finds nothing left to edit.
---verify fills `violations` (after --apply when both are given).
+--apply writes the edits as text, keeping comments and layout, then fills
+`violations` from the edited file. It writes nothing when there are edits and
+the file uses YAML aliases, when the result doesn't parse, when a second pass
+finds more to edit, or when the edits would raise any scope beyond the
+intended `contents:` grant. --verify fills `violations` without editing.
 
-Exit 0 when done; 1 when --verify finds violations; 2 when the file can't be
-read, parsed or edited, or a JOB is not a key under `jobs:`.
+Exit 0 when done; 1 when `violations` is non-empty; 2, with one fixed line on
+stderr, when the file can't be read, parsed or edited safely, or a JOB is not
+a key under `jobs:`.
 """
 
 import argparse
@@ -31,21 +34,28 @@ import yaml
 CHECKOUT = "actions/checkout@"
 PRIVILEGED = {"pull_request_target", "workflow_run", "issue_comment"}
 # These push with the checkout's persisted token unless given their own token input.
-PUSH_ACTIONS = ("stefanzweifel/git-auto-commit-action@", "peter-evans/create-pull-request@", "EndBug/add-and-commit@")
-GIT_REMOTE = re.compile(r"\bgit\s+(?:push|fetch|pull)\b")
+PUSH_ACTIONS = ("stefanzweifel/git-auto-commit-action@", "peter-evans/create-pull-request@", "endbug/add-and-commit@")
+TOKEN_INPUTS = {"token", "github_token", "github-token"}
+GIT_PUSH = re.compile(r"\bgit\s+push\b")
+GIT_READ = re.compile(r"\bgit\s+(?:fetch|pull)\b")
 GIT_GET = re.compile(r"\bgit\s+(?:checkout|fetch|switch)\b")
 GH_PR_CHECKOUT = re.compile(r"\bgh\s+pr\s+checkout\b")
 GH_RUN_DOWNLOAD = re.compile(r"\bgh\s+run\s+download\b")
 PR_EXPR = re.compile(
     r"github\.event\.pull_request\.head\.|github\.event\.pull_request\.merge_commit_sha|github\.head_ref|GITHUB_HEAD_REF"
-    r"|github\.event\.workflow_run\.(?:head_|pull_requests\[[^\]]*\]\.head\.)"
+    r"|github\.event\.workflow_run\.(?:head_|pull_requests\[[^\]]*\]\.head\.)",
+    re.I,
 )
-PULL_REF = re.compile(r"\bpull/[^/\n]+/(?:head|merge)\b")
+PULL_REF = re.compile(r"\bpull/[^/\n]+/(?:head|merge)\b", re.I)
+# github['event']["head_ref"] is the same expression as github.event.head_ref.
+INDEX = re.compile(r"""\[\s*['"]([^'"\]]+)['"]\s*\]""")
 DEFAULT_TOKEN = re.compile(r"^\$\{\{\s*(?:secrets\.GITHUB_TOKEN|github\.token)\s*\}\}$")
+SCOPE_KEY = re.compile(r"^[a-z][a-z-]*$")
+RANK = {"none": 0, "read": 1, "write": 2}
 
 NOTES = {
     "top-level-drift": "top-level permissions grant more than read; left as is",
-    "push-checkout": "a later step pushes with the persisted token; checkout left as is",
+    "push-checkout": "a later step pushes, fetches or pulls with the persisted token; checkout left as is",
     "cannot-tell": "a step runs a tool whose token needs can't be read; file skipped whole. "
     "Set persist-credentials: false and pass the token via env: only to the step that needs it",
     "untrusted-checkout": "a privileged trigger checks out or downloads PR-controlled content; not fixed, no write scope added",
@@ -67,7 +77,8 @@ class Job:
     perm: yaml.Node | None  # job-level permissions:
     steps: list
     checkouts: list  # step indices
-    pushes: list  # checkout step indices a later step pushes from
+    pushes: list  # checkout step indices a later step pushes, fetches or pulls from
+    writes: list  # the subset a later step pushes from
     flag_step: int | None  # first step matching an untrusted-checkout pattern
     flagged: bool
 
@@ -87,16 +98,32 @@ def get(node, key):
     return v.value if isinstance(v, yaml.ScalarNode) else ""
 
 
-def scalars(node):
+def uses(step):
+    # GitHub matches owner/repo case-insensitively.
+    return get(step, "uses").lower()
+
+
+def keys(node):
+    """A mapping node's key strings; non-scalar keys are refused."""
+    if any(not isinstance(k, yaml.ScalarNode) for k, _ in node.value):
+        raise Unsupported("a mapping key is not a scalar")
+    return [k.value for k, _ in node.value]
+
+
+def scalars(node, seen=None):
+    seen = set() if seen is None else seen
+    if id(node) in seen:  # an alias repeats a node; walk it once
+        return
+    seen.add(id(node))
     if isinstance(node, yaml.ScalarNode):
         yield node.value
     elif isinstance(node, yaml.SequenceNode):
         for n in node.value:
-            yield from scalars(n)
+            yield from scalars(n, seen)
     elif isinstance(node, yaml.MappingNode):
         for k, v in node.value:
-            yield from scalars(k)
-            yield from scalars(v)
+            yield from scalars(k, seen)
+            yield from scalars(v, seen)
 
 
 def level(perm, scope):
@@ -121,15 +148,18 @@ def drift(top):
     if top is None:
         return False
     if not isinstance(top, yaml.MappingNode):
-        return True
+        return top.value != "read-all"
     return any(not isinstance(v, yaml.ScalarNode) or v.value not in ("read", "none") for _, v in top.value)
 
 
-def pushes(step):
-    if get(step, "uses").startswith(PUSH_ACTIONS):
+def remote_use(step):
+    """'push' for a step pushing with persisted credentials, 'read' for fetch/pull, else None."""
+    if uses(step).startswith(PUSH_ACTIONS):
         w = item(step, "with")[1]
-        return not (isinstance(w, yaml.MappingNode) and any("token" in k.value for k, _ in w.value))
-    return bool(GIT_REMOTE.search(get(step, "run")))
+        own = isinstance(w, yaml.MappingNode) and any(isinstance(k, yaml.ScalarNode) and k.value in TOKEN_INPUTS for k, _ in w.value)
+        return None if own else "push"
+    run = get(step, "run")
+    return "push" if GIT_PUSH.search(run) else "read" if GIT_READ.search(run) else None
 
 
 def own_token(checkout):
@@ -138,6 +168,7 @@ def own_token(checkout):
 
 
 def pr_content(text):
+    text = INDEX.sub(r".\1", text)
     return bool(PR_EXPR.search(text) or PULL_REF.search(text))
 
 
@@ -145,13 +176,13 @@ def flag_step(steps, triggers):
     if not triggers & PRIVILEGED:
         return None
     for i, step in enumerate(steps):
-        uses, run = get(step, "uses"), get(step, "run")
+        used, run = uses(step), get(step, "run")
         w = item(step, "with")[1]
-        if uses.startswith(CHECKOUT) and (pr_content(get(w, "ref")) or pr_content(get(w, "repository"))):
+        if used.startswith(CHECKOUT) and (pr_content(get(w, "ref")) or pr_content(get(w, "repository"))):
             return i
         if GH_PR_CHECKOUT.search(run) or (GIT_GET.search(run) and pr_content(run)):
             return i
-        if "workflow_run" in triggers and (uses.startswith("actions/download-artifact@") or GH_RUN_DOWNLOAD.search(run)):
+        if "workflow_run" in triggers and (used.startswith("actions/download-artifact@") or GH_RUN_DOWNLOAD.search(run)):
             return i
     return None
 
@@ -163,7 +194,7 @@ def triggers(root):
     if isinstance(on, yaml.SequenceNode):
         return {n.value for n in on.value if isinstance(n, yaml.ScalarNode)}
     if isinstance(on, yaml.MappingNode):
-        return {k.value for k, _ in on.value}
+        return set(keys(on))
     return set()
 
 
@@ -178,15 +209,18 @@ def analyse(text, untrusted=()):
         raise Unsupported("no jobs: mapping")
     trig = triggers(root)
     jobs = []
-    for k, node in jobs_node.value:
+    for key, (_, node) in zip(keys(jobs_node), jobs_node.value):
         if not isinstance(node, yaml.MappingNode):
             raise Unsupported("a job is not a mapping")
         steps = item(node, "steps")[1]
         steps = steps.value if isinstance(steps, yaml.SequenceNode) else []
-        checkouts = [i for i, s in enumerate(steps) if get(s, "uses").startswith(CHECKOUT)]
-        pushing = [i for i in checkouts if any(pushes(s) for s in steps[i + 1 :])]
+        checkouts = [i for i, s in enumerate(steps) if uses(s).startswith(CHECKOUT)]
+        later = {i: {remote_use(s) for s in steps[i + 1 :]} for i in checkouts}
+        pushing = [i for i in checkouts if later[i] - {None}]
+        writing = [i for i in checkouts if "push" in later[i]]
         flag = flag_step(steps, trig)
-        jobs.append(Job(k.value, node, item(node, "permissions")[1], steps, checkouts, pushing, flag, flag is not None or k.value in untrusted))
+        perm = item(node, "permissions")[1]
+        jobs.append(Job(key, node, perm, steps, checkouts, pushing, writing, flag, flag is not None or key in untrusted))
     return root, item(root, "permissions")[1], jobs
 
 
@@ -218,8 +252,8 @@ def persist_false(text, step):
         raise Unsupported("a checkout step is a flow mapping")
     w = item(step, "with")[1]
     if w is None:
-        uses = item(step, "uses")[1]
-        at = text.find("\n", uses.end_mark.index)
+        used = item(step, "uses")[1]
+        at = text.find("\n", used.end_mark.index)
         at = len(text) if at < 0 else at
         col = step.start_mark.column
         return at, at, f"\n{' ' * col}with:\n{' ' * (col + 2)}persist-credentials: false"
@@ -234,10 +268,19 @@ def new_job_block(text, job, top):
     first = job.node.value[0][0].start_mark
     at = line_start(text, first)
     pad = " " * first.column
+    keep = []
     # A job-level block replaces the top-level one, so carry its other scopes over.
-    keep = [(k.value, v.value) for k, v in top.value if k.value != "contents"] if isinstance(top, yaml.MappingNode) else []
-    lines = [f"{pad}permissions:", f"{pad}  contents: write"] + [f"{pad}  {k}: {v}" for k, v in keep]
-    return at, at, "\n".join(lines) + "\n"
+    for k, v in top.value if isinstance(top, yaml.MappingNode) else []:
+        if not (isinstance(k, yaml.ScalarNode) and SCOPE_KEY.match(k.value) and isinstance(v, yaml.ScalarNode) and v.value in RANK):
+            raise Unsupported("a top-level permissions entry is not a plain scope: level")
+        if k.value != "contents":
+            keep.append(f"{pad}  {k.value}: {v.value}")
+    return at, at, "\n".join([f"{pad}permissions:", f"{pad}  contents: write", *keep]) + "\n"
+
+
+def granted(job):
+    """The job gets contents: write: a later step pushes with the checkout's default token."""
+    return bool(job.writes) and not job.flagged and not any(own_token(job.steps[i]) for i in job.writes)
 
 
 def plan(text, analysis, cannot_tell):
@@ -264,8 +307,7 @@ def plan(text, analysis, cannot_tell):
             # An untrusted checkout loses its persisted token even when a later step pushes.
             if i not in j.pushes or j.flagged:
                 edit("persist-credentials", persist_false(text, j.steps[i]), j.key, i)
-        grant = j.pushes and not j.flagged and not any(own_token(j.steps[i]) for i in j.pushes)
-        if grant and level(j.perm if j.perm is not None else top, "contents") != "write":
+        if granted(j) and level(j.perm if j.perm is not None else top, "contents") != "write":
             if j.perm is None:
                 edit("job-contents-write", new_job_block(text, j, top), j.key)
             elif isinstance(j.perm, yaml.MappingNode):
@@ -273,8 +315,40 @@ def plan(text, analysis, cannot_tell):
     return edits, ops
 
 
+def raises(before, after, allowed):
+    """True when after grants some scope more than before, beyond allowed {scope: level}."""
+    if before is None:  # the repo default, which may be write-all
+        return False
+    names = {"\0other"}  # stands for every scope neither block names
+    for perm in (before, after):
+        if isinstance(perm, yaml.MappingNode):
+            names.update(k.value for k, _ in perm.value)
+    for scope in names:
+        new = RANK.get(level(after, scope), 2)
+        if new > RANK.get(level(before, scope), 2) and new > RANK[allowed.get(scope, "none")]:
+            return True
+    return False
+
+
+def widened(before, after):
+    """True when the edited analysis grants any job or the top level more than intended."""
+    (_, top0, jobs0), (_, top1, jobs1) = before, after
+    if (drift(top1) and not drift(top0)) or raises(top0, top1, {"contents": "read"}):
+        return True
+    for j0, j1 in zip(jobs0, jobs1):
+        allowed = {"contents": "write" if granted(j0) else "read"}
+        if raises(j0.perm if j0.perm is not None else top0, j1.perm if j1.perm is not None else top1, allowed):
+            return True
+    return False
+
+
 def item_dict(code, job=None, step=None, severity="important"):
     return {"code": code, "job": job, "step": step, "severity": severity}
+
+
+def runs_code(step):
+    used = uses(step)
+    return item(step, "run")[1] is not None or used.startswith(("./", "docker://"))
 
 
 def reports(analysis, cannot_tell):
@@ -287,7 +361,7 @@ def reports(analysis, cannot_tell):
         if j.flagged:
             later = j.steps if j.flag_step is None else j.steps[j.flag_step + 1 :]
             critical = (
-                any(item(s, "run")[1] is not None for s in later)
+                any(runs_code(s) for s in later)
                 or any("secrets." in s for s in scalars(j.node))
                 or grants_write(j.perm if j.perm is not None else top)
             )
@@ -343,16 +417,21 @@ def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
     edits, ops = plan(text, analysis, cannot_tell)
     found = reports(analysis, cannot_tell)
     if apply and ops:
+        # An edit to an anchored node would also change every alias of it.
+        if any(isinstance(e, yaml.AliasEvent) for e in yaml.parse(text)):
+            raise Unsupported("file uses YAML aliases; not edited")
         for start, end, new in sorted(ops, key=lambda op: op[0], reverse=True):
             text = text[:start] + new + text[end:]
         after = analyse(text, untrusted)
         if plan(text, after, cannot_tell)[0]:
             raise Unsupported("edits did not converge; file not written")
+        if widened(analysis, after):
+            raise Unsupported("edits would widen a scope; file not written")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text)
         analysis = after
     action = "skip" if cannot_tell else "edit" if edits else "unchanged"
-    violations = verify(analysis, cannot_tell) if verify_ else []
+    violations = verify(analysis, cannot_tell) if apply or verify_ else []
     return {
         "file": path,
         "action": action,
@@ -372,8 +451,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     try:
         verdict = check(args.file, args.apply, args.verify, args.cannot_tell, args.untrusted)
-    except (OSError, UnicodeError, Unsupported) as exc:
-        detail = str(exc) if isinstance(exc, Unsupported) else "can't read or write the file"
+    except Exception as exc:  # any failure is exit 2 with fixed text, never a traceback
+        detail = str(exc) if isinstance(exc, Unsupported) else "can't read, parse or write the file safely"
         print(f"check_workflow: {fence(args.file)}: {detail}", file=sys.stderr)
         return 2
     print(json.dumps(verdict, indent=2))
