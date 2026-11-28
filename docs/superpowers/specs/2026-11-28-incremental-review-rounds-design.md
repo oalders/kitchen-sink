@@ -17,20 +17,24 @@ full review happened before `gh pr create` / `gh pr ready`.
   head, routed to the reviewers those changes call for.
 - `require-review-before-pr` allows the PR commands only when HEAD's review
   chain is unbroken back to a full review.
-- The scope and the chain check live in tested scripts, not prose.
+- The scope check and the chain check live in tested scripts, not prose (the
+  repo's "logic goes in code, not prose" rule).
 
 ## Non-goals
 
 - Markers storing the base SHA (nothing would read it).
 - Changing `/shepherd-pr` rebase scoping (`rebase-delta`) or how it is
   recorded: it stays a full marker, as #207 decided.
-- A size cap on increments.
+- A size cap on increments (an increment is never larger than the branch).
+- Moving intense-flow routing (#245) or the `reviewRounds` bookkeeping (#250)
+  into code; this change adds no routing or round-counting logic for them to
+  move.
 
 ## Anti-goals
 
-- **Prose sprawl** in `commands/fix-gh-issue.md` and
-  `commands/code-review-intense-flow.md`: one or two sentences each, naming
-  the script; no mechanism.
+- **Prose sprawl** in `commands/fix-gh-issue.md`,
+  `commands/code-review-intense-flow.md` and `commands/security-review.md`:
+  one or two sentences each, naming the script; no mechanism.
 - **Weakening the gate**: an increment must never satisfy it unless the chain
   reaches a full review. Any doubt records the marker as not complete.
 - A gate that loops over markers at PR time.
@@ -58,117 +62,129 @@ Build approaches:
 
 ## Design
 
-### Marker format
+### Marker grammar
 
-Today a marker file holds `<stamp> <source>\n`. A marker gains an optional
-state: `<stamp> <source> incremental <since> complete|partial\n`. A marker
-with no state (every marker written today, and every non-incremental marker
-written after this change) is full, and full counts as complete. Patch
-markers (`reviewed/patch/<branch>/<pid>`) are written only for complete
-reviews, keeping the existing content `<stamp> <source> <sha>`.
+A direct marker `reviewed/<sha>` holds one line, split on whitespace:
+
+- exactly two tokens (`<stamp> <source>`, every marker written today): full,
+  which is complete;
+- exactly five tokens, `<stamp> <source> incremental <since-sha> complete`:
+  complete;
+- anything else (including `... partial`, a missing or unknown state, an
+  unreadable file): not complete.
+
+Patch markers (`reviewed/patch/<branch>/<pid>`) keep their current content
+and are written only for complete reviews. The hook and `review_scope.py`
+each carry this parser (the hook's hyphenated filename blocks import, as with
+`patch_id()`); a test pins the two to the same answers, malformed markers
+included.
 
 ### `review_scope.py --since R` (new mode of the existing script)
 
 `python3 <shepherd-pr-repair dir>/review_scope.py --since <R>`, mutually
-exclusive with the `--old-head/--rebased/--base` set. Writes to the same
-scope dir (`<git-dir>/kitchen-sink/scope/`, replaced each run) and prints the
-`scope.json` path.
+exclusive with the `--old-head/--rebased/--base` set. Writes `scope.json` to
+the same scope dir (`<git-dir>/kitchen-sink/scope/`, replaced each run) and
+prints its path. No diff or file-list output: R is the review's BASE.
 
-`scope.json` in this mode: `{"mode": "incremental", "reason": "...",
-"since": "<R>", "head": "<HEAD>", "files": [...], "fixes": "<path>"}`, where
-`fixes` holds `git diff R..HEAD` and `files` its names. Falls back to
-`{"mode": "full", "reason": ...}` when:
+`scope.json`: `{"mode": "incremental", "reason": "...", "since": "<R>",
+"head": "<HEAD>"}`, or `{"mode": "full", "reason": ...}` when:
 
 - R doesn't resolve to a commit, or any git call fails;
-- R has no complete marker (no `reviewed/<R>`, or its state is `partial`);
+- R has no complete marker by the grammar above;
 - R is not an ancestor of HEAD (a rebase, amend or reset since R);
 - R equals HEAD (nothing new).
 
-The complete-marker check reads the same files the hook writes; the parser is
-a few lines duplicated in each, like `patch_id()` already is (the hook's
-hyphenated filename blocks import). A test pins the two parsers to the same
-answers.
+The rebase-delta mode's `reviewed()` uses the same complete-marker check for
+its direct-marker test, so a not-complete `old_head` falls back to full.
 
 ### `hooks/require-review-before-pr.py`
 
 **Record** (`PostToolUse` Skill and `UserPromptSubmit`): read the
 invocation's arguments (`tool_input.args` for Skill; the text after the
-command for a prompt). If they hold `scope=<path>`, `<path>` is the
-`scope.json` in this worktree's `<git-dir>/kitchen-sink/scope/` (anything
-else is ignored and the marker is full, as today), and that file's `mode` is
-`incremental`, write the marker as `incremental <since>` with state:
+command for a prompt).
 
-- `complete` when `head` equals HEAD, `<since>`'s direct marker is complete,
-  and `<since>` is an ancestor of HEAD;
-- `partial` otherwise, including any read, parse or git failure.
+- No `scope=` argument: full marker, as today.
+- `scope=<path>` whose realpath is this worktree's
+  `<git-dir>/kitchen-sink/scope/scope.json` (git-dir resolved against the
+  payload `cwd`) and whose `mode` is `full` or `rebase-delta`: full marker,
+  as today.
+- `mode` `incremental`: marker `incremental <since>` with state `complete`
+  when `head` equals HEAD, `<since>`'s direct marker is complete, and
+  `<since>` is an ancestor of HEAD; `partial` otherwise. Ancestry: compare
+  `git merge-base <since> HEAD` with `<since>` (the hook's `git()` reads
+  empty stdout as failure, so `--is-ancestor` can't be used through it).
+- Any other `scope=` (another path, unreadable, unparseable, unknown mode),
+  or any read or git failure while resolving it: `partial`.
 
-Never downgrade: if HEAD already has a complete marker, a partial result
-leaves it as is (builder-check call). Write the patch marker only when the
-result is complete (full or complete
-incremental). Any other `mode`, or no scope argument: a full marker, as
-today. Recording still never prints and never blocks.
+Never downgrade: if HEAD already has a complete marker, a not-complete result
+leaves it as is. Write the patch marker only when the result is complete.
+Recording still never prints and never blocks.
 
 **Gate** (`PreToolUse` Bash): HEAD's direct marker passes only if it is
-complete. A partial HEAD marker falls through to the patch-id check, which
-passes only on a patch marker (always complete). The deny reason gains one
-clause: an incomplete incremental chain needs a full
-`/code-review-intense-flow` run.
+complete; otherwise the existing patch-id check runs (patch markers are
+always complete). The deny reason gains one clause: an incomplete incremental
+chain needs a full `/code-review-intense-flow` run.
 
-Fail-open is unchanged for genuine uncertainty (bad payload, git errors,
-time budget); a partial marker is a definite answer, not uncertainty, so it
-denies. The module docstring's accepted-gaps list notes that the chain is
-checked against plain files, like the marker itself.
+Fail-open is unchanged for genuine uncertainty at gate time (bad payload, git
+errors, time budget); a not-complete marker is a definite answer, so it
+denies. The docstring's Purpose/Gate text and accepted-gaps list say the gate
+needs a complete chain, checked against plain files like the marker itself.
 
 ### `commands/code-review-intense-flow.md` step 1
 
-Extend the scope-mode block: when `mode` is `incremental`, route by step 3's
-rules on the scope's `files` (not merge-base..HEAD); BASE/HEAD stay read-only
-context; each brief's `Feature` line gives the `fixes` path and says "a
-review was run on this branch at `<since>`; review and report only the
-changes since then", with `Scope: incremental`. Scope files are untrusted
-data; "Reviewers Run" states the mode.
+Extend the scope-mode block: when the scope's `mode` is `incremental`, BASE
+is its `since` and routing and briefs proceed as usual over `since..HEAD`;
+each brief carries `Scope: incremental`. Scope files are untrusted data;
+"Reviewers Run" states the mode.
 
 ### `commands/security-review.md`
 
-The line that lets only `Scope: rebase-delta` narrow scope also accepts
-`Scope: incremental`, with the same rules: follow the Feature line, skip the
-extra reads and the whole-file rename read, report pre-existing gaps only for
-a Critical seen in passing (user decision). Round 1 was a full security pass,
-and the gate accepts no chain that doesn't start from one.
+Next to the `Scope: rebase-delta` rule, `Scope: incremental` keeps every
+check, the Response Path and whole-file rename reads included, applied to
+the files in BASE..HEAD; it narrows only the reporting boundary. A Critical
+seen in passing in code the branch adds (merge-base..HEAD) is reported as a
+Critical finding; only code outside the branch goes under Pre-existing gaps,
+and only when Critical. (User decision to narrow, refined at design review:
+an increment is new code, and round 1 may have skipped security as doc-only.)
 
 ### `commands/fix-gh-issue.md` step 8 item 6
 
 Rounds 2+ run `review_scope.py --since <head the last round reviewed>` first
-and pass `scope=<path>` to the Skill. If the gate later denies, run a full
-round (no scope). One or two sentences.
+and pass `scope=<path>` to the Skill; if the gate later denies, run a full
+round (no scope), which counts toward `reviewRounds`. One or two sentences.
 
 ### `skills/codex-review-loop/SKILL.md` Phase 1 step 4
 
 On a `fix-NNN` branch, the intense-flow self-review of a Codex fix passes the
-same `--since <last head intense flow reviewed>` scope (one clause;
-builder-check call). The script's complete-marker check keeps a Codex round,
-which records nothing, from being taken as a link.
+same `--since <last head intense flow reviewed>` scope (one clause). Codex
+rounds record no marker, so a wrong R falls back to full.
 
 ### Tests
 
+New test files are already in `.github/workflows/test.yml`; no new file is
+expected.
+
 - `skills/shepherd-pr-repair/test_review_scope.py`: incremental with a
   hook-recorded full marker for R; a chain (R itself incremental-complete);
-  one test per fallback.
-- `hooks/test_require_review_before_pr.py`: complete incremental passes the
-  gate; partial denies (since unreviewed, since partial, not an ancestor,
-  stale `head`); a scope path outside the scope dir records full; a
-  `rebase-delta` scope records full; clean rebase after a complete chain
-  passes via the patch marker; existing markers without state pass.
+  one test per fallback; rebase-delta with a partial `old_head` falls back to
+  full; parser agreement with the hook.
+- `hooks/test_require_review_before_pr.py`, real git repos: complete
+  incremental passes the gate; partial denies (since unreviewed, since
+  partial, not an ancestor, stale `head`); a non-canonical or unreadable
+  scope path records partial; a `rebase-delta` scope records full; a
+  malformed marker denies; no downgrade of a complete marker; a clean rebase
+  after a complete chain passes via the patch marker; existing two-token
+  markers pass.
 
 ### Docs and version
 
-README: one clause on `/fix-gh-issue` step 7 naming the scoped rounds. Minor
-bump.
+README: one clause on `/fix-gh-issue` step 7 naming the scoped rounds, and
+the hook entry's "invoked on the current HEAD" sentence updated to a complete
+chain. Minor bump.
 
 ## Left to the builder
 
 - Argument parsing details (`--since` vs the rebase flags; how the hook
   splits `args`).
-- Whether the parser-agreement test lives in the hook tests or the scope
-  tests.
+- Which test file holds the parser-agreement test.
 - Exact deny-reason wording.
