@@ -138,10 +138,12 @@ class Record(RepoCase):
     def test_prompt_records_and_prints_nothing(self):
         for text in ("/code-review-intense-flow",
                      "  /kitchen-sink:code-review-intense-flow please"):
+            if os.path.exists(self.marker()):
+                os.remove(self.marker())
             proc = self.prompt(text)
             self.assertEqual(proc.returncode, 0)
             self.assertEqual(proc.stdout, "")
-        self.assertTrue(os.path.isfile(self.marker()))
+            self.assertTrue(os.path.isfile(self.marker()), text)
 
     def test_non_matching_prompt_records_nothing(self):
         for text in ("/code-review-intense-flowx", "/code-review-flow",
@@ -386,6 +388,8 @@ class Incremental(RepoCase):
         copy = os.path.join(self.tmp, "scope.json")
         shutil.copy(good, copy)
         for args in (f"scope={copy}", f"scope={self.tmp}/missing.json"):
+            if os.path.exists(self.marker()):
+                os.remove(self.marker())
             self.skill("code-review-intense-flow", args=args)
             self.assertEqual(self.tokens()[2:], ["partial"], args)
             self.assertTrue(is_deny(self.bash("gh pr create --draft")), args)
@@ -402,14 +406,28 @@ class Incremental(RepoCase):
     def test_unreadable_scope_denies(self):
         path = self.scope(mode="incremental", since=self.r, head=self.head())
         head = self.head()
-        for text in ("not json{", "[]", '{"mode": "bogus"}', '{"mode": "incremental", "since": "../x"}',
+        # A complete marker sits wherever each malformed since resolves, so only the SHA guard
+        # keeps it out of the record (a bare "partial", with no "incremental <since>" tokens).
+        reviewed = os.path.dirname(self.marker())
+        for since in ("../x", self.r[:7], self.r.upper()):
+            shutil.copy(self.marker(self.r), os.path.normpath(os.path.join(reviewed, since)))
+        for text in ("not json{", "[]", '{"mode": "bogus"}',
+                     json.dumps({"mode": "incremental", "since": "../x", "head": head}),
                      json.dumps({"mode": "incremental", "since": self.r[:7], "head": head}),
                      json.dumps({"mode": "incremental", "since": self.r.upper(), "head": head})):
+            if os.path.exists(self.marker()):
+                os.remove(self.marker())
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
             self.skill("code-review-intense-flow", args=f"scope={path}")
-            self.assertEqual(self.tokens()[-1], "partial", text)
+            self.assertEqual(self.tokens()[2:], ["partial"], text)
             self.assertTrue(is_deny(self.bash("gh pr create --draft")), text)
+
+    def test_full_scope_records_full(self):
+        path = self.scope(mode="full", reason="since is not an ancestor of HEAD")
+        self.skill("code-review-intense-flow", args=f"scope={path}")
+        self.assertEqual(len(self.tokens()), 2)
+        self.assertFalse(is_deny(self.bash("gh pr create --draft")))
 
     def test_rebase_delta_scope_records_full(self):
         path = self.scope(mode="rebase-delta", old_head=self.r)
@@ -451,6 +469,7 @@ class MarkerGrammar(unittest.TestCase):
             f"t skill incremental {sha} complete\n".encode(): True,
             f"t skill incremental {sha} partial\n".encode(): False,
             f"t skill incremental {sha}\n".encode(): False,
+            b"t skill incremental complete\n": False,
             f"t skill other {sha} complete\n".encode(): False,
             f"t skill incremental {sha} complete extra\n".encode(): False,
             b"t skill partial\n": False,
