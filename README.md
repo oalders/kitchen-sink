@@ -92,7 +92,7 @@ claude plugin marketplace add oalders/kitchen-sink &&
 | Skill | Description |
 |-------|-------------|
 | **perl-review** | Flags Perl code that strays from your project standards — quoting, core-module use, URL building, test hygiene — reading a living rules doc you edit freely |
-| **least-privilege-gh-actions** | Gives GitHub Actions workflows a read-only `contents: read` token by default and stops `actions/checkout` persisting credentials |
+| **least-privilege-gh-actions** | Gives GitHub Actions workflows a least-privilege token and checkout, and reports untrusted PR checkouts |
 | **pin-gh-actions** | Pins every GitHub Actions `uses:` ref to a commit SHA with a version comment, and makes sure Dependabot bumps them |
 | **tune-dependabot-config** | Groups minor/patch Dependabot updates per ecosystem and adds a 7-day cooldown; optionally auto-merges minor/patch PRs |
 | **tune-gh-actions-timeouts** | Sets `timeout-minutes` on every GitHub Actions job, sized from recent successful run durations |
@@ -511,7 +511,7 @@ Flag-only reviewer that applies the living standards in `STANDARDS.md` to change
 
 #### least-privilege-gh-actions
 
-`least-privilege-gh-actions` sets a top-level `permissions: contents: read`, grants any wider scope per job, sets `persist-credentials: false` on `actions/checkout`, and reports workflows that check out untrusted PR code.
+`least-privilege-gh-actions` gives workflow tokens and checkouts least privilege, and reports workflows that check out untrusted PR code.
 
 #### pin-gh-actions
 

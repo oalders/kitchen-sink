@@ -9,21 +9,25 @@ these settings spreads to every repo they touch.
 Scans fenced ```yaml blocks in those skills and least-privilege-gh-actions
 (skipping "Before" examples) plus every .github/workflows/*.yml and *.yaml
 file; pin-gh-actions need only show a checkout step, not a full workflow.
-A full workflow (one with a column-0 `jobs:`) must have exactly
-`permissions:` / `contents: read` at top level, and every
-actions/checkout step must set
-`persist-credentials: false`; a block whose checkouts all do must not run
-`git fetch`, `git push` or `git pull`, which need the persisted token.
-Requiring exactly `contents: read` is deliberately stricter than the skill,
-which also accepts narrower blocks.
-Stdlib only: CI runs plain python3.
+Each block must get no report and no Verify failure from check_workflow.py
+(a checkout-only block is checked inside a conforming workflow), and a full
+workflow (one with a column-0 `jobs:`) must have exactly `permissions:` /
+`contents: read` at top level: deliberately stricter than the skill, which
+also accepts narrower blocks.
+Needs PyYAML, which check_workflow.py uses.
 """
 
 import glob
 import os
 import re
+import sys
 import tempfile
 import unittest
+
+import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import check_workflow  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SKILLS = [os.path.join(ROOT, "skills", s, "SKILL.md") for s in ("least-privilege-gh-actions", "tune-precious", "tune-perl-ci", "tune-dependabot-config", "pin-gh-actions")]
@@ -34,8 +38,6 @@ LABEL = re.compile(r"^(?:#{1,6}\s|\*\*)")
 # "**Before:**", "### Before", "### Before (x)" -- not "**Before emitting the file**".
 BEFORE = re.compile(r"^(?:#{1,6}\s+|\*\*)Before\b(?:\s*\(|:|\*\*|\s*$)")
 CHECKOUT = re.compile(r"""^\s*(?:-\s+)?uses:\s*["']?actions/checkout@""")
-STEP = re.compile(r"^(\s*)-\s")
-GIT_REMOTE = re.compile(r"\bgit\s+(?:fetch|push|pull)\b")
 
 
 def yaml_blocks(path):
@@ -60,46 +62,26 @@ def yaml_blocks(path):
         i += 1
 
 
-def bare(line):
-    return line.split("#", 1)[0].strip()
-
-
-def top_permissions_ok(lines):
-    top = [n for n, l in enumerate(lines) if l.startswith("permissions:")]
-    if len(top) != 1 or bare(lines[top[0]]) != "permissions:":
-        return False
-    body = []
-    for l in lines[top[0] + 1 :]:
-        if l and not l[0].isspace():
-            break
-        if bare(l):
-            body.append(bare(l))
-    return body == ["contents: read"]
-
-
 def problems(name, start, lines):
+    """check_workflow.py's reports and Verify failures for one block, as `name:line: code`."""
+    full = "jobs:" in lines
+    # A checkout-only block is a step list: check it inside a conforming workflow.
+    head = [] if full else ["permissions:", "  contents: read", "jobs:", "  t:", "    steps:"]
+    text = "\n".join(head + (lines if full else ["      " + l for l in lines])) + "\n"
+    try:
+        analysis = check_workflow.analyse(text)
+    except check_workflow.Unsupported as exc:
+        return [f"{name}:{start}: {exc}"]
+    _, top, jobs = analysis
     bad = []
-    checkouts = 0
-    if "jobs:" in lines and not top_permissions_ok(lines):
+    if full and not (isinstance(top, yaml.MappingNode) and [(k.value, v.value) for k, v in top.value] == [("contents", "read")]):
         bad.append(f"{name}:{start}: top-level permissions is not exactly `contents: read`")
-    for n, line in enumerate(lines):
-        if not CHECKOUT.match(line):
-            continue
-        checkouts += 1
-        # The step starts at the nearest `- ` at or above the uses: line.
-        first = next(k for k in range(n, -1, -1) if STEP.match(lines[k]))
-        dash = len(STEP.match(lines[first]).group(1))
-        step = [bare(lines[first][dash + 1 :])]
-        for l in lines[first + 1 :]:
-            if l.strip() and len(l) - len(l.lstrip()) <= dash:
-                break
-            step.append(bare(l))
-        if "persist-credentials: false" not in step:
-            bad.append(f"{name}:{start + n}: checkout without persist-credentials: false")
-    if checkouts and not bad:
-        for n, line in enumerate(lines):
-            if GIT_REMOTE.search(bare(line)):
-                bad.append(f"{name}:{start + n}: git remote command without persisted credentials")
+    if sum(map(bool, map(CHECKOUT.match, lines))) != sum(len(j.checkouts) for j in jobs):
+        bad.append(f"{name}:{start}: a checkout sits outside a job's steps list, so it went unchecked")
+    steps = {j.key: j.steps for j in jobs}
+    for r in check_workflow.reports(analysis, ()) + check_workflow.verify(analysis, ()):
+        line = start if r["step"] is None else start + steps[r["job"]][r["step"]].start_mark.line - len(head)
+        bad.append(f"{name}:{line}: {r['code']}")
     return bad
 
 
@@ -181,11 +163,12 @@ class TestLeastPrivilege(unittest.TestCase):
             problems("t", *blocks[0]),
             [
                 "t:10: top-level permissions is not exactly `contents: read`",
-                "t:14: checkout without persist-credentials: false",
+                "t:10: top-level-drift",
+                "t:14: persist-credentials",
             ],
         )
-        self.assertEqual(problems("t", *blocks[1]), ["t:31: git remote command without persisted credentials"])
-        self.assertEqual(problems("t", *blocks[2]), ["t:34: checkout without persist-credentials: false"])
+        self.assertEqual(problems("t", *blocks[1]), ["t:28: push-checkout"])
+        self.assertEqual(problems("t", *blocks[2]), ["t:34: persist-credentials"])
 
 
 if __name__ == "__main__":
