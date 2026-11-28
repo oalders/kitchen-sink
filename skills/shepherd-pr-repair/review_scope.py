@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""Scope a /shepherd-pr rebase re-review to what the rebase changed.
+"""Scope a re-review to what changed since a reviewed head.
 
   review_scope.py --old-head SHA --rebased SHA --base REF
+  review_scope.py --since SHA
 
-Run in the repo after the rebase: SHA is the pre-rebase PR head, --rebased the
-HEAD right after the rebase. Writes the scope files to
-<git-dir>/kitchen-sink/scope/ (per worktree, replaced on each run) and prints the
-path of its scope.json, whose `mode` is `rebase-delta` or `full` (with a
-`reason`). See docs/superpowers/specs/2026-11-14-rebase-scoped-review-design.md.
+Rebase mode (/shepherd-pr): run in the repo after the rebase; SHA is the
+pre-rebase PR head, --rebased the HEAD right after the rebase; `mode` is
+`rebase-delta` or `full`. See
+docs/superpowers/specs/2026-11-14-rebase-scoped-review-design.md.
+
+Since mode (/fix-gh-issue rounds 2+): SHA is the head the last round reviewed;
+`mode` is `incremental` (review SHA..HEAD) or `full`. See
+docs/superpowers/specs/2026-11-28-incremental-review-rounds-design.md.
+
+Writes the scope files to <git-dir>/kitchen-sink/scope/ (per worktree, replaced
+on each run) and prints the path of its scope.json, which carries a `reason`.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -60,8 +68,20 @@ def patch_id(sha):
     return out[0] if out else None
 
 
+def load_hook():
+    """The require-review-before-pr hook as a module, so its marker parser has one source."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "require-review-before-pr.py")
+    spec = importlib.util.spec_from_file_location("require_review_before_pr", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+complete = load_hook().complete
+
+
 def reviewed(mdir, sha):
-    if os.path.isfile(os.path.join(mdir, sha)):
+    if complete(os.path.join(mdir, sha)):
         return True
     branch = git("rev-parse", "--abbrev-ref", "HEAD").strip()
     pid = patch_id(sha)
@@ -120,12 +140,30 @@ def scope(old_head, rebased, base, kdir, out):
             "files": files, **paths}
 
 
+def since_scope(since, kdir):
+    """scope.json's fields for an incremental review of since..HEAD; raise Full to fall back."""
+    since, head = commit(since), commit("HEAD")
+    if not complete(os.path.join(kdir, "reviewed", since)):
+        raise Full(f"no complete review recorded for {since}")
+    if since == head:
+        raise Full("no commits since the reviewed head")
+    if git("merge-base", since, head).strip() != since:
+        raise Full(f"{since} is not an ancestor of HEAD")
+    return {"mode": "incremental", "reason": "only commits since the reviewed head", "since": since, "head": head}
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--old-head", required=True)
-    ap.add_argument("--rebased", required=True)
-    ap.add_argument("--base", required=True)
+    ap.add_argument("--since")
+    ap.add_argument("--old-head")
+    ap.add_argument("--rebased")
+    ap.add_argument("--base")
     args = ap.parse_args()
+    rebase = (args.old_head, args.rebased, args.base)
+    if args.since is not None and rebase != (None, None, None):
+        ap.error("--since excludes --old-head, --rebased and --base")
+    if args.since is None and None in rebase:
+        ap.error("give --since, or all of --old-head, --rebased and --base")
     try:
         kdir = os.path.join(os.path.abspath(git("rev-parse", "--git-common-dir").strip()), "kitchen-sink")
         # Per-worktree, so concurrent /shepherd-pr runs in other worktrees don't clobber it.
@@ -134,13 +172,17 @@ def main():
         sys.exit(f"review_scope: {exc}")
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
+    given = {"since": args.since} if args.since is not None else {"old_head": args.old_head}
     try:
-        result = scope(args.old_head, args.rebased, args.base, kdir, out)
+        if args.since is not None:
+            result = since_scope(args.since, kdir)
+        else:
+            result = scope(args.old_head, args.rebased, args.base, kdir, out)
     except Full as exc:
         result = {"mode": "full", "reason": str(exc)}
     path = os.path.join(out, "scope.json")
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump({"old_head": args.old_head, **result}, fh, indent=2)
+        json.dump({**given, **result}, fh, indent=2)
     print(path)
 
 

@@ -16,10 +16,22 @@ events, dispatching on ``hook_event_name`` in the payload:
   RECORD the same marker. Never prints anything (UserPromptSubmit stdout is
   added to the model's context) and never blocks the prompt.
 - ``PreToolUse`` (matcher ``Bash``): GATE ``gh pr create`` / ``gh pr ready``
-  (but not ``gh pr ready --undo``) on ``fix-NNN`` branches. Denies when no
-  marker exists for the current HEAD, or when the same command also runs
+  (but not ``gh pr ready --undo``) on ``fix-NNN`` branches. Denies when the
+  current HEAD has no complete marker, or when the same command also runs
   ``git commit`` (HEAD at PreToolUse time is the pre-commit SHA, so the marker
   check would be checking the wrong commit).
+
+Incremental reviews: a review invoked with ``scope=<path>``, where the path is
+this worktree's ``<git-dir>/kitchen-sink/scope/scope.json`` (written by
+``skills/shepherd-pr-repair/review_scope.py``) and its ``mode`` is
+``incremental``, covers only ``<since>..HEAD``. Its marker reads
+``<stamp> <source> incremental <since> complete`` when ``since`` has a
+complete marker and is an ancestor of HEAD and the scope's ``head`` is HEAD,
+else ``... partial``; any other ``scope=`` the hook can't verify records
+``partial`` too. A ``full`` or ``rebase-delta`` scope, or none, records the
+two-token full marker ``<stamp> <source>``. Each link is checked once, when
+recorded, so the gate reads only HEAD's marker. A not-complete result never
+overwrites a complete marker and writes no patch marker.
 
 Markers live at ``<git-common-dir>/kitchen-sink/reviewed/<full-sha>``, so they
 are shared across worktrees of the same repository and never tracked by git.
@@ -29,7 +41,7 @@ Rebases: on a ``fix-NNN`` branch, recording also writes
 ``reviewed/patch/<branch>/<patch-id>``, where the
 patch-id is ``git patch-id --stable`` of the branch's cumulative diff against
 its merge-base with the default branch (``origin/HEAD``, then ``origin/main``,
-``origin/master``, ``main``, ``master``). When no marker exists for HEAD, the
+``origin/master``, ``main``, ``master``). When HEAD has no complete marker, the
 gate allows the command if the current diff has a patch-id recorded for the
 same branch, so another branch with an identical diff does not inherit the
 review. A clean
@@ -54,6 +66,8 @@ Known accepted gaps (fail-open by design)
 -----------------------------------------
 - The marker records that the review was *invoked* on that HEAD, not that it
   passed clean. The fix-and-re-review loop is still the workflow's job.
+- A complete chain is checked against plain files like the marker itself:
+  the scope file and the ``since`` marker, not what the reviewers read.
 - Detection is a simple regex over the command string; shell aliases, wrapper
   scripts, ``eval``, ``gh api`` calls that create PRs, or a ``cd`` to another
   repo earlier in the chain evade or confuse it. ``gh`` invoked by path
@@ -61,7 +75,7 @@ Known accepted gaps (fail-open by design)
 - Quoted mentions such as ``echo 'gh pr create'`` are allowed (the quote, not
   whitespace, precedes ``gh``). An unquoted mention such as
   ``echo gh pr create`` false-positives (deny), which is harmless.
-- The marker is a plain file: anything that creates
+- The marker is a plain file: anything that writes a complete
   ``<git-common-dir>/kitchen-sink/reviewed/<sha>`` satisfies the gate. This is
   a drift guardrail against skipped reviews, not a security boundary.
 - Only ``fix-<digits>`` branches are gated; the repo checked is the payload
@@ -104,6 +118,8 @@ BASE_REFS = (
 REVIEW_SKILLS = {"code-review-intense-flow", "kitchen-sink:code-review-intense-flow"}
 
 PROMPT_RE = re.compile(r"^/(?:kitchen-sink:)?code-review-intense-flow(?:\s|$)")
+SCOPE_RE = re.compile(r"(?:^|\s)scope=(\S+)")
+SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 
 FIX_BRANCH_RE = re.compile(r"^fix-\d+$")
 
@@ -144,7 +160,9 @@ UNREVIEWED_REASON = (
     "on this fix-NNN branch. The fix-gh-issue workflow requires it before "
     "`gh pr create` / `gh pr ready`. Run `/code-review-intense-flow` via the "
     "Skill tool against the current HEAD first. Any review-fix commit moves "
-    "HEAD and needs a re-review before the PR. A clean rebase of a reviewed "
+    "HEAD and needs a re-review before the PR. An incremental review whose "
+    "chain doesn't reach a full review needs a full `/code-review-intense-flow` "
+    "run (no `scope=`). A clean rebase of a reviewed "
     "branch passes automatically; this branch's diff differs from every "
     "reviewed one (e.g. a resolved conflict). Only the user (not the model) "
     "can bypass this, by setting KITCHEN_SINK_ALLOW_UNREVIEWED_PR=1 in the "
@@ -218,15 +236,60 @@ def branch_patch_id(cwd):
     return None
 
 
-def record(cwd, source):
+# skills/shepherd-pr-repair/review_scope.py loads this module for complete().
+def complete(path):
+    """True if the direct marker at path records a full review or a complete chain."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            tokens = fh.read().split()
+    except (OSError, UnicodeError):
+        return False
+    return len(tokens) == 2 or (len(tokens) == 5 and tokens[2] == "incremental" and tokens[4] == "complete")
+
+
+def scope_suffix(cwd, sha, mdir, args):
+    """(marker text after `<stamp> <source>`, complete?) for a review invoked with args."""
+    m = SCOPE_RE.search(args) if isinstance(args, str) else None
+    if not m:
+        return "", True
+    gdir = git(cwd, "rev-parse", "--git-dir")
+    if not gdir:
+        return " partial", False
+    # Resolve only the directory: a scope.json symlinked elsewhere must not pass as the canonical file.
+    canonical = os.path.join(os.path.realpath(os.path.join(cwd, gdir, "kitchen-sink", "scope")), "scope.json")
+    if os.path.realpath(os.path.join(cwd, m.group(1))) != canonical:
+        return " partial", False
+    try:
+        with open(canonical, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return " partial", False
+    mode = data.get("mode") if isinstance(data, dict) else None
+    if mode in ("full", "rebase-delta"):
+        return "", True
+    since = data.get("since") if mode == "incremental" else None
+    if not isinstance(since, str) or not SHA_RE.fullmatch(since):
+        return " partial", False
+    ok = (data.get("head") == sha and complete(os.path.join(mdir, since))
+          and git(cwd, "merge-base", since, "HEAD") == since)
+    return f" incremental {since} {'complete' if ok else 'partial'}", ok
+
+
+def record(cwd, source, args=None):
     sha = head_sha(cwd)
     mdir = marker_dir(cwd)
     if not sha or not mdir:
         return
     os.makedirs(mdir, exist_ok=True)
+    suffix, ok = scope_suffix(cwd, sha, mdir, args)
+    path = os.path.join(mdir, sha)
+    if not ok and complete(path):
+        return  # never downgrade a complete marker
     stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    with open(os.path.join(mdir, sha), "w", encoding="utf-8") as fh:
-        fh.write(f"{stamp} {source}\n")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(f"{stamp} {source}{suffix}\n")
+    if not ok:
+        return
     branch = git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
     if not branch or not FIX_BRANCH_RE.match(branch):
         return
@@ -268,13 +331,14 @@ def handle_skill(payload, cwd):
     if not isinstance(skill, str):
         return
     if skill.strip().lstrip("/") in REVIEW_SKILLS:
-        record(cwd, "skill")
+        record(cwd, "skill", payload["tool_input"].get("args"))
 
 
 def handle_prompt(payload, cwd):
     prompt = payload.get("prompt")
-    if isinstance(prompt, str) and PROMPT_RE.match(prompt.lstrip()):
-        record(cwd, "prompt")
+    m = PROMPT_RE.match(prompt.lstrip()) if isinstance(prompt, str) else None
+    if m:
+        record(cwd, "prompt", prompt.lstrip()[m.end():])
 
 
 def handle_bash(payload, cwd):
@@ -295,7 +359,7 @@ def handle_bash(payload, cwd):
     mdir = marker_dir(cwd)
     if not sha or not mdir:
         return
-    if os.path.isfile(os.path.join(mdir, sha)):
+    if complete(os.path.join(mdir, sha)):
         return
     pid = branch_patch_id(cwd)
     if pid is None and _deadline is not None and time.monotonic() >= _deadline:
