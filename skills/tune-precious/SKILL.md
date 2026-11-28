@@ -40,7 +40,7 @@ Why:
 
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
-- Tell the subagent the working directory.
+- Tell the subagent the working directory, which is the repository root.
 - Require the subagent to report back only: the summary line, the per-transform commit SHAs, and any skipped transforms with reason.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 

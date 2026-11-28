@@ -19,6 +19,14 @@ Drift rule, for callers that count drift: the --apply run's reports that are
 not `info`, plus the last run's violations. `drift` is that count for the run
 that prints it, so the last run's `drift` is the caller's number.
 
+On a `pull_request_target`, `workflow_run` or `issue_comment` trigger a job is
+reported `untrusted-checkout` when it checks out, fetches or downloads PR
+content, or when it names PR content (in any letter case) in its `env:`, its
+`outputs:`, a step's `run:`, `with:` or `env:`, the workflow `env:`, or the
+outputs of a job that does so, and a step from that point on runs code. Its
+`step` is then the first such step, or null when the PR content is named at job
+or workflow level.
+
 --apply writes the edits as text, keeping comments and layout, then fills
 `violations` from the edited file. When there are edits it writes nothing if
 the file is a symlink, is hard-linked or lies outside the working directory,
@@ -70,13 +78,16 @@ GH_RUN_DOWNLOAD = re.compile(r"\bgh\s+run\s+download\b")
 ARTIFACTS_API = re.compile(r"/actions/artifacts/|/actions/runs/[^\n]*/artifacts")
 API_CLIENT = re.compile(r"\bgh\s+api\b|\bcurl\b")
 GITHUB_SCRIPT = "actions/github-script@"
-# Later steps that run none of the checked-out code, for the untrusted-checkout severity.
-NON_EXECUTING = ("actions/upload-artifact@", CHECKOUT)
+ARTIFACT_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
+# Steps that run none of the checked-out code, for the untrusted-checkout severity.
+NON_EXECUTING = ("actions/upload-artifact@", CHECKOUT, *ARTIFACT_ACTIONS)
 PR_EXPR = re.compile(
     r"github\.event\.pull_request\.head\.|github\.event\.pull_request\.merge_commit_sha|github\.head_ref|GITHUB_HEAD_REF"
+    r"|github\.event\.(?:issue\.)?pull_request\.(?:diff|patch)_url"
     r"|github\.event\.workflow_run\.(?:head_|pull_requests\[[^\]]*\]\.head\.)",
     re.I,
 )
+NEEDS_OUTPUTS = re.compile(r"\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\b", re.I)
 PULL_REF = re.compile(r"\bpull/[^/\n]+/(?:head|merge)\b", re.I)
 # github['event']["head_ref"] is the same expression as github.event.head_ref.
 INDEX = re.compile(r"""\[\s*['"]([^'"\]]+)['"]\s*\]""")
@@ -87,7 +98,6 @@ CONTINUATION = re.compile(r"\\\r?\n")
 # A push to such a URL uses the token in it, not the persisted one.
 CRED_URL = re.compile(r"https?://[^/\n]*@")
 JOB_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
-ARTIFACT_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
 SCOPE_KEY = re.compile(r"^[a-z][a-z-]*$")
 RANK = {"none": 0, "read": 1, "write": 2}
 
@@ -96,7 +106,7 @@ NOTES = {
     "push-checkout": "a later step pushes, fetches or pulls with the persisted token; checkout left as is",
     "cannot-tell": "a step runs a tool whose token needs can't be read; file skipped whole. "
     "Set persist-credentials: false and pass the token via env: only to the step that needs it",
-    "untrusted-checkout": "a privileged trigger checks out or downloads PR-controlled content; not fixed, no write scope added",
+    "untrusted-checkout": "a privileged trigger checks out, downloads or names PR-controlled content; not fixed, no write scope added",
     "top-level-permissions": "top-level permissions missing, or lacking the contents: read an inheriting checkout job needs",
     "persist-credentials": "checkout does not set persist-credentials: false",
     "contents-scope": "job runs actions/checkout but resolves no contents: read or write",
@@ -122,7 +132,7 @@ class Job:
     pushes: list  # checkout step indices a later step pushes, fetches or pulls from
     writes: list  # the subset a later step pushes from
     own_pushes: list  # persist-credentials: false checkouts a later step still pushes after
-    flag_step: int | None  # first step matching an untrusted-checkout pattern
+    flag_step: int | None  # the step the untrusted-checkout report names
     flagged: bool
     privileged: bool  # the workflow has a pull_request_target, workflow_run or issue_comment trigger
 
@@ -325,6 +335,31 @@ def flag_step(steps, triggers, env=frozenset()):
     return None
 
 
+def pr_texts(root, job, steps):
+    """(step index or None, scalar) for every place a job can name PR content: the workflow
+    and job env: and the job outputs: (index None), then each step's run:, with: and env:."""
+    for node in (item(root, "env")[1], item(job, "env")[1], item(job, "outputs")[1]):
+        yield from ((None, s) for s in scalars(node))
+    for i, step in enumerate(steps):
+        for key in ("run", "with", "env"):
+            yield from ((i, s) for s in scalars(item(step, key)[1]))
+
+
+def names_pr(text, tainted):
+    """True when text names PR content or reads the outputs of a job in tainted (lower-cased keys)."""
+    text = INDEX.sub(r".\1", text)
+    return pr_content(text) or any(j.lower() in tainted for j in NEEDS_OUTPUTS.findall(text))
+
+
+def fail_safe(texts, steps, tainted):
+    """(flagged, step): flagged when a text names PR content and a step from there on runs
+    code; step is the first such text's index."""
+    for i, text in texts:
+        if names_pr(text, tainted):
+            return any(runs_code(s) for s in steps[i or 0 :]), i
+    return False, None
+
+
 def triggers(root):
     on = item(root, "on")[1]
     if isinstance(on, yaml.ScalarNode):
@@ -365,6 +400,15 @@ def analyse(text, untrusted=()):
         flag = flag_step(steps, trig, pr_env((item(root, "env")[1], item(node, "env")[1])))
         perm = item(node, "permissions")[1]
         jobs.append(Job(key, node, perm, steps, checkouts, pushing, writing, own, flag, flag is not None or key in untrusted, privileged))
+    if privileged:
+        texts = {j.key: list(pr_texts(root, j.node, j.steps)) for j in jobs}
+        # Jobs naming PR content or reading a tainted job's outputs, to a fixed point.
+        tainted = {j.key.lower() for j in jobs if j.flagged}
+        while new := {k.lower() for k, t in texts.items() if k.lower() not in tainted and any(names_pr(s, tainted) for _, s in t)}:
+            tainted |= new
+        for j in jobs:
+            if not j.flagged and j.key.lower() in tainted:
+                j.flagged, j.flag_step = fail_safe(texts[j.key], j.steps, tainted)
     return root, item(root, "permissions")[1], jobs
 
 
@@ -517,12 +561,8 @@ def reports(analysis, cannot_tell):
             out.append(item_dict("cannot-tell", j.key))
         if j.flagged:
             # untrusted-checkout covers the whole job, its pushes and fetches included.
-            later = j.steps if j.flag_step is None else j.steps[j.flag_step + 1 :]
-            # A flagging run: step runs code itself; a flagging uses: step only fetches.
-            flagged_run = j.flag_step is not None and item(j.steps[j.flag_step], "run")[1] is not None
             critical = (
-                flagged_run
-                or any(runs_code(s) for s in later)
+                any(runs_code(s) for s in j.steps[j.flag_step or 0 :])
                 or any(SECRETS.search(INDEX.sub(r".\1", s)) for node in (j.node, item(root, "env")[1]) for s in scalars(node))
                 or grants_write(j.perm if j.perm is not None else top)
             )
@@ -577,8 +617,10 @@ def render(path, entry):
 def write(path, text):
     """Replace path with text, refusing a write that would land on another file or outside the cwd."""
     real, root = os.path.realpath(path), os.path.realpath(os.getcwd())
-    if os.path.islink(path) or os.stat(path).st_nlink > 1 or os.path.commonpath([real, root]) != root:
-        raise Unsupported("the file is a link or outside the working directory; not edited")
+    if os.path.islink(path) or os.stat(path).st_nlink > 1:
+        raise Unsupported("the file is a link; not edited")
+    if os.path.commonpath([real, root]) != root:
+        raise Unsupported("the file is outside the working directory; run from the repository root; not edited")
     mode = os.stat(path).st_mode & 0o7777
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(real), prefix=".check_workflow-")
     try:

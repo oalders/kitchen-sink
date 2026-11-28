@@ -34,7 +34,7 @@ Why:
 
 How to dispatch:
 - Brief the subagent with this SKILL.md's path as its working spec, and tell it that it is the dispatched worker: it follows the skill inline and does not dispatch again.
-- Tell the subagent the working directory and (optionally) a single workflow path if the caller specified one.
+- Tell the subagent the working directory, which is the repository root, and (optionally) a single workflow path if the caller specified one.
 - Require the subagent to report back only: the summary line, the per-transform commit SHAs, any skipped transforms or files with reason, transform 9's reported items (the entries the drift rule in the `check_workflow.py` docstring counts), and the timeouts step's report and SHA.
 - If a transform's verification fails, the subagent must stop and surface the failure rather than continuing or auto-reverting.
 
@@ -332,7 +332,7 @@ test_macos:
    Exit early with "no Perl workflows found" if the set is empty.
 2. For each transform in order [1..9]:
      a. For each in-scope file, compute the diff this transform would produce.
-     b. For transform 9, run the skill's `--apply` on each in-scope file and record its `reports`, and its `violations` once 2d has verified. For every other transform, skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
+     b. For transform 9, run the skill's `--apply` on each in-scope file and record that run's `reports` and `violations`; step 2d then verifies the file. For every other transform, skip any file that is already conformant for this transform (idempotent no-op for that file); for transform 8, conformant also requires a `github-actions` entry in `.github/dependabot.yml`.
      c. Write the remaining changed files.
      d. Verify each changed file: yaml.safe_load + the structural assertion
         for transform t (see Verification). On failure, stop with a clear

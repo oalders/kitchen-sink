@@ -8,13 +8,15 @@ version: 1.0.1
 
 ## Overview
 
-Pin every external `uses:` ref to a full commit SHA with the tag as a trailing comment (the example's `persist-credentials: false` comes from `kitchen-sink:least-privilege-gh-actions`, not this skill):
+Pin every external `uses:` ref to a full commit SHA with the tag as a trailing comment:
 
 ```yaml
 - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
   with:
     persist-credentials: false
 ```
+
+The `persist-credentials: false` comes from `kitchen-sink:least-privilege-gh-actions`, not this skill.
 
 **Why:** a tag or branch can be moved to different code after you review it; a commit SHA cannot. The comment keeps the pin readable and lets Dependabot bump SHA and comment together.
 

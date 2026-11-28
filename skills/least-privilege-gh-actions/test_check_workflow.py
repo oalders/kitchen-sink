@@ -305,7 +305,8 @@ class CheckWorkflow(unittest.TestCase):
         self.assertEqual(self.check(no_ref + "      - run: |\n          # gh pr checkout 1\n          npm test\n")["reports"], [])
         self.assertEqual(self.codes(self.check(no_ref + "      - run: |\n          gh pr checkout 1 # then test\n")), [("untrusted-checkout", "build", 1)])
 
-    LINK_REFUSAL = "the file is a link or outside the working directory; not edited"
+    LINK_REFUSAL = "the file is a link; not edited"
+    OUTSIDE_REFUSAL = "the file is outside the working directory; run from the repository root; not edited"
 
     def assert_refused(self, path, reason, before):
         r = subprocess.run([sys.executable, SCRIPT, "--apply", path], capture_output=True, text=True, cwd=self.tmp)
@@ -333,7 +334,7 @@ class CheckWorkflow(unittest.TestCase):
             outside = os.path.join(other, "ci.yml")
             with open(outside, "w", encoding="utf-8") as fh:
                 fh.write(text)
-            self.assert_refused(outside, self.LINK_REFUSAL, text)
+            self.assert_refused(outside, self.OUTSIDE_REFUSAL, text)
 
     def test_symlinked_conformant_file_is_unchanged(self):
         real = os.path.join(self.tmp, "real.yml")
@@ -393,6 +394,41 @@ class CheckWorkflow(unittest.TestCase):
             with self.subTest(run=run):
                 found = [(r["code"], r["step"], r["severity"]) for r in self.check(no_ref + f"      - run: {run}\n")["reports"]]
                 self.assertEqual(found, [("untrusted-checkout", 0, "critical")])
+
+    def test_fail_safe_flags_any_route_from_pr_content_to_code(self):
+        head, sha = "${{ github.event.pull_request.head.ref }}", "${{ github.event.pull_request.head.sha }}"
+        job = "on: {on}\npermissions:\n  contents: read\njobs:\n{pre}  build:\n{env}    steps:\n{steps}"
+        checkout = f"      - uses: {CO}\n        with:\n          ref: {{}}\n      - run: make\n"
+        cases = (
+            # A PR patch or diff URL applied with git.
+            ("pull_request_target", "", "", f'      - run: curl -sL "${{{{ github.event.pull_request.patch_url }}}}" | git am && make\n', 0),
+            ("pull_request_target", "", "", "      - run: curl -sL ${{ github.event.pull_request.diff_url }} | git apply\n      - run: make\n", 0),
+            ("issue_comment", "", "", "      - run: curl -sL ${{ github.event.issue.pull_request.patch_url }} | git am\n      - run: make\n", 0),
+            # Another job's outputs.
+            ("pull_request_target", f"  setup:\n    outputs:\n      sha: {sha}\n    steps: []\n", "    needs: setup\n", checkout.format("${{ needs.setup.outputs.sha }}"), 0),
+            # A step output passed through a later step's env:.
+            ("pull_request_target", "", "", f'      - id: s\n        run: echo "ref={head}" >> "$GITHUB_OUTPUT"\n      - env:\n          R: ${{{{ steps.s.outputs.ref }}}}\n        run: git checkout "$R"\n', 0),
+            # tee, a grouped command and a heredoc writing $GITHUB_OUTPUT or $GITHUB_ENV.
+            ("pull_request_target", "", "", f'      - id: p\n        run: echo "sha={sha}" | tee -a "$GITHUB_OUTPUT"\n' + checkout.format("${{ steps.p.outputs.sha }}"), 0),
+            ("pull_request_target", "", "", f'      - id: p\n        run: |\n          {{ echo "sha={sha}"\n            echo "x=1"; }} >> "$GITHUB_OUTPUT"\n' + checkout.format("${{ steps.p.outputs.sha }}"), 0),
+            ("pull_request_target", "", "", f'      - run: |\n          cat >> "$GITHUB_ENV" <<EOF\n          REF={head}\n          EOF\n      - run: git checkout "$REF"\n', 0),
+            # Names differing in case from the binding.
+            ("pull_request_target", "", f"    env:\n      REF: {sha}\n", checkout.format("${{ env.ref }}"), None),
+            ("pull_request_target", "", "", f'      - id: p\n        run: echo "sha={sha}" >> "$GITHUB_OUTPUT"\n' + checkout.format("${{ steps.P.outputs.SHA }}"), 0),
+        )
+        for on, pre, env, steps, step in cases:
+            text = job.format(on=on, pre=pre, env=env, steps=steps)
+            with self.subTest(text=text):
+                found = [(r["code"], r["job"], r["step"], r["severity"]) for r in self.check(text)["reports"]]
+                self.assertEqual(found, [("untrusted-checkout", "build", step, "critical")])
+        controls = (
+            # No PR content, and PR content named only after the last step that runs code.
+            checkout.format("${{ github.sha }}"),
+            f"      - run: make\n      - uses: actions/upload-artifact@abc\n        with:\n          name: {head}\n",
+        )
+        for steps in controls:
+            with self.subTest(steps=steps):
+                self.assertEqual(self.check(job.format(on="pull_request_target", pre="", env="", steps=steps))["reports"], [])
 
     def test_apply_refuses_when_its_edits_do_not_converge(self):
         # No known input reaches this guard; a second plan() that still finds edits stands in.
