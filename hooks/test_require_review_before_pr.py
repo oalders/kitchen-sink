@@ -406,8 +406,9 @@ class Incremental(RepoCase):
     def test_unreadable_scope_denies(self):
         path = self.scope(mode="incremental", since=self.r, head=self.head())
         head = self.head()
-        # A complete marker sits wherever each malformed since resolves, so only the SHA guard
-        # keeps it out of the record (a bare "partial", with no "incremental <since>" tokens).
+        # A complete marker sits wherever each malformed since resolves; the SHA guard and the
+        # merge-base check both reject these values. Pinned: an unverifiable since is recorded
+        # as a bare "partial", with no "incremental <since>" tokens.
         reviewed = os.path.dirname(self.marker())
         for since in ("../x", self.r[:7], self.r.upper()):
             shutil.copy(self.marker(self.r), os.path.normpath(os.path.join(reviewed, since)))
