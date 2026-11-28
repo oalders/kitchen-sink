@@ -315,7 +315,7 @@ test_macos:
 
 ### 9. Least-privilege token and checkout
 
-**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. Per file, the `action` of that skill's `--apply` run maps `unchanged` to conformant and `skip` to a skipped file; the file counts in N/M/K only if transform 9 changes it, and its `reports` are recorded per Algorithm step 2b.
+**What:** apply `kitchen-sink:least-privilege-gh-actions` to every in-scope workflow; the edits go in this transform's one commit. Load that skill with the Skill tool; it prints `Base directory for this skill: <dir>`, the `<skill base dir>` of its `check_workflow.py`. Per file, the `action` of that skill's `--apply` run maps `unchanged` to conformant and `skip` to a skipped file; the file counts in N/M/K only if transform 9 changes it, and its `reports` are recorded per Algorithm step 2b. For these files that one `--apply` run takes the place of steps 2a and 2c: the script writes the file itself, the action and `reports` come from that run, and step 2d verifies after it.
 
 **Why:** see `kitchen-sink:least-privilege-gh-actions`.
 
@@ -586,7 +586,7 @@ After **each** transform's edit, before committing:
 | 6 | no `install-with-cpm`/`install-with-cpanm` steps remain; every `cpm install` run step is preceded by a `setup-cpm` step with `version: compat`; no `cpm install` step in a macOS-only or Windows-only job carries `--with-develop` |
 | 7 | every macOS-only and Windows-only job's `perl-version` list has no entry < `5.24` |
 | 8 | the `kitchen-sink:pin-gh-actions` Verify checks pass for every in-scope workflow and `.github/dependabot.yml` |
-| 9 | the `kitchen-sink:least-privilege-gh-actions` Verify passes for every in-scope workflow |
+| 9 | the `kitchen-sink:least-privilege-gh-actions` Verify passes for every in-scope workflow; a relayed violation counts among transform 9's reported items and does not stop the run, and only exit 2 fails it |
 | timeouts | see `tune-gh-actions-timeouts` Verification |
 
 Do not auto-revert on failure — that would hide bugs in the skill. Stop and surface the failure so a human can inspect.

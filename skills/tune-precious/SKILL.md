@@ -594,7 +594,7 @@ After editing `dist.ini`, re-run `dzil build --no-tgz` and confirm `.githooks/pr
 
 **Why its own transform:** an existing `lint.yml` that T5 leaves alone (already gated, or drift) still needs a least-privilege token and checkout, and a separate commit keeps that revertable.
 
-**Outcome:** from that skill's `--apply` run: DRIFT when its `action` is `skip`, else APPLY when the skill changes `lint.yml`, else NO-OP; each of its `reports` entries is one drift item and adds 1 to D.
+**Outcome:** from that skill's `--apply` run: DRIFT when its `action` is `skip`, else APPLY when the skill changes `lint.yml`, else NO-OP; each of its `reports` entries is one drift item and adds 1 to D, even when the outcome is APPLY.
 
 **Verify:** the `kitchen-sink:least-privilege-gh-actions` Verify passes for `lint.yml`.
 
@@ -741,7 +741,7 @@ After **each** transform, before committing:
 | 5 | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/lint.yml"))'` exits 0; the lint step gates on `github.event_name` (not `github.ref`), binds `EVENT_NAME`/`BASE_REF` via `env:` (no `${{ … }}` in `run:`), has a `--git-diff-from origin/$BASE_REF` PR arm with no `git fetch` and an `--all` else arm, and `checkout` uses `fetch-depth: 0`; if T5 wrote the file fresh, the `precious` job sets `timeout-minutes` |
 | 6 | `sh -n .githooks/pre-commit` exits 0; `[ -x .githooks/pre-commit ]`; `grep -q 'precious lint' .githooks/pre-commit`; if a `make init` target was added, it runs `git config core.hooksPath .githooks`; if `dist.ini` exists, `dzil build --no-tgz` exits 0 and `find <DistName>-*/ -path '*/.githooks/pre-commit'` returns nothing |
 | 7 | the `kitchen-sink:pin-gh-actions` Verify checks pass for `lint.yml` and `.github/dependabot.yml` |
-| 8 | the `kitchen-sink:least-privilege-gh-actions` Verify passes for `lint.yml` |
+| 8 | the `kitchen-sink:least-privilege-gh-actions` Verify passes for `lint.yml`; a relayed violation is one drift item and does not stop the run, and only exit 2 fails it |
 
 Do not auto-revert on failure — that hides bugs in the skill. Stop and surface the failure for human inspection.
 

@@ -1,6 +1,6 @@
 ---
 name: least-privilege-gh-actions
-description: Use when writing or editing a `.github/workflows/*` file, to give its token least-privilege `permissions:`, stop `actions/checkout` persisting credentials, and report workflows that check out untrusted PR code.
+description: Use when writing or editing a `.github/workflows/*` file, or auditing one for token scope, persisted checkout credentials or untrusted PR checkouts.
 version: 1.1.0
 ---
 
@@ -33,7 +33,7 @@ For each workflow file `<file>`:
 1. Read `<file>` and decide the two judgment inputs, each repeatable:
    - `--cannot-tell JOB`: a later step runs a script or tool whose token needs you can't read or confirm, such as `dzil release` with `[Git::Push]` or `git submodule update` for private submodules. The whole file is then skipped.
    - `--untrusted JOB`: on a `pull_request_target`, `workflow_run` or `issue_comment` trigger, the job checks out, fetches or downloads PR-controlled content the script's patterns miss, e.g. a PR head ref looked up through `gh api` or `gh pr view` and passed via a step output or `env:`.
-2. Run `python3 "$CW" --apply [--cannot-tell JOB]... [--untrusted JOB]... <file>` once. Its `reports` describe the file as given and its `violations` the edited file. On exit 2 it wrote nothing: make no edit and relay its one stderr line.
+2. Run `python3 "$CW" --apply [--cannot-tell JOB]... [--untrusted JOB]... <file>` once. Its `reports` describe the file as given, plus each `contents: write` it added, and its `violations` the edited file. Exit 1 is not a failure: it means `violations` is non-empty, and step 5 relays them. On exit 2 it wrote nothing: make no edit and relay its one stderr line.
 3. Add any other scope a job needs to its job-level `permissions:` block, never a broader top-level one, e.g. `pull-requests: write` for PR comments or labels, `pages: write` for Pages deploys, `id-token: write` for OIDC. A job-level block replaces the top-level block, so a new one also lists `contents: read` when the job checks out code. Add none to a job with an `untrusted-checkout` report, or in a file whose `action` is `skip`.
 4. If step 3 edited the file, confirm with `python3 "$CW" --verify [--cannot-tell JOB]... [--untrusted JOB]... <file>`, using the same inputs; fix any violation your step 3 edits caused.
 5. Relay the `text` of each step 2 `reports` entry and each `violations` entry from the last run (step 4 if it ran, else step 2), verbatim, and nothing else from the workflow.

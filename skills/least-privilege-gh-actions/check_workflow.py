@@ -9,17 +9,21 @@ Prints a JSON verdict {file, action, edits, reports, violations}. `action` is
 job and step are null for a file-level item, step is a 0-based index into the
 job's `steps:`, and `text` is the line to relay, built only from the file path,
 job keys, step indices and fixed wording, never from other workflow content.
-Reports and their severities describe the file as given, before any edit.
+Severity is `critical`, `important` or `info`. Reports describe the file as
+given, before any edit, except `contents-write-granted` (`info`), which --apply
+adds for each job it gave job-level `contents: write`. NOTES below lists every
+code.
 
 --apply writes the edits as text, keeping comments and layout, then fills
 `violations` from the edited file. It writes nothing when there are edits and
 the file uses YAML aliases, when the result doesn't parse, when a second pass
 finds more to edit, or when the edits would raise any scope beyond the
-intended `contents:` grant. --verify fills `violations` without editing.
+intended `contents:` grant. That grant is never added on a privileged trigger
+(`privileged-push` reports it instead). --verify fills `violations` without editing.
 
 Exit 0 when done; 1 when `violations` is non-empty; 2, with one fixed line on
-stderr, when the file can't be read, parsed or edited safely, or a JOB is not
-a key under `jobs:`.
+stderr, when the file can't be read, parsed or edited safely, a job key is not a
+valid job id, or a JOB is not a key under `jobs:`.
 """
 
 import argparse
@@ -50,6 +54,11 @@ PULL_REF = re.compile(r"\bpull/[^/\n]+/(?:head|merge)\b", re.I)
 # github['event']["head_ref"] is the same expression as github.event.head_ref.
 INDEX = re.compile(r"""\[\s*['"]([^'"\]]+)['"]\s*\]""")
 DEFAULT_TOKEN = re.compile(r"^\$\{\{\s*(?:secrets\.GITHUB_TOKEN|github\.token)\s*\}\}$")
+SHELL_COMMENT = re.compile(r"(?:^|(?<=\s))#.*", re.M)
+# A push to such a URL uses the token in it, not the persisted one.
+CRED_URL = re.compile(r"https?://[^/\n]*@")
+JOB_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+ARTIFACT_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
 SCOPE_KEY = re.compile(r"^[a-z][a-z-]*$")
 RANK = {"none": 0, "read": 1, "write": 2}
 
@@ -63,6 +72,8 @@ NOTES = {
     "persist-credentials": "checkout does not set persist-credentials: false",
     "contents-scope": "job runs actions/checkout but resolves no contents: read or write",
     "untrusted-write": "job with an untrusted checkout resolves a write scope",
+    "privileged-push": "job on a privileged trigger pushes with the default token; contents: write not added",
+    "contents-write-granted": "job-level contents: write added for a later step's push",
 }
 
 
@@ -81,6 +92,7 @@ class Job:
     writes: list  # the subset a later step pushes from
     flag_step: int | None  # first step matching an untrusted-checkout pattern
     flagged: bool
+    privileged: bool  # the workflow has a pull_request_target, workflow_run or issue_comment trigger
 
 
 def item(node, key):
@@ -158,8 +170,10 @@ def remote_use(step):
         w = item(step, "with")[1]
         own = isinstance(w, yaml.MappingNode) and any(isinstance(k, yaml.ScalarNode) and k.value in TOKEN_INPUTS for k, _ in w.value)
         return None if own else "push"
-    run = get(step, "run")
-    return "push" if GIT_PUSH.search(run) else "read" if GIT_READ.search(run) else None
+    lines = SHELL_COMMENT.sub("", get(step, "run")).splitlines()
+    if any(GIT_PUSH.search(line) and not CRED_URL.search(line) for line in lines):
+        return "push"
+    return "read" if any(GIT_READ.search(line) for line in lines) else None
 
 
 def own_token(checkout):
@@ -182,7 +196,7 @@ def flag_step(steps, triggers):
             return i
         if GH_PR_CHECKOUT.search(run) or (GIT_GET.search(run) and pr_content(run)):
             return i
-        if "workflow_run" in triggers and (used.startswith("actions/download-artifact@") or GH_RUN_DOWNLOAD.search(run)):
+        if "workflow_run" in triggers and (used.startswith(ARTIFACT_ACTIONS) or GH_RUN_DOWNLOAD.search(run)):
             return i
     return None
 
@@ -209,7 +223,10 @@ def analyse(text, untrusted=()):
         raise Unsupported("no jobs: mapping")
     trig = triggers(root)
     jobs = []
+    privileged = bool(trig & PRIVILEGED)
     for key, (_, node) in zip(keys(jobs_node), jobs_node.value):
+        if not JOB_KEY.match(key):
+            raise Unsupported("a job key is not a valid GitHub Actions job id")
         if not isinstance(node, yaml.MappingNode):
             raise Unsupported("a job is not a mapping")
         steps = item(node, "steps")[1]
@@ -220,7 +237,7 @@ def analyse(text, untrusted=()):
         writing = [i for i in checkouts if "push" in later[i]]
         flag = flag_step(steps, trig)
         perm = item(node, "permissions")[1]
-        jobs.append(Job(key, node, perm, steps, checkouts, pushing, writing, flag, flag is not None or key in untrusted))
+        jobs.append(Job(key, node, perm, steps, checkouts, pushing, writing, flag, flag is not None or key in untrusted, privileged))
     return root, item(root, "permissions")[1], jobs
 
 
@@ -254,7 +271,7 @@ def persist_false(text, step):
     if w is None:
         used = item(step, "uses")[1]
         at = text.find("\n", used.end_mark.index)
-        at = len(text) if at < 0 else at
+        at = len(text) if at < 0 else at - (text[at - 1] == "\r")
         col = step.start_mark.column
         return at, at, f"\n{' ' * col}with:\n{' ' * (col + 2)}persist-credentials: false"
     if not isinstance(w, yaml.MappingNode):
@@ -278,9 +295,14 @@ def new_job_block(text, job, top):
     return at, at, "\n".join([f"{pad}permissions:", f"{pad}  contents: write", *keep]) + "\n"
 
 
-def granted(job):
-    """The job gets contents: write: a later step pushes with the checkout's default token."""
+def default_token_push(job):
+    """A later step pushes with the checkout's default token, in a job not flagged untrusted."""
     return bool(job.writes) and not job.flagged and not any(own_token(job.steps[i]) for i in job.writes)
+
+
+def granted(job):
+    # On a privileged trigger a write grant is a judgment call, so it is only reported.
+    return default_token_push(job) and not job.privileged
 
 
 def plan(text, analysis, cannot_tell):
@@ -358,6 +380,8 @@ def reports(analysis, cannot_tell):
         if j.key in cannot_tell:
             out.append(item_dict("cannot-tell", j.key))
         out += [item_dict("push-checkout", j.key, i) for i in j.pushes]
+        if j.privileged and default_token_push(j):
+            out.append(item_dict("privileged-push", j.key))
         if j.flagged:
             later = j.steps if j.flag_step is None else j.steps[j.flag_step + 1 :]
             critical = (
@@ -408,8 +432,9 @@ def render(path, entry):
 
 def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
     """The verdict dict for path, applying edits first when asked."""
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8", newline="") as fh:  # keep CRLF line endings
         text = fh.read()
+    nl = "\r\n" if "\r\n" in text else "\n"
     analysis = analyse(text, untrusted)
     unknown = (set(cannot_tell) | set(untrusted)) - {j.key for j in analysis[2]}
     if unknown:
@@ -421,15 +446,16 @@ def check(path, apply=False, verify_=False, cannot_tell=(), untrusted=()):
         if any(isinstance(e, yaml.AliasEvent) for e in yaml.parse(text)):
             raise Unsupported("file uses YAML aliases; not edited")
         for start, end, new in sorted(ops, key=lambda op: op[0], reverse=True):
-            text = text[:start] + new + text[end:]
+            text = text[:start] + new.replace("\n", nl) + text[end:]
         after = analyse(text, untrusted)
         if plan(text, after, cannot_tell)[0]:
             raise Unsupported("edits did not converge; file not written")
         if widened(analysis, after):
             raise Unsupported("edits would widen a scope; file not written")
-        with open(path, "w", encoding="utf-8") as fh:
+        with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
         analysis = after
+        found += [item_dict("contents-write-granted", e["job"], severity="info") for e in edits if e["edit"] == "job-contents-write"]
     action = "skip" if cannot_tell else "edit" if edits else "unchanged"
     violations = verify(analysis, cannot_tell) if apply or verify_ else []
     return {
