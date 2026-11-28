@@ -220,6 +220,7 @@ OWASP-based systematic security review:
 - Input validation & injection (SQL, XSS, command injection)
 - Sensitive data exposure (PII logging, cleartext transmission)
 - Security misconfiguration (CSRF, CORS, security headers)
+- Client-side exposure (`postMessage` origins, public env-var secrets, production source maps, `target="_blank"` opener)
 - Business logic flaws (race conditions, timing attacks)
 - LLM/AI integration (prompt injection, insecure output handling, tool-call abuse) — gated to diffs that touch model calls
 - Uses Opus model for comprehensive security analysis
