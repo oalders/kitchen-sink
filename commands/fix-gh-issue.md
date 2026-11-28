@@ -211,7 +211,7 @@ Write them as part of implementation, not as review remediation:
 
 - Run **`/code-review-intense-flow`** (via the Skill tool) on the final HEAD, whatever the change size — on the SDD path too, even though tasks were reviewed along the way. It is the single source of truth for routing: general reviewer (always), `/security-review` (unless doc-only), frontend/seo/geo/playwright by path, and new-route e2e detection. Don't substitute `/code-review-flow`, a single specialist, or hand-picked reviewers; that drops the always-on general and security passes.
 - **Caller only**: never run it inside the implementation subagent; the caller judges its findings and runs the loop below.
-- **Enforced by the `require-review-before-pr` hook**: `gh pr create`/`gh pr ready` are denied on a `fix-NNN` branch until intense-flow has run on the current HEAD, so every fix commit needs a re-review. Never chain `git commit` with `gh pr create`/`ready` in one Bash call.
+- **Enforced by the `require-review-before-pr` hook**: `gh pr create`/`gh pr ready` are denied on a `fix-NNN` branch until a recorded intense-flow review covers the whole branch up to the current HEAD, so every fix commit needs a re-review. Never chain `git commit` with `gh pr create`/`ready` in one Bash call.
 
 **Fix-and-re-review loop:**
 1. Run `/code-review-intense-flow`.
